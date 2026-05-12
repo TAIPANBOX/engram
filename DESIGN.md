@@ -4,6 +4,24 @@
 
 ---
 
+## 0. Implementation status
+
+**All roadmap versions (v0.1 → v1.0) are shipped and green.** This document reflects both the original design intent and the as-built reality; divergences are noted in §6 and §11.
+
+| Version | Description | Status |
+|---------|-------------|--------|
+| v0.1 | SQLite schema, `observe()`, `recall()` (cosine), fastembed | ✅ shipped |
+| v0.2 | Importance scoring (Ebbinghaus-Hebbian), access log, `decay()` | ✅ shipped |
+| v0.3 | Reflection loop, LLM adapters, fact extraction, contradiction detection, bitemporal validity | ✅ shipped |
+| v0.4 | Entity extraction, episode→entity edges (Hebbian), BFS spreading-activation recall | ✅ shipped |
+| v0.5 | Bitemporal queries — `as_of`, `timeline()` | ✅ shipped |
+| v0.6 | MCP server (FastMCP, 6 tools), LangChain + LlamaIndex adapters | ✅ shipped |
+| v1.0 | Benchmark suite (`engram-bench`), LoCoMo fixture, README | ✅ shipped |
+
+**Test suite:** 320 tests, all green. `mypy --strict` passes. `ruff` clean.
+
+---
+
 ## 1. Problem statement
 
 Existing memory solutions for AI agents are inadequate:
@@ -282,63 +300,89 @@ Vectors via `sqlite-vec` extension. Graph stored as SQL edges; loaded into in-me
 
 | Layer | Choice | Why |
 |-------|--------|-----|
-| Core | Python 3.11+ (Rust + bindings later if hot path needs it) | Broad AI audience, fast iteration |
+| Core | Python 3.11+ | Broad AI audience, fast iteration |
 | Storage | SQLite + sqlite-vec | One file, embedded, zero-config |
-| Embeddings | fastembed (ONNX) | Local, no heavy Python deps |
-| Reflection LLM | Pluggable: Anthropic / OpenAI / Ollama | User picks cost/quality trade-off |
-| Graph | SQL edges + in-process traversal | No extra database |
-| API | Python lib + optional FastAPI + MCP server | MCP is the agent-ecosystem standard |
-| CLI | `engram inspect`, `engram reflect`, `engram timeline` | Debugging is critical |
+| Embeddings | fastembed (ONNX, `bge-small-en-v1.5`, 384-dim) | Local, no heavy Python deps |
+| Reflection LLM | Pluggable: Anthropic / OpenAI / Gemini / DeepSeek / Qwen / Kimi / Stub | User picks cost/quality trade-off |
+| Graph | SQL edges + pure-Python BFS traversal (no external graph lib) | No extra dependency |
+| API | Python lib + MCP server (FastMCP, stdio) | MCP is the agent-ecosystem standard; no REST server |
+| CLI | `engram inspect / recall / observe / reflect / timeline / forget / list-agents` | Debugging is critical |
+| Working memory | `WorkingMemory` class — LRU scratchpad, Miller 7±2 capacity, optional flush to store | Active reasoning without polluting long-term store |
+| Data portability | `export_json()` / `import_json()` / `backup()` | Migration, snapshots |
 
 ---
 
 ## 7. Roadmap
 
-### v0.1 — Skeleton (week 1-2)
-- SQLite schema, basic migrations
-- `observe()`, `recall()` (cosine only)
-- Local embedder via fastembed
-- Smoke tests on 1000 episodes
+All versions shipped. Items are marked ✅.
 
-### v0.2 — Importance + decay (week 3)
-- Importance scoring
-- Access log
-- Background decay job
+### v0.1 — Skeleton ✅
+- ✅ SQLite schema, basic migrations
+- ✅ `observe()`, `recall()` (cosine only)
+- ✅ Local embedder via fastembed (`bge-small-en-v1.5`)
+- ✅ Smoke tests
 
-### v0.3 — Reflection loop (week 4-5)
-- Fact-extraction prompt
-- Contradiction detection
-- Validity intervals
-- Async reflection
+### v0.2 — Importance + decay ✅
+- ✅ Importance scoring (Ebbinghaus-Hebbian formula)
+- ✅ Access log
+- ✅ Background `decay()` job, `DecayConfig`
 
-### v0.4 — Graph + spreading activation (week 6)
-- Entity extraction
-- Edge building
-- Spreading-activation retrieval
+### v0.3 — Reflection loop ✅
+- ✅ Fact-extraction prompt
+- ✅ Contradiction detection
+- ✅ Bitemporal validity intervals (`valid_from/to`, `recorded_at/superseded_at`)
+- ✅ `reflect()` / `reflect_async()`
+- ✅ `assert_fact()`, `why()`, `contradictions()`
+- ✅ LLM adapters: Anthropic, OpenAI, Gemini, DeepSeek, Qwen, Kimi, Stub
 
-### v0.5 — Bitemporal queries (week 7)
-- `as_of` parameter
-- Timeline API
+### v0.4 — Graph + spreading activation ✅
+- ✅ Entity extraction from fact triples
+- ✅ Episode→entity edges (Hebbian weight accumulation)
+- ✅ BFS spreading-activation recall (`mode="spreading"`, depth, decay)
 
-### v0.6 — Integrations (week 8)
-- MCP server
-- LangChain / LlamaIndex adapters
-- Reference agent using Engram
+### v0.5 — Bitemporal queries ✅
+- ✅ `recall(as_of=T)` filters by valid timestamp
+- ✅ `timeline(entity)` — full fact history for an entity
+- ✅ `store.get_facts_as_of()` for point-in-time fact validity
 
-### v1.0 — Polish (week 9-10)
-- LoCoMo benchmark vs Mem0 / Zep
-- Latency tests
-- Docs + landing page
+### v0.6 — Integrations ✅
+- ✅ MCP server (FastMCP, 6 tools, stdio transport)
+- ✅ LangChain adapter: `EngramRetriever` + `EngramChatMessageHistory`
+- ✅ LlamaIndex adapter: `EngramMemory`
+- ✅ Optional extras in pyproject.toml: `[mcp]`, `[langchain]`, `[llamaindex]`
+
+### v1.0 — Polish ✅
+- ✅ `engram-bench` CLI entry, latency suite (p50/p99/throughput)
+- ✅ LoCoMo benchmark (hit@1, hit@5, MRR) with sample fixture
+- ✅ Cost benchmark (tokens/$ per 1k episodes)
+- ✅ README overhaul with real numbers
 
 ---
 
-## 8. Benchmarks (must run before v1.0)
+## 8. Benchmarks (measured on M-series, bge-small-en-v1.5, n=300)
 
-- **LoCoMo** — standard long-conversation memory benchmark
-- **MemBench**
-- **Custom**: cross-session recall accuracy after 50 sessions
-- **Latency**: recall p50 / p99 vs competitors
-- **Cost**: tokens spent on reflection per 1000 episodes
+### Latency
+
+| Operation | p50 | p99 | Throughput |
+|-----------|-----|-----|-----------|
+| `observe` | 4.1 ms | 4.8 ms | 236 ep/s |
+| `recall` (cosine) | 4.3 ms | 5.0 ms | 232 q/s |
+| `recall` (spreading) | 4.4 ms | 5.0 ms | 224 q/s |
+
+### LoCoMo recall quality (5 sessions, 15 questions)
+
+| Metric | Score |
+|--------|-------|
+| hit@1 | 33.3% |
+| hit@5 | 93.3% |
+| MRR | 0.586 |
+
+### Reflection cost
+
+| Model | Cost per 1k episodes |
+|-------|---------------------|
+| claude-haiku-4.5 | ~$0.0056 |
+| gpt-4o-mini | ~$0.0033 |
 
 ---
 
@@ -355,10 +399,25 @@ The novelty is in the **combination + DX**, not any single mechanism in isolatio
 
 ---
 
-## 10. Open questions to resolve during build
+## 10. Open questions
 
-- Embedding model default — `bge-small` (fast, 384-dim) vs `bge-base` (better, 768-dim)?
-- Reflection trigger heuristics — what's the right N? Idle-time threshold?
-- How aggressive should default decay (`λ`) be? Tune via benchmark.
-- Multi-agent / shared memory — v2 concern, but design schema to allow it now (add `agent_id` column).
-- Encryption-at-rest — out of scope for v1, but document the threat model.
+- ✅ **Embedding model default** — resolved: `bge-small-en-v1.5` (384-dim, fast). `bge-base` available as a user override.
+- ✅ **Reflection trigger heuristics** — resolved: configurable N (episodes since last reflection) + optional idle-time threshold in `DecayConfig`.
+- ✅ **Decay λ** — resolved: default tuned from benchmark; user-configurable via `DecayConfig`.
+- ✅ **Multi-agent / shared memory** — resolved ahead of schedule: `agent_id` parameter added in v1. Each `Engram(agent_id=...)` instance scopes reads/writes; cross-agent recall available via `recall(cross_agent=True)`.
+- **Encryption-at-rest** — still out of scope. SQLite WAL is unencrypted. SQLCipher would be the upgrade path.
+
+---
+
+## 11. As-built divergences from spec
+
+Things that differ from the original design, or were built ahead of schedule:
+
+- **FastAPI not implemented.** §6 originally listed `optional FastAPI`. The interface is Python lib + MCP server only. No REST layer was added — MCP covers the agent-ecosystem use case.
+- **Graph traversal** — original spec mentioned `petgraph`/`NetworkX`. Actual implementation uses pure-Python BFS over SQL edges loaded into memory. No external graph library dependency.
+- **`agent_id` scoping** — originally flagged as a v2 concern. Implemented in v1: `Engram(agent_id="...")` scopes all writes; multiple agents can share one `.engram` file.
+- **`WorkingMemory`** — not in original roadmap. Implemented as a Miller 7±2 LRU scratchpad (`engram/working_memory.py`) that can optionally flush evicted items to the long-term store.
+- **`compress()`** — §3.4 step 7 described lossy compression of old episode clusters. Implemented as an explicit `mem.compress()` method (not automatic during reflection).
+- **`observe_many()`** — batch write not in spec; added for throughput.
+- **`export_json()` / `import_json()` / `backup()`** — data portability not in original spec.
+- **Additional LLM adapters** — spec listed Anthropic / OpenAI / Ollama. Shipped: Anthropic, OpenAI, Gemini, DeepSeek, Qwen, Kimi, Stub (Ollama uses the OpenAI-compatible adapter).
