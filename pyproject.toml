@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "engram"
-version = "2.0.1"
+version = "2.1.0"
 description = "Embeddable cognitive memory layer for AI agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -45,9 +45,9 @@ engram      = "engram.cli:main"
 engram-bench = "engram.benchmarks.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/taipanbox/engram"
-Repository = "https://github.com/taipanbox/engram"
-Documentation = "https://github.com/taipanbox/engram#readme"
+Homepage = "https://github.com/TAIPANBOX/engram"
+Repository = "https://github.com/TAIPANBOX/engram"
+Documentation = "https://github.com/TAIPANBOX/engram#readme"
 
 [tool.hatch.build.targets.wheel]
 packages = ["engram"]
