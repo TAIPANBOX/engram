@@ -94,17 +94,28 @@ class Engram:
     # Read
     # ------------------------------------------------------------------
 
-    def recall(self, query: str, k: int = 5) -> list[SearchResult]:
+    def recall(
+        self,
+        query: str,
+        k: int = 5,
+        *,
+        mode: str = "cosine",
+        depth: int = 2,
+        decay: float = 0.5,
+    ) -> list[SearchResult]:
         """Retrieve the top-k episodes most semantically similar to *query*.
 
         Args:
             query: Natural-language search query.
             k: Maximum number of results to return.
+            mode: ``"cosine"`` (default) or ``"spreading"`` for graph-based recall.
+            depth: BFS hops; only used when ``mode="spreading"``.
+            decay: Activation decay per hop; only used when ``mode="spreading"``.
 
         Returns:
-            List of :class:`SearchResult` ordered by descending similarity.
+            List of :class:`SearchResult` ordered by descending score.
         """
-        return _recall(query, k, self._store, self._embedder)
+        return _recall(query, k, self._store, self._embedder, mode=mode, depth=depth, decay=decay)
 
     # ------------------------------------------------------------------
     # Facts

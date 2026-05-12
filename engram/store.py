@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from datetime import datetime
 from typing import Any
 
 import numpy as np
 
-from engram.models import EmbeddedVector, Episode, Fact, ReflectionRun
+from engram.models import EmbeddedVector, Entity, Episode, Fact, ReflectionRun
 
 
 def _serialize(vec: EmbeddedVector) -> bytes:
@@ -131,13 +132,10 @@ class Store:
             "SELECT id, salience, emotional_valence, timestamp FROM episodes"
         ).fetchall()
         return [
-            (row[0], float(row[1]), float(row[2]), datetime.fromisoformat(row[3]))
-            for row in rows
+            (row[0], float(row[1]), float(row[2]), datetime.fromisoformat(row[3])) for row in rows
         ]
 
-    def get_episodes_since(
-        self, since: datetime | None, limit: int = 200
-    ) -> list[Episode]:
+    def get_episodes_since(self, since: datetime | None, limit: int = 200) -> list[Episode]:
         """Return episodes created after *since* (or all episodes if None), up to *limit*."""
         if since is None:
             rows: list[Any] = self._conn.execute(
@@ -166,9 +164,7 @@ class Store:
         if not ids:
             return 0
         placeholders = ",".join("?" * len(ids))
-        self._conn.execute(
-            f"DELETE FROM access_log WHERE memory_id IN ({placeholders})", ids
-        )
+        self._conn.execute(f"DELETE FROM access_log WHERE memory_id IN ({placeholders})", ids)
         self._conn.execute(f"DELETE FROM episodes WHERE id IN ({placeholders})", ids)
         self._conn.commit()
         return len(ids)
@@ -228,8 +224,7 @@ class Store:
     def get_all_active_facts(self) -> list[Fact]:
         """Return all currently valid facts (for contradictions surface query)."""
         rows: list[Any] = self._conn.execute(
-            f"SELECT {self._FACT_COLS} FROM facts "
-            "WHERE valid_to IS NULL AND superseded_at IS NULL"
+            f"SELECT {self._FACT_COLS} FROM facts WHERE valid_to IS NULL AND superseded_at IS NULL"
         ).fetchall()
         return [Fact.from_row(tuple(r)) for r in rows]
 
@@ -241,9 +236,7 @@ class Store:
         ).fetchall()
         return [Fact.from_row(tuple(r)) for r in rows]
 
-    def close_fact(
-        self, fact_id: str, valid_to: datetime, superseded_by: str
-    ) -> None:
+    def close_fact(self, fact_id: str, valid_to: datetime, superseded_by: str) -> None:
         """Mark a fact as superseded by setting its validity end."""
         self._conn.execute(
             "UPDATE facts SET valid_to = ?, superseded_by = ?, superseded_at = ? WHERE id = ?",
@@ -313,8 +306,7 @@ class Store:
     def get_last_reflection(self) -> ReflectionRun | None:
         """Return the most recently started reflection run, or None."""
         row: Any = self._conn.execute(
-            f"SELECT {self._REFLECTION_COLS} FROM reflections "
-            "ORDER BY started_at DESC LIMIT 1"
+            f"SELECT {self._REFLECTION_COLS} FROM reflections ORDER BY started_at DESC LIMIT 1"
         ).fetchone()
         return ReflectionRun.from_row(tuple(row)) if row else None
 
@@ -332,3 +324,98 @@ class Store:
     def vec_count(self) -> int:
         row: Any = self._conn.execute("SELECT COUNT(*) FROM vec_episodes").fetchone()
         return int(row[0])
+
+    # ------------------------------------------------------------------
+    # Entities
+    # ------------------------------------------------------------------
+
+    _ENTITY_COLS = "id, name, type, aliases, first_seen, last_seen"
+
+    def find_or_create_entity(self, name: str, entity_type: str, now: datetime) -> Entity:
+        """Return existing entity by name, or create one.
+
+        Always updates last_seen to *now*.
+        """
+        existing = self.get_entity_by_name(name)
+        if existing is not None:
+            self._conn.execute(
+                "UPDATE entities SET last_seen = ? WHERE id = ?",
+                (now.isoformat(), existing.id),
+            )
+            self._conn.commit()
+            existing.last_seen = now
+            return existing
+        entity_id = str(uuid.uuid4())
+        self._conn.execute(
+            f"INSERT INTO entities ({self._ENTITY_COLS}) VALUES (?, ?, ?, ?, ?, ?)",
+            (entity_id, name, entity_type, "[]", now.isoformat(), now.isoformat()),
+        )
+        self._conn.commit()
+        return Entity(
+            id=entity_id,
+            name=name,
+            type=entity_type,
+            aliases=[],
+            first_seen=now,
+            last_seen=now,
+        )
+
+    def get_entity_by_name(self, name: str) -> Entity | None:
+        """Fetch a single entity by its canonical name."""
+        row: Any = self._conn.execute(
+            f"SELECT {self._ENTITY_COLS} FROM entities WHERE name = ?", (name,)
+        ).fetchone()
+        return Entity.from_row(tuple(row)) if row else None
+
+    def get_all_entities(self) -> list[Entity]:
+        """Return all known entities."""
+        rows: list[Any] = self._conn.execute(f"SELECT {self._ENTITY_COLS} FROM entities").fetchall()
+        return [Entity.from_row(tuple(r)) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Edges
+    # ------------------------------------------------------------------
+
+    def insert_edge(
+        self,
+        src_id: str,
+        dst_id: str,
+        relation: str,
+        weight: float,
+        created_at: datetime,
+    ) -> None:
+        """Insert or accumulate a graph edge (Hebbian weight reinforcement)."""
+        self._conn.execute(
+            """
+            INSERT INTO edges (src_id, dst_id, relation, weight, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(src_id, dst_id, relation)
+            DO UPDATE SET weight = weight + excluded.weight
+            """,
+            (src_id, dst_id, relation, weight, created_at.isoformat()),
+        )
+        self._conn.commit()
+
+    def get_neighbors(self, node_id: str) -> list[tuple[str, float]]:
+        """Return (neighbor_id, weight) from both directions of all edges."""
+        rows: list[Any] = self._conn.execute(
+            """
+            SELECT dst_id, weight FROM edges WHERE src_id = ?
+            UNION
+            SELECT src_id, weight FROM edges WHERE dst_id = ?
+            """,
+            (node_id, node_id),
+        ).fetchall()
+        return [(str(r[0]), float(r[1])) for r in rows]
+
+    def get_episodes_by_ids(self, ids: list[str]) -> list[Episode]:
+        """Bulk-fetch episodes by id list; silently skips unknown ids."""
+        if not ids:
+            return []
+        placeholders = ",".join("?" * len(ids))
+        rows: list[Any] = self._conn.execute(
+            "SELECT id, content, timestamp, actors, tags, salience, emotional_valence, "
+            f"summary_of, importance_score FROM episodes WHERE id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        return [Episode.from_row(tuple(r)) for r in rows]

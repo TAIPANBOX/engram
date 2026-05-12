@@ -9,12 +9,51 @@ from engram.models import SearchResult
 from engram.store import Store
 
 
-def recall(query: str, k: int, store: Store, embedder: Embedder) -> list[SearchResult]:
+def recall(
+    query: str,
+    k: int,
+    store: Store,
+    embedder: Embedder,
+    *,
+    mode: str = "cosine",
+    depth: int = 2,
+    decay: float = 0.5,
+    alpha: float = 0.6,
+    beta: float = 0.3,
+    gamma: float = 0.1,
+) -> list[SearchResult]:
     """Return the top-k episodes most similar to *query*.
 
-    Access events are logged transparently; importance scores are reflected
-    in the returned SearchResult objects.
+    Args:
+        query: Natural-language search query.
+        k: Maximum number of results.
+        store: Active store instance.
+        embedder: Embedder for the query.
+        mode: ``"cosine"`` (default) or ``"spreading"`` for graph-based recall.
+        depth: BFS hops for spreading mode.
+        decay: Activation decay per hop for spreading mode.
+        alpha: Cosine weight in spreading score.
+        beta: Graph activation weight in spreading score.
+        gamma: Importance weight in spreading score.
+
+    Returns:
+        List of :class:`SearchResult` ordered by descending score.
     """
+    if mode == "spreading":
+        from engram.graph import spreading_recall
+
+        return spreading_recall(
+            query,
+            k,
+            store,
+            embedder,
+            depth=depth,
+            decay=decay,
+            alpha=alpha,
+            beta=beta,
+            gamma=gamma,
+        )
+
     query_vec = embedder.embed(query)
     hits = store.search_episodes(query_vec, k)
     now = datetime.now(tz=UTC)

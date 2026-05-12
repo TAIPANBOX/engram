@@ -86,6 +86,18 @@ def reflect(
                     store.close_fact(old.id, valid_to=now, superseded_by=fact.id)
                     contradictions_resolved += 1
 
+            # Entity extraction and episode→entity edges (Hebbian reinforcement).
+            for name in (fact.subject, fact.object):
+                entity = store.find_or_create_entity(name, "unknown", now)
+                for ep_id in episode_ids:
+                    store.insert_edge(
+                        ep_id,
+                        entity.id,
+                        "mentions",
+                        weight=fact.confidence,
+                        created_at=now,
+                    )
+
     # Decay + prune.
     run_decay(store, cfg, now)
     store.prune_episodes(cfg.threshold)

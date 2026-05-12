@@ -45,8 +45,8 @@ class SearchResult:
     """A retrieval hit returned by recall()."""
 
     episode: Episode
-    score: float      # cosine similarity in [0, 1], higher is better
-    distance: float   # raw L2 distance from vec index
+    score: float  # cosine similarity in [0, 1], higher is better
+    distance: float  # raw L2 distance from vec index
     importance: float = 1.0  # cached importance score at time of retrieval
 
 
@@ -126,6 +126,29 @@ class Entity:
     aliases: list[str] = field(default_factory=list)
     first_seen: datetime | None = None
     last_seen: datetime | None = None
+
+    @classmethod
+    def from_row(cls, row: tuple[Any, ...]) -> Entity:
+        """Construct from a DB row (id, name, type, aliases, first_seen, last_seen)."""
+        return cls(
+            id=row[0],
+            name=row[1],
+            type=row[2],
+            aliases=json.loads(row[3] or "[]"),
+            first_seen=datetime.fromisoformat(row[4]) if row[4] else None,
+            last_seen=datetime.fromisoformat(row[5]) if row[5] else None,
+        )
+
+
+@dataclass
+class Edge:
+    """A directed graph edge between two memory nodes."""
+
+    src_id: str
+    dst_id: str
+    relation: str
+    weight: float = 1.0
+    created_at: datetime = field(default_factory=lambda: datetime(2000, 1, 1))
 
 
 # Convenience type alias used by Store
