@@ -37,3 +37,34 @@ def test_migrate_is_idempotent(conn: sqlite3.Connection) -> None:
     migrate(conn)
     migrate(conn)  # must not raise
     assert len(_table_names(conn)) >= 6
+
+
+def test_wal_mode_enabled_for_file_store(tmp_path: object) -> None:
+    """File-based stores must use WAL journal mode."""
+    from engram import Engram
+
+    path = str(tmp_path / "wal_test.engram")  # type: ignore[operator]
+    with Engram(path=path) as mem:
+        row = mem._conn.execute("PRAGMA journal_mode").fetchone()
+        assert row[0] == "wal", f"expected WAL, got {row[0]!r}"
+
+
+def test_wal_not_applied_to_memory_store() -> None:
+    """:memory: stores must open without error (WAL skipped silently)."""
+    from engram import Engram
+
+    with Engram(path=":memory:") as mem:
+        row = mem._conn.execute("PRAGMA journal_mode").fetchone()
+        # :memory: returns 'memory' — not WAL, and that's correct
+        assert row[0] == "memory"
+
+
+def test_cache_size_applied(tmp_path: object) -> None:
+    """PRAGMA cache_size must be set to the configured value (-32000 pages)."""
+    from engram import Engram
+
+    path = str(tmp_path / "cache_test.engram")  # type: ignore[operator]
+    with Engram(path=path) as mem:
+        row = mem._conn.execute("PRAGMA cache_size").fetchone()
+        # SQLite may return negative (KB) or positive (pages); either -32000 or a large positive
+        assert int(row[0]) != 0

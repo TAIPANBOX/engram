@@ -53,6 +53,31 @@ class ReflectionThread(threading.Thread):
             raise self._exc
 
 
+def _configure_connection(conn: sqlite3.Connection, path: str) -> None:
+    """Apply performance PRAGMAs to a freshly opened SQLite connection.
+
+    WAL mode allows readers and writers to run concurrently: observe() and
+    recall() no longer block each other, and reflect_async() can write facts
+    while the main thread reads.  synchronous=NORMAL is safe under WAL because
+    a crash mid-WAL leaves the main database intact; only the uncommitted
+    WAL entries are discarded.
+
+    cache_size and temp_store are applied to both file and in-memory databases.
+    """
+    # WAL is file-only; :memory: uses its own journaling (no-op if set, but skip for clarity).
+    if path != ":memory:":
+        conn.execute("PRAGMA journal_mode=WAL")
+        # NORMAL: fsync only at WAL checkpoint, not after every commit.
+        # Safe under WAL; would be unsafe under the default DELETE journal.
+        conn.execute("PRAGMA synchronous=NORMAL")
+
+    # 32 MB page cache (default is ~2 MB). Keeps hot pages in memory,
+    # reducing repeated reads for spreading-activation and decay queries.
+    conn.execute("PRAGMA cache_size=-32000")
+    # Temporary tables/indices in RAM instead of a temp file on disk.
+    conn.execute("PRAGMA temp_store=MEMORY")
+
+
 class Engram:
     """Single-file cognitive memory store for AI agents.
 
@@ -84,6 +109,7 @@ class Engram:
         self._decay_cfg = decay_config or DecayConfig()
         self._llm = llm
 
+        _configure_connection(self._conn, self._path)
         self._embedder = Embedder(embedder_model)
         migrate(self._conn, dim=self._embedder.dim)
         self._store = Store(self._conn, dim=self._embedder.dim, agent_id=agent_id)
