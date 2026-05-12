@@ -118,9 +118,7 @@ def test_compress_mixed_importance(tmp_path) -> None:
     path = str(tmp_path / "mixed.engram")
     stub = StubLLMAdapter(summary="Compressed.")
     with Engram(path=path, llm=stub) as mem:
-        mem.observe_many([
-            ObserveInput(content=f"Low importance event {i}") for i in range(4)
-        ])
+        mem.observe_many([ObserveInput(content=f"Low importance event {i}") for i in range(4)])
         # Set two as low, two as high
         eps = mem._store.get_episodes_since(None)
         for i, ep in enumerate(eps):

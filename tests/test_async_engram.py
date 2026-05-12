@@ -36,11 +36,13 @@ async def test_async_recall_hybrid(tmp_path) -> None:
 async def test_async_observe_many(tmp_path) -> None:
     path = str(tmp_path / "async_many.engram")
     async with AsyncEngram(path=path) as mem:
-        ids = await mem.observe_many([
-            ObserveInput(content="Event one"),
-            ObserveInput(content="Event two"),
-            ObserveInput(content="Event three"),
-        ])
+        ids = await mem.observe_many(
+            [
+                ObserveInput(content="Event one"),
+                ObserveInput(content="Event two"),
+                ObserveInput(content="Event three"),
+            ]
+        )
     assert len(ids) == 3
 
 

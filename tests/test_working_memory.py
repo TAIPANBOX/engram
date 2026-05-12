@@ -88,7 +88,7 @@ def test_lru_evicted() -> None:
     # access "a" to make it MRU; "b" is now LRU
     wm.get("a")
     wm.set("d", "4")
-    assert wm.get("b") is None   # evicted
+    assert wm.get("b") is None  # evicted
     assert wm.get("a") is not None
     assert wm.get("c") is not None
     assert wm.get("d") is not None

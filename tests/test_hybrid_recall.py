@@ -11,13 +11,15 @@ from engram import Engram, ObserveInput
 def mem(tmp_path):
     path = str(tmp_path / "hybrid.engram")
     with Engram(path=path) as m:
-        m.observe_many([
-            ObserveInput(content="Alice joined Globex as Chief Technology Officer"),
-            ObserveInput(content="Q3 budget was approved at five hundred thousand dollars"),
-            ObserveInput(content="Ivan transferred from Acme Corporation to Globex"),
-            ObserveInput(content="The quarterly board meeting discussed merger strategy"),
-            ObserveInput(content="Bob presented the annual revenue forecast to stakeholders"),
-        ])
+        m.observe_many(
+            [
+                ObserveInput(content="Alice joined Globex as Chief Technology Officer"),
+                ObserveInput(content="Q3 budget was approved at five hundred thousand dollars"),
+                ObserveInput(content="Ivan transferred from Acme Corporation to Globex"),
+                ObserveInput(content="The quarterly board meeting discussed merger strategy"),
+                ObserveInput(content="Bob presented the annual revenue forecast to stakeholders"),
+            ]
+        )
         yield m
 
 
@@ -58,8 +60,9 @@ def test_hybrid_custom_weights(mem: Engram) -> None:
 
 
 def test_hybrid_all_vector_weight(mem: Engram) -> None:
-    results_hybrid = mem.recall("board merger strategy", k=3, mode="hybrid",
-                                vector_weight=1.0, fts_weight=0.0)
+    results_hybrid = mem.recall(
+        "board merger strategy", k=3, mode="hybrid", vector_weight=1.0, fts_weight=0.0
+    )
     results_cosine = mem.recall("board merger strategy", k=3, mode="cosine")
     # Both modes should surface results; scores are computed differently but ids overlap
     hybrid_ids = {r.episode.id for r in results_hybrid}
@@ -80,10 +83,12 @@ def test_hybrid_fts_index_populated_on_insert(tmp_path) -> None:
 def test_hybrid_observe_many_fts_populated(tmp_path) -> None:
     path = str(tmp_path / "fts_batch.engram")
     with Engram(path=path) as mem:
-        mem.observe_many([
-            ObserveInput(content="Batch term alpha42 first"),
-            ObserveInput(content="Batch term beta99 second"),
-        ])
+        mem.observe_many(
+            [
+                ObserveInput(content="Batch term alpha42 first"),
+                ObserveInput(content="Batch term beta99 second"),
+            ]
+        )
         r1 = mem.recall("alpha42", k=1, mode="hybrid")
         r2 = mem.recall("beta99", k=1, mode="hybrid")
     assert "alpha42" in r1[0].episode.content

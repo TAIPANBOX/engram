@@ -13,11 +13,13 @@ from engram import Engram, ObserveInput
 def populated(tmp_path):
     path = str(tmp_path / "source.engram")
     with Engram(path=path) as mem:
-        mem.observe_many([
-            ObserveInput(content="Alice joined Globex as CTO", actors=["Alice"], tags=["hr"]),
-            ObserveInput(content="Q3 budget approved at $500k", tags=["finance"]),
-            ObserveInput(content="Ivan transferred from Acme to Globex", actors=["Ivan"]),
-        ])
+        mem.observe_many(
+            [
+                ObserveInput(content="Alice joined Globex as CTO", actors=["Alice"], tags=["hr"]),
+                ObserveInput(content="Q3 budget approved at $500k", tags=["finance"]),
+                ObserveInput(content="Ivan transferred from Acme to Globex", actors=["Ivan"]),
+            ]
+        )
         mem.assert_fact("Alice", "role", "CTO", confidence=0.95)
         mem.assert_fact("Ivan", "works_at", "Globex", confidence=0.9)
     return path

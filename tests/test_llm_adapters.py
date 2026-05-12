@@ -30,9 +30,11 @@ def _episode(content: str) -> Episode:
 
 EPISODES = [_episode("Alice joined Globex"), _episode("Ivan transferred from Acme")]
 
-FACTS_JSON = json.dumps([
-    {"subject": "Alice", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
-])
+FACTS_JSON = json.dumps(
+    [
+        {"subject": "Alice", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
+    ]
+)
 
 
 # ------------------------------------------------------------------
@@ -62,7 +64,10 @@ def test_gemini_satisfies_protocol() -> None:
 
 def test_gemini_import_error_without_sdk() -> None:
     adapter = GeminiAdapter(api_key="fake")
-    with patch.dict("sys.modules", {"google": None, "google.genai": None}), pytest.raises(ImportError, match="engram\\[gemini\\]"):
+    with (
+        patch.dict("sys.modules", {"google": None, "google.genai": None}),
+        pytest.raises(ImportError, match="engram\\[gemini\\]"),
+    ):
         adapter._get_client()
 
 
@@ -71,12 +76,17 @@ def test_gemini_extract_facts() -> None:
     mock_client = MagicMock()
     mock_client.models.generate_content.return_value = _make_gemini_response(FACTS_JSON)
 
-    with patch.object(adapter, "_get_client", return_value=mock_client), patch("engram.llm.GeminiAdapter.extract_facts", wraps=adapter.extract_facts):
+    with (
+        patch.object(adapter, "_get_client", return_value=mock_client),
+        patch("engram.llm.GeminiAdapter.extract_facts", wraps=adapter.extract_facts),
+    ):
         # patch the inner import of types
         mock_types = MagicMock()
         mock_types.GenerateContentConfig = MagicMock(return_value=MagicMock())
-        with patch.dict("sys.modules", {"google.genai.types": mock_types,
-                                         "google.genai": MagicMock(types=mock_types)}):
+        with patch.dict(
+            "sys.modules",
+            {"google.genai.types": mock_types, "google.genai": MagicMock(types=mock_types)},
+        ):
             facts, tokens = adapter.extract_facts(EPISODES)
     assert len(facts) == 1
     assert facts[0]["subject"] == "Alice"
@@ -93,8 +103,10 @@ def test_gemini_summarise() -> None:
     with patch.object(adapter, "_get_client", return_value=mock_client):
         mock_types = MagicMock()
         mock_types.GenerateContentConfig = MagicMock(return_value=MagicMock())
-        with patch.dict("sys.modules", {"google.genai.types": mock_types,
-                                         "google.genai": MagicMock(types=mock_types)}):
+        with patch.dict(
+            "sys.modules",
+            {"google.genai.types": mock_types, "google.genai": MagicMock(types=mock_types)},
+        ):
             summary, tokens = adapter.summarise(EPISODES)
     assert "Alice" in summary
     assert tokens == 20
@@ -109,8 +121,10 @@ def test_gemini_no_usage_metadata() -> None:
     with patch.object(adapter, "_get_client", return_value=mock_client):
         mock_types = MagicMock()
         mock_types.GenerateContentConfig = MagicMock(return_value=MagicMock())
-        with patch.dict("sys.modules", {"google.genai.types": mock_types,
-                                         "google.genai": MagicMock(types=mock_types)}):
+        with patch.dict(
+            "sys.modules",
+            {"google.genai.types": mock_types, "google.genai": MagicMock(types=mock_types)},
+        ):
             _, tokens = adapter.extract_facts(EPISODES)
     assert tokens == 0
 
@@ -145,7 +159,10 @@ def test_deepseek_is_openai_subclass() -> None:
 
 def test_deepseek_import_error_without_sdk() -> None:
     adapter = DeepSeekAdapter(api_key="fake")
-    with patch.dict("sys.modules", {"openai": None}), pytest.raises(ImportError, match="engram\\[openai\\]"):
+    with (
+        patch.dict("sys.modules", {"openai": None}),
+        pytest.raises(ImportError, match="engram\\[openai\\]"),
+    ):
         adapter._get_client()
 
 

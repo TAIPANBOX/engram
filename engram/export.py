@@ -49,16 +49,14 @@ def export_json(mem: Engram, dest: str | Path) -> dict[str, Any]:
     entities = [
         dict(row)
         for row in conn.execute(
-            "SELECT id, name, type, aliases, first_seen, last_seen "
-            "FROM entities ORDER BY name ASC"
+            "SELECT id, name, type, aliases, first_seen, last_seen FROM entities ORDER BY name ASC"
         ).fetchall()
     ]
 
     edges = [
         dict(row)
         for row in conn.execute(
-            "SELECT src_id, dst_id, relation, weight, created_at "
-            "FROM edges ORDER BY created_at ASC"
+            "SELECT src_id, dst_id, relation, weight, created_at FROM edges ORDER BY created_at ASC"
         ).fetchall()
     ]
 
@@ -119,10 +117,11 @@ def import_json(mem: Engram, src: str | Path, *, merge: bool = False) -> dict[st
             # Caller should re-embed if vector search is needed after import.
             dim = mem._store._dim
             import numpy as np
+
             zero = np.zeros(dim, dtype=np.float32).tobytes()
-            rowid = conn.execute(
-                "SELECT rowid FROM episodes WHERE id = ?", (ep["id"],)
-            ).fetchone()[0]
+            rowid = conn.execute("SELECT rowid FROM episodes WHERE id = ?", (ep["id"],)).fetchone()[
+                0
+            ]
             conn.execute(
                 "INSERT OR IGNORE INTO vec_episodes(rowid, embedding) VALUES (?, ?)",
                 (rowid, zero),
