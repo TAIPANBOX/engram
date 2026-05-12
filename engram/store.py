@@ -22,20 +22,27 @@ def _distance_to_score(distance: float) -> float:
     return float(1.0 / (1.0 + distance))
 
 
+_EPISODE_COLS = (
+    "id, content, timestamp, actors, tags, salience, "
+    "emotional_valence, summary_of, importance_score, agent_id"
+)
+
+
 class Store:
     """Thin wrapper around a sqlite3 connection providing episode persistence."""
 
-    def __init__(self, conn: sqlite3.Connection, dim: int) -> None:
+    def __init__(self, conn: sqlite3.Connection, dim: int, agent_id: str | None = None) -> None:
         self._conn = conn
         self._dim = dim
+        self._agent_id = agent_id
 
     def insert_episode(self, ep: Episode, embedding: EmbeddedVector) -> None:
         """Persist an episode and its embedding vector."""
         cur = self._conn.execute(
             """
             INSERT INTO episodes (id, content, timestamp, actors, tags,
-                                  salience, emotional_valence, summary_of)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                  salience, emotional_valence, summary_of, agent_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ep.id,
@@ -46,6 +53,7 @@ class Store:
                 ep.salience,
                 ep.emotional_valence,
                 json.dumps(ep.summary_of),
+                self._agent_id,
             ),
         )
         rowid: int = cur.lastrowid  # type: ignore[assignment]
@@ -58,37 +66,51 @@ class Store:
     def get_episode(self, episode_id: str) -> Episode | None:
         """Fetch a single episode by id."""
         row: Any = self._conn.execute(
-            "SELECT id, content, timestamp, actors, tags, salience, emotional_valence, "
-            "summary_of, importance_score FROM episodes WHERE id = ?",
+            f"SELECT {_EPISODE_COLS} FROM episodes WHERE id = ?",
             (episode_id,),
         ).fetchone()
         return Episode.from_row(tuple(row)) if row else None
 
     def search_episodes(
-        self, query_embedding: EmbeddedVector, k: int
+        self,
+        query_embedding: EmbeddedVector,
+        k: int,
+        agent_id: str | None = None,
     ) -> list[tuple[Episode, float, float]]:
         """Return top-k episodes by vector similarity.
 
+        Args:
+            agent_id: If set, restrict results to this agent's episodes.
+                      If None, search across all agents.
+
         Returns list of (episode, score, distance) triples, best first.
         """
+        if agent_id is not None:
+            agent_clause = "AND e.agent_id = ?"
+            params: tuple[Any, ...] = (_serialize(query_embedding), k, agent_id)
+        else:
+            agent_clause = ""
+            params = (_serialize(query_embedding), k)
+
         rows: list[Any] = self._conn.execute(
-            """
+            f"""
             SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
                    e.salience, e.emotional_valence, e.summary_of, e.importance_score,
-                   v.distance
+                   e.agent_id, v.distance
             FROM vec_episodes v
             JOIN episodes e ON e.rowid = v.rowid
             WHERE v.embedding MATCH ?
               AND k = ?
+              {agent_clause}
             ORDER BY v.distance ASC
             """,
-            (_serialize(query_embedding), k),
+            params,
         ).fetchall()
 
         results: list[tuple[Episode, float, float]] = []
         for row in rows:
-            ep = Episode.from_row(tuple(row[:9]))
-            distance = float(row[9])
+            ep = Episode.from_row(tuple(row[:10]))
+            distance = float(row[10])
             score = _distance_to_score(distance)
             results.append((ep, score, distance))
         return results
@@ -98,8 +120,9 @@ class Store:
     ) -> None:
         """Record a retrieval event in the access log."""
         self._conn.execute(
-            "INSERT INTO access_log (memory_id, accessed_at, query, rank) VALUES (?, ?, ?, ?)",
-            (memory_id, accessed_at.isoformat(), query, rank),
+            "INSERT INTO access_log (memory_id, accessed_at, query, rank, agent_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (memory_id, accessed_at.isoformat(), query, rank, self._agent_id),
         )
         self._conn.commit()
 
@@ -124,10 +147,7 @@ class Store:
         self._conn.commit()
 
     def get_episodes_for_decay(self) -> list[tuple[str, float, float, datetime]]:
-        """Return minimal episode data needed by the decay job.
-
-        Returns list of (id, salience, emotional_valence, timestamp).
-        """
+        """Return minimal episode data needed by the decay job (all agents)."""
         rows: list[Any] = self._conn.execute(
             "SELECT id, salience, emotional_valence, timestamp FROM episodes"
         ).fetchall()
@@ -136,19 +156,29 @@ class Store:
         ]
 
     def get_episodes_since(self, since: datetime | None, limit: int = 200) -> list[Episode]:
-        """Return episodes created after *since* (or all episodes if None), up to *limit*."""
+        """Return episodes created after *since* for this agent, up to *limit*.
+
+        When the store has an agent_id, only that agent's episodes are returned.
+        """
+        if self._agent_id is not None:
+            agent_clause = "AND agent_id = ?"
+            agent_params: tuple[Any, ...] = (self._agent_id,)
+        else:
+            agent_clause = ""
+            agent_params = ()
+
         if since is None:
             rows: list[Any] = self._conn.execute(
-                "SELECT id, content, timestamp, actors, tags, salience, emotional_valence, "
-                "summary_of, importance_score FROM episodes ORDER BY timestamp ASC LIMIT ?",
-                (limit,),
+                f"SELECT {_EPISODE_COLS} FROM episodes WHERE 1=1 {agent_clause} "
+                "ORDER BY timestamp ASC LIMIT ?",
+                (*agent_params, limit),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT id, content, timestamp, actors, tags, salience, emotional_valence, "
-                "summary_of, importance_score FROM episodes WHERE timestamp > ? "
+                f"SELECT {_EPISODE_COLS} FROM episodes "
+                f"WHERE timestamp > ? {agent_clause} "
                 "ORDER BY timestamp ASC LIMIT ?",
-                (since.isoformat(), limit),
+                (since.isoformat(), *agent_params, limit),
             ).fetchall()
         return [Episode.from_row(tuple(r)) for r in rows]
 
@@ -363,8 +393,8 @@ class Store:
             """
             INSERT INTO reflections (id, started_at, finished_at, episodes_processed,
                                      facts_extracted, contradictions_resolved,
-                                     model_used, cost_tokens)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                     model_used, cost_tokens, agent_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run.id,
@@ -375,6 +405,7 @@ class Store:
                 run.contradictions_resolved,
                 run.model_used,
                 run.cost_tokens,
+                self._agent_id,
             ),
         )
         self._conn.commit()
@@ -408,10 +439,17 @@ class Store:
         self._conn.commit()
 
     def get_last_reflection(self) -> ReflectionRun | None:
-        """Return the most recently started reflection run, or None."""
-        row: Any = self._conn.execute(
-            f"SELECT {self._REFLECTION_COLS} FROM reflections ORDER BY started_at DESC LIMIT 1"
-        ).fetchone()
+        """Return the most recently started reflection run for this agent, or None."""
+        if self._agent_id is not None:
+            row: Any = self._conn.execute(
+                f"SELECT {self._REFLECTION_COLS} FROM reflections "
+                "WHERE agent_id = ? ORDER BY started_at DESC LIMIT 1",
+                (self._agent_id,),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                f"SELECT {self._REFLECTION_COLS} FROM reflections ORDER BY started_at DESC LIMIT 1"
+            ).fetchone()
         return ReflectionRun.from_row(tuple(row)) if row else None
 
     def get_reflection_by_id(self, run_id: str) -> ReflectionRun | None:
@@ -422,7 +460,12 @@ class Store:
         return ReflectionRun.from_row(tuple(row)) if row else None
 
     def episode_count(self) -> int:
-        row: Any = self._conn.execute("SELECT COUNT(*) FROM episodes").fetchone()
+        if self._agent_id is not None:
+            row: Any = self._conn.execute(
+                "SELECT COUNT(*) FROM episodes WHERE agent_id = ?", (self._agent_id,)
+            ).fetchone()
+        else:
+            row = self._conn.execute("SELECT COUNT(*) FROM episodes").fetchone()
         return int(row[0])
 
     def vec_count(self) -> int:
@@ -530,16 +573,28 @@ class Store:
         ).fetchall()
         return [(str(r[0]), float(r[1])) for r in rows]
 
-    def get_episodes_by_ids(self, ids: list[str]) -> list[Episode]:
-        """Bulk-fetch episodes by id list; silently skips unknown ids."""
+    def get_episodes_by_ids(
+        self, ids: list[str], agent_id: str | None = None
+    ) -> list[Episode]:
+        """Bulk-fetch episodes by id list; silently skips unknown ids.
+
+        Args:
+            agent_id: If set, restrict to this agent's episodes.
+        """
         if not ids:
             return []
         placeholders = ",".join("?" * len(ids))
-        rows: list[Any] = self._conn.execute(
-            "SELECT id, content, timestamp, actors, tags, salience, emotional_valence, "
-            f"summary_of, importance_score FROM episodes WHERE id IN ({placeholders})",
-            ids,
-        ).fetchall()
+        if agent_id is not None:
+            rows: list[Any] = self._conn.execute(
+                f"SELECT {_EPISODE_COLS} FROM episodes "
+                f"WHERE id IN ({placeholders}) AND agent_id = ?",
+                (*ids, agent_id),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                f"SELECT {_EPISODE_COLS} FROM episodes WHERE id IN ({placeholders})",
+                ids,
+            ).fetchall()
         return [Episode.from_row(tuple(r)) for r in rows]
 
     # ------------------------------------------------------------------
@@ -547,32 +602,47 @@ class Store:
     # ------------------------------------------------------------------
 
     def search_episodes_as_of(
-        self, query_embedding: EmbeddedVector, k: int, as_of: datetime
+        self,
+        query_embedding: EmbeddedVector,
+        k: int,
+        as_of: datetime,
+        agent_id: str | None = None,
     ) -> list[tuple[Episode, float, float]]:
         """Like search_episodes but restricted to episodes with timestamp <= as_of.
 
         Uses k*10 as the inner vector-index limit so there are enough candidates
         after the timestamp filter; returns at most k results.
+
+        Args:
+            agent_id: If set, restrict to this agent's episodes.
         """
         k_inner = k * 10
+        if agent_id is not None:
+            agent_clause = "AND e.agent_id = ?"
+            params: tuple[Any, ...] = (_serialize(query_embedding), k_inner, as_of.isoformat(), agent_id)
+        else:
+            agent_clause = ""
+            params = (_serialize(query_embedding), k_inner, as_of.isoformat())
+
         rows: list[Any] = self._conn.execute(
-            """
+            f"""
             SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
                    e.salience, e.emotional_valence, e.summary_of, e.importance_score,
-                   v.distance
+                   e.agent_id, v.distance
             FROM vec_episodes v
             JOIN episodes e ON e.rowid = v.rowid
             WHERE v.embedding MATCH ?
               AND k = ?
               AND e.timestamp <= ?
+              {agent_clause}
             ORDER BY v.distance ASC
             """,
-            (_serialize(query_embedding), k_inner, as_of.isoformat()),
+            params,
         ).fetchall()
         results: list[tuple[Episode, float, float]] = []
         for row in rows[:k]:
-            ep = Episode.from_row(tuple(row[:9]))
-            distance = float(row[9])
+            ep = Episode.from_row(tuple(row[:10]))
+            distance = float(row[10])
             score = _distance_to_score(distance)
             results.append((ep, score, distance))
         return results
@@ -591,3 +661,18 @@ class Store:
             (subject, as_of.isoformat(), as_of.isoformat()),
         ).fetchall()
         return [Fact.from_row(tuple(r)) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Multi-agent
+    # ------------------------------------------------------------------
+
+    def list_agents(self) -> list[str]:
+        """Return all distinct agent_ids that have written episodes to this store.
+
+        Episodes with no agent (agent_id IS NULL) are excluded.
+        """
+        rows: list[Any] = self._conn.execute(
+            "SELECT DISTINCT agent_id FROM episodes "
+            "WHERE agent_id IS NOT NULL ORDER BY agent_id"
+        ).fetchall()
+        return [str(r[0]) for r in rows]

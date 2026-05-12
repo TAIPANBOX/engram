@@ -59,6 +59,12 @@ class Engram:
     Args:
         path: Path to the .engram SQLite file, or ``":memory:"`` for an in-process store.
         embedder_model: fastembed model name used for all embeddings.
+        decay_config: Importance decay parameters.
+        llm: LLM adapter for reflection (optional).
+        agent_id: Scope this instance to a named agent. When set, all writes are
+            tagged with this id and reads are filtered to it by default. Pass
+            ``cross_agent=True`` to :meth:`recall` to search across all agents.
+            Leave as ``None`` for single-agent or unscoped use (backward-compatible).
     """
 
     def __init__(
@@ -67,8 +73,10 @@ class Engram:
         embedder_model: str = DEFAULT_MODEL,
         decay_config: DecayConfig | None = None,
         llm: LLMAdapter | None = None,
+        agent_id: str | None = None,
     ) -> None:
         self._path = str(path)
+        self._agent_id = agent_id
         # check_same_thread=False: reflect_async() runs on a background thread
         # but SQLite serialises writes, so this is safe for our single-writer model.
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
@@ -78,7 +86,7 @@ class Engram:
 
         self._embedder = Embedder(embedder_model)
         migrate(self._conn, dim=self._embedder.dim)
-        self._store = Store(self._conn, dim=self._embedder.dim)
+        self._store = Store(self._conn, dim=self._embedder.dim, agent_id=agent_id)
 
     # ------------------------------------------------------------------
     # Write
@@ -134,6 +142,7 @@ class Engram:
         depth: int = 2,
         decay: float = 0.5,
         as_of: datetime | None = None,
+        cross_agent: bool = False,
     ) -> list[SearchResult]:
         """Retrieve the top-k episodes most semantically similar to *query*.
 
@@ -144,10 +153,13 @@ class Engram:
             depth: BFS hops; only used when ``mode="spreading"``.
             decay: Activation decay per hop; only used when ``mode="spreading"``.
             as_of: If set, only episodes with timestamp <= as_of are searched.
+            cross_agent: If ``True``, search all agents' episodes regardless of
+                the instance's ``agent_id``. Ignored when no ``agent_id`` is set.
 
         Returns:
             List of :class:`SearchResult` ordered by descending score.
         """
+        agent_id = None if cross_agent else self._agent_id
         return _recall(
             query,
             k,
@@ -157,6 +169,7 @@ class Engram:
             depth=depth,
             decay=decay,
             as_of=as_of,
+            agent_id=agent_id,
         )
 
     # ------------------------------------------------------------------
@@ -326,6 +339,21 @@ class Engram:
             :class:`ForgetResult` with counts of deleted episodes and facts.
         """
         return self._store.forget_entity(entity_name)
+
+    # ------------------------------------------------------------------
+    # Multi-agent
+    # ------------------------------------------------------------------
+
+    def list_agents(self) -> list[str]:
+        """Return all distinct agent_ids that have written to this store.
+
+        Useful for inspecting a shared store and iterating over agents.
+        Episodes written without an agent_id are not included.
+
+        Returns:
+            Sorted list of agent id strings.
+        """
+        return self._store.list_agents()
 
     # ------------------------------------------------------------------
     # Maintenance

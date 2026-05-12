@@ -23,10 +23,12 @@ class Episode:
     emotional_valence: float = 0.0
     summary_of: list[str] = field(default_factory=list)
     importance_score: float = 1.0
+    agent_id: str | None = None
 
     @classmethod
     def from_row(cls, row: tuple[Any, ...]) -> Episode:
-        """Construct from a DB row (id, content, timestamp, actors, tags, salience, emotional_valence, summary_of, importance_score)."""
+        """Construct from a DB row (id, content, timestamp, actors, tags, salience,
+        emotional_valence, summary_of, importance_score[, agent_id])."""
         return cls(
             id=row[0],
             content=row[1],
@@ -37,6 +39,7 @@ class Episode:
             emotional_valence=row[6],
             summary_of=json.loads(row[7] or "[]"),
             importance_score=float(row[8]) if row[8] is not None else 1.0,
+            agent_id=row[9] if len(row) > 9 else None,
         )
 
 

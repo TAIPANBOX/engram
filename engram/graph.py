@@ -20,6 +20,7 @@ def spreading_recall(
     beta: float = 0.3,
     gamma: float = 0.1,
     as_of: datetime | None = None,
+    agent_id: str | None = None,
 ) -> list[SearchResult]:
     """BFS spreading-activation retrieval.
 
@@ -34,15 +35,16 @@ def spreading_recall(
         beta: Weight of graph activation in final score.
         gamma: Weight of importance score in final score.
         as_of: If set, seeds are restricted to episodes with timestamp <= as_of.
+        agent_id: If set, restrict to this agent's episodes.
 
     Returns:
         Top-k :class:`SearchResult` ordered by descending combined score.
     """
     query_vec = embedder.embed(query)
     if as_of is not None:
-        seeds = store.search_episodes_as_of(query_vec, k * 3, as_of)
+        seeds = store.search_episodes_as_of(query_vec, k * 3, as_of, agent_id=agent_id)
     else:
-        seeds = store.search_episodes(query_vec, k * 3)
+        seeds = store.search_episodes(query_vec, k * 3, agent_id=agent_id)
 
     # Seed activation from cosine similarity.
     activation: dict[str, float] = {}
@@ -69,8 +71,8 @@ def spreading_recall(
             if not frontier:
                 break
 
-    # Filter to episode nodes only (entity node ids won't resolve).
-    episodes = store.get_episodes_by_ids(list(activation.keys()))
+    # Filter to episode nodes only; apply agent scope when set.
+    episodes = store.get_episodes_by_ids(list(activation.keys()), agent_id=agent_id)
 
     now = datetime.now(tz=UTC)
     results: list[SearchResult] = []

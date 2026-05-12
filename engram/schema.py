@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS episodes (
     salience        REAL DEFAULT 0.5,
     emotional_valence REAL DEFAULT 0.0,
     summary_of      JSON DEFAULT '[]',
-    importance_score REAL NOT NULL DEFAULT 1.0
+    importance_score REAL NOT NULL DEFAULT 1.0,
+    agent_id        TEXT DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS facts (
@@ -64,14 +65,16 @@ CREATE TABLE IF NOT EXISTS reflections (
     facts_extracted         INTEGER DEFAULT 0,
     contradictions_resolved INTEGER DEFAULT 0,
     model_used              TEXT,
-    cost_tokens             INTEGER DEFAULT 0
+    cost_tokens             INTEGER DEFAULT 0,
+    agent_id                TEXT DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS access_log (
     memory_id   TEXT NOT NULL,
     accessed_at DATETIME NOT NULL,
     query       TEXT,
-    rank        INTEGER
+    rank        INTEGER,
+    agent_id    TEXT DEFAULT NULL
 );
 """
 
@@ -89,6 +92,17 @@ def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
         conn.execute("ALTER TABLE episodes ADD COLUMN importance_score REAL NOT NULL DEFAULT 1.0")
     with contextlib.suppress(sqlite3.OperationalError):
         conn.execute("ALTER TABLE facts ADD COLUMN extracted_by TEXT REFERENCES reflections(id)")
+
+    # Backfill columns for databases created before v1.3 (multi-agent).
+    with contextlib.suppress(sqlite3.OperationalError):
+        conn.execute("ALTER TABLE episodes ADD COLUMN agent_id TEXT DEFAULT NULL")
+    with contextlib.suppress(sqlite3.OperationalError):
+        conn.execute("ALTER TABLE reflections ADD COLUMN agent_id TEXT DEFAULT NULL")
+    with contextlib.suppress(sqlite3.OperationalError):
+        conn.execute("ALTER TABLE access_log ADD COLUMN agent_id TEXT DEFAULT NULL")
+
+    with contextlib.suppress(sqlite3.OperationalError):
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_agent ON episodes(agent_id)")
 
     # vec0 virtual table dimension is baked in at creation; IF NOT EXISTS guards re-runs.
     conn.execute(

@@ -22,6 +22,7 @@ def recall(
     beta: float = 0.3,
     gamma: float = 0.1,
     as_of: datetime | None = None,
+    agent_id: str | None = None,
 ) -> list[SearchResult]:
     """Return the top-k episodes most similar to *query*.
 
@@ -37,6 +38,7 @@ def recall(
         beta: Graph activation weight in spreading score.
         gamma: Importance weight in spreading score.
         as_of: If set, only episodes with timestamp <= as_of are considered.
+        agent_id: If set, restrict results to this agent. None searches all agents.
 
     Returns:
         List of :class:`SearchResult` ordered by descending score.
@@ -55,13 +57,14 @@ def recall(
             beta=beta,
             gamma=gamma,
             as_of=as_of,
+            agent_id=agent_id,
         )
 
     query_vec = embedder.embed(query)
     if as_of is not None:
-        hits = store.search_episodes_as_of(query_vec, k, as_of)
+        hits = store.search_episodes_as_of(query_vec, k, as_of, agent_id=agent_id)
     else:
-        hits = store.search_episodes(query_vec, k)
+        hits = store.search_episodes(query_vec, k, agent_id=agent_id)
     now = datetime.now(tz=UTC)
     results: list[SearchResult] = []
     for rank, (ep, score, dist) in enumerate(hits):

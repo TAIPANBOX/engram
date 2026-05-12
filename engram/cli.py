@@ -2,14 +2,16 @@
 
 Usage::
 
-    engram inspect  <path>
-    engram recall   <path> <query>  [--k K] [--mode MODE] [--as-of DATE]
-    engram timeline <path> <entity>
-    engram observe  <path> <content> [--actors NAME...] [--tags TAG...]
-                                     [--salience F] [--valence F]
-    engram reflect  <path> [--llm anthropic|openai] [--model MODEL]
-                           [--base-url URL]
-    engram forget   <path> (--episode ID | --entity NAME)
+    engram inspect     <path> [--agent-id ID]
+    engram recall      <path> <query> [--k K] [--mode MODE] [--as-of DATE]
+                              [--agent-id ID] [--cross-agent]
+    engram timeline    <path> <entity>
+    engram observe     <path> <content> [--actors NAME...] [--tags TAG...]
+                              [--salience F] [--valence F] [--agent-id ID]
+    engram reflect     <path> [--llm anthropic|openai] [--model MODEL]
+                              [--base-url URL] [--agent-id ID]
+    engram forget      <path> (--episode ID | --entity NAME) [--agent-id ID]
+    engram list-agents <path>
 """
 
 from __future__ import annotations
@@ -30,14 +32,14 @@ def _die(msg: str) -> None:
     sys.exit(1)
 
 
-def _open(path: str) -> Any:
+def _open(path: str, agent_id: str | None = None, must_exist: bool = True) -> Any:
     """Open an Engram store, exiting on failure."""
     from engram import Engram
 
     p = Path(path)
-    if path != ":memory:" and not p.exists():
+    if must_exist and path != ":memory:" and not p.exists():
         _die(f"file not found: {path}")
-    return Engram(path=path)
+    return Engram(path=path, agent_id=agent_id)
 
 
 def _fmt_date(dt: Any) -> str:
@@ -58,7 +60,7 @@ def _fmt_actors(actors: list[str]) -> str:
 def _cmd_inspect(args: argparse.Namespace) -> None:
     import os
 
-    with _open(args.path) as mem:
+    with _open(args.path, agent_id=getattr(args, "agent_id", None)) as mem:
         store = mem._store
         ep = store.episode_count()
         vec = store.vec_count()
@@ -99,8 +101,14 @@ def _cmd_recall(args: argparse.Namespace) -> None:
         except ValueError:
             _die(f"invalid --as-of date: {args.as_of!r}  (expected ISO format, e.g. 2024-03-01)")
 
-    with _open(args.path) as mem:
-        results = mem.recall(args.query, k=args.k, mode=args.mode, as_of=as_of)
+    with _open(args.path, agent_id=getattr(args, "agent_id", None)) as mem:
+        results = mem.recall(
+            args.query,
+            k=args.k,
+            mode=args.mode,
+            as_of=as_of,
+            cross_agent=getattr(args, "cross_agent", False),
+        )
 
     mode_label = f"mode={args.mode}"
     if as_of:
@@ -123,7 +131,7 @@ def _cmd_recall(args: argparse.Namespace) -> None:
 
 
 def _cmd_timeline(args: argparse.Namespace) -> None:
-    with _open(args.path) as mem:
+    with _open(args.path, agent_id=getattr(args, "agent_id", None)) as mem:
         facts = mem.timeline(args.entity)
 
     print(f'\nFact timeline for "{args.entity}"\n')
@@ -145,7 +153,7 @@ def _cmd_timeline(args: argparse.Namespace) -> None:
 
 
 def _cmd_observe(args: argparse.Namespace) -> None:
-    with _open(args.path) as mem:
+    with _open(args.path, agent_id=getattr(args, "agent_id", None), must_exist=False) as mem:
         ep_id = mem.observe(
             args.content,
             actors=args.actors or [],
@@ -184,7 +192,7 @@ def _cmd_reflect(args: argparse.Namespace) -> None:
     print(f"\nRunning reflection on {args.path}…", flush=True)
     t0 = time.monotonic()
 
-    with _open(args.path) as mem:
+    with _open(args.path, agent_id=getattr(args, "agent_id", None)) as mem:
         if llm is not None:
             mem._llm = llm
         run = mem.reflect()
@@ -198,13 +206,25 @@ def _cmd_reflect(args: argparse.Namespace) -> None:
     print(f"  Done in {elapsed:.1f}s\n")
 
 
+def _cmd_list_agents(args: argparse.Namespace) -> None:
+    with _open(args.path) as mem:
+        agents = mem.list_agents()
+    if not agents:
+        print("\n  (no agents found — store has no agent-scoped episodes)\n")
+        return
+    print(f"\nAgents in {args.path}\n")
+    for agent in agents:
+        print(f"  {agent}")
+    print()
+
+
 def _cmd_forget(args: argparse.Namespace) -> None:
     if not args.episode and not args.entity:
         _die("specify --episode <id> or --entity <name>")
     if args.episode and args.entity:
         _die("--episode and --entity are mutually exclusive")
 
-    with _open(args.path) as mem:
+    with _open(args.path, agent_id=getattr(args, "agent_id", None)) as mem:
         if args.episode:
             try:
                 mem.forget(args.episode)
@@ -236,9 +256,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="cmd", metavar="COMMAND")
 
+    def _add_agent_id(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--agent-id",
+            default=None,
+            metavar="ID",
+            dest="agent_id",
+            help="scope this operation to a named agent",
+        )
+
     # inspect
     p_inspect = sub.add_parser("inspect", help="show store statistics")
     p_inspect.add_argument("path", help="path to .engram file")
+    _add_agent_id(p_inspect)
 
     # recall
     p_recall = sub.add_parser("recall", help="search episodes by semantic query")
@@ -256,6 +286,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="DATE",
         help="time-travel: only episodes before this ISO date (e.g. 2024-03-01)",
+    )
+    _add_agent_id(p_recall)
+    p_recall.add_argument(
+        "--cross-agent",
+        action="store_true",
+        default=False,
+        dest="cross_agent",
+        help="search all agents' episodes (overrides --agent-id scope)",
     )
 
     # timeline
@@ -295,6 +333,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="F",
         help="emotional valence, -1 to +1 (default 0.0)",
     )
+    _add_agent_id(p_obs)
 
     # reflect
     p_ref = sub.add_parser("reflect", help="run the reflection loop")
@@ -317,12 +356,18 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="URL",
         help="custom base URL for OpenAI-compatible endpoints (Ollama, etc.)",
     )
+    _add_agent_id(p_ref)
 
     # forget
     p_forget = sub.add_parser("forget", help="erase an episode or entity")
     p_forget.add_argument("path", help="path to .engram file")
     p_forget.add_argument("--episode", default=None, metavar="ID", help="episode id to erase")
     p_forget.add_argument("--entity", default=None, metavar="NAME", help="entity name to erase")
+    _add_agent_id(p_forget)
+
+    # list-agents
+    p_la = sub.add_parser("list-agents", help="list all agent ids in the store")
+    p_la.add_argument("path", help="path to .engram file")
 
     return parser
 
@@ -347,6 +392,7 @@ _HANDLERS = {
     "observe": _cmd_observe,
     "reflect": _cmd_reflect,
     "forget": _cmd_forget,
+    "list-agents": _cmd_list_agents,
 }
 
 
