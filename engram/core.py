@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from engram.decay import run_decay
 from engram.embedder import DEFAULT_MODEL, Embedder
 from engram.importance import DecayConfig
-from engram.models import Fact, ReflectionRun, SearchResult
+from engram.models import Fact, ForgetResult, ReflectionRun, SearchResult
 from engram.retrieval import recall as _recall
 from engram.schema import migrate
 from engram.store import Store
@@ -287,6 +287,45 @@ class Engram:
         thread = ReflectionThread(self)
         thread.start()
         return thread
+
+    # ------------------------------------------------------------------
+    # Forget / erasure
+    # ------------------------------------------------------------------
+
+    def forget(self, episode_id: str, *, reason: str | None = None) -> None:
+        """Permanently erase a single episode from all memory structures.
+
+        Removes the episode from the vector index, access log, and graph edges.
+        This operation is irreversible.
+
+        Args:
+            episode_id: Id of the episode to erase (returned by :meth:`observe`).
+            reason: Optional note for caller's audit trail (not persisted).
+
+        Raises:
+            KeyError: If no episode with this id exists.
+        """
+        if not self._store.delete_episode(episode_id):
+            raise KeyError(f"Episode not found: {episode_id!r}")
+
+    def forget_entity(self, entity_name: str) -> ForgetResult:
+        """Erase all stored data about an entity (GDPR right-to-be-forgotten).
+
+        Permanently deletes:
+
+        - Episodes where the entity is listed in ``actors``
+        - Facts where the entity appears as subject or object
+        - The entity record and all graph edges connected to it
+
+        This operation is irreversible.
+
+        Args:
+            entity_name: Canonical name of the entity to erase (e.g. ``"Ivan"``).
+
+        Returns:
+            :class:`ForgetResult` with counts of deleted episodes and facts.
+        """
+        return self._store.forget_entity(entity_name)
 
     # ------------------------------------------------------------------
     # Maintenance

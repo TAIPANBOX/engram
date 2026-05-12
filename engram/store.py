@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from engram.models import EmbeddedVector, Entity, Episode, Fact, ReflectionRun
+from engram.models import EmbeddedVector, Entity, Episode, Fact, ForgetResult, ReflectionRun
 
 
 def _serialize(vec: EmbeddedVector) -> bytes:
@@ -158,16 +158,120 @@ class Store:
         Returns the number of pruned episodes.
         """
         rows: list[Any] = self._conn.execute(
-            "SELECT id FROM episodes WHERE importance_score < ?", (threshold,)
+            "SELECT rowid, id FROM episodes WHERE importance_score < ?", (threshold,)
         ).fetchall()
-        ids = [r[0] for r in rows]
-        if not ids:
+        if not rows:
             return 0
-        placeholders = ",".join("?" * len(ids))
-        self._conn.execute(f"DELETE FROM access_log WHERE memory_id IN ({placeholders})", ids)
-        self._conn.execute(f"DELETE FROM episodes WHERE id IN ({placeholders})", ids)
+        rowids = [r[0] for r in rows]
+        ids = [r[1] for r in rows]
+        rowid_ph = ",".join("?" * len(rowids))
+        id_ph = ",".join("?" * len(ids))
+        self._conn.execute(f"DELETE FROM vec_episodes WHERE rowid IN ({rowid_ph})", rowids)
+        self._conn.execute(f"DELETE FROM access_log WHERE memory_id IN ({id_ph})", ids)
+        self._conn.execute(f"DELETE FROM edges WHERE src_id IN ({id_ph})", ids)
+        self._conn.execute(f"DELETE FROM episodes WHERE id IN ({id_ph})", ids)
         self._conn.commit()
         return len(ids)
+
+    # ------------------------------------------------------------------
+    # Forget / erasure
+    # ------------------------------------------------------------------
+
+    def _get_episode_rowid(self, episode_id: str) -> int | None:
+        row: Any = self._conn.execute(
+            "SELECT rowid FROM episodes WHERE id = ?", (episode_id,)
+        ).fetchone()
+        return int(row[0]) if row else None
+
+    def delete_episode(self, episode_id: str) -> bool:
+        """Hard-delete an episode and all associated data.
+
+        Removes the row from episodes, vec_episodes (ANN index), access_log,
+        and any graph edges sourced from this episode.
+
+        Returns:
+            True if the episode existed and was deleted; False if not found.
+        """
+        rowid = self._get_episode_rowid(episode_id)
+        if rowid is None:
+            return False
+        self._conn.execute("DELETE FROM vec_episodes WHERE rowid = ?", (rowid,))
+        self._conn.execute("DELETE FROM access_log WHERE memory_id = ?", (episode_id,))
+        self._conn.execute(
+            "DELETE FROM edges WHERE src_id = ? OR dst_id = ?", (episode_id, episode_id)
+        )
+        self._conn.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
+        self._conn.commit()
+        return True
+
+    def delete_fact(self, fact_id: str) -> bool:
+        """Hard-delete a single fact by id.
+
+        Returns:
+            True if the fact existed and was deleted; False if not found.
+        """
+        cur = self._conn.execute("DELETE FROM facts WHERE id = ?", (fact_id,))
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def get_episodes_by_actor(self, actor_name: str) -> list[Episode]:
+        """Return all episodes where *actor_name* appears in the actors list."""
+        rows: list[Any] = self._conn.execute(
+            "SELECT id, content, timestamp, actors, tags, salience, emotional_valence, "
+            "summary_of, importance_score FROM episodes "
+            "WHERE EXISTS (SELECT 1 FROM json_each(actors) WHERE value = ?)",
+            (actor_name,),
+        ).fetchall()
+        return [Episode.from_row(tuple(r)) for r in rows]
+
+    def get_facts_by_entity(self, entity_name: str) -> list[Fact]:
+        """Return all facts (active or superseded) where entity is subject or object."""
+        rows: list[Any] = self._conn.execute(
+            f"SELECT {self._FACT_COLS} FROM facts WHERE subject = ? OR object = ?",
+            (entity_name, entity_name),
+        ).fetchall()
+        return [Fact.from_row(tuple(r)) for r in rows]
+
+    def delete_entity(self, entity_name: str) -> bool:
+        """Delete an entity record and all graph edges connected to it.
+
+        Returns:
+            True if the entity existed; False if not found.
+        """
+        entity = self.get_entity_by_name(entity_name)
+        if entity is None:
+            return False
+        self._conn.execute(
+            "DELETE FROM edges WHERE src_id = ? OR dst_id = ?", (entity.id, entity.id)
+        )
+        self._conn.execute("DELETE FROM entities WHERE id = ?", (entity.id,))
+        self._conn.commit()
+        return True
+
+    def forget_entity(self, entity_name: str) -> ForgetResult:
+        """Erase all stored data about *entity_name* (GDPR right-to-be-forgotten).
+
+        Deletes:
+        - Episodes where the entity is listed in ``actors``
+        - Facts where ``subject`` or ``object`` equals the entity name
+        - The entity record and all graph edges connected to it
+
+        Returns:
+            :class:`ForgetResult` with counts of deleted episodes and facts.
+        """
+        episodes = self.get_episodes_by_actor(entity_name)
+        episodes_deleted = sum(1 for ep in episodes if self.delete_episode(ep.id))
+
+        facts = self.get_facts_by_entity(entity_name)
+        facts_deleted = sum(1 for f in facts if self.delete_fact(f.id))
+
+        self.delete_entity(entity_name)
+
+        return ForgetResult(
+            entity=entity_name,
+            episodes_deleted=episodes_deleted,
+            facts_deleted=facts_deleted,
+        )
 
     # ------------------------------------------------------------------
     # Facts

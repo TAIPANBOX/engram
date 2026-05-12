@@ -151,5 +151,14 @@ class Edge:
     created_at: datetime = field(default_factory=lambda: datetime(2000, 1, 1))
 
 
+@dataclass
+class ForgetResult:
+    """Result of a forget_entity() call."""
+
+    entity: str
+    episodes_deleted: int
+    facts_deleted: int
+
+
 # Convenience type alias used by Store
 EmbeddedVector = np.ndarray

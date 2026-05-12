@@ -6,7 +6,7 @@ See DESIGN.md for architecture and intended API.
 from engram.core import Engram, ReflectionThread
 from engram.importance import DecayConfig
 from engram.llm import AnthropicAdapter, OpenAIAdapter, StubLLMAdapter
-from engram.models import Episode, Fact, ReflectionRun, SearchResult
+from engram.models import Episode, Fact, ForgetResult, ReflectionRun, SearchResult
 
 __version__ = "1.0.0"
 
@@ -16,6 +16,7 @@ __all__ = [
     "Engram",
     "Episode",
     "Fact",
+    "ForgetResult",
     "OpenAIAdapter",
     "ReflectionRun",
     "ReflectionThread",
