@@ -182,5 +182,15 @@ class ObserveInput:
     emotional_valence: float = 0.0
 
 
+@dataclass
+class CompressionRun:
+    """Result of a compress() call."""
+
+    episodes_removed: int
+    summaries_created: int
+    model_used: str | None = None
+    cost_tokens: int = 0
+
+
 # Convenience type alias used by Store
 EmbeddedVector = np.ndarray

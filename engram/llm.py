@@ -21,6 +21,18 @@ EXTRACTION_SYSTEM_PROMPT = (
     'Example: [{"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9}]'
 )
 
+SUMMARISATION_SYSTEM_PROMPT = (
+    "You are a memory compressor for an AI agent. "
+    "Given a list of episodic observations, write a single concise summary "
+    "that preserves all key facts, actors, and events. "
+    "Respond ONLY with the summary text — no intro, no bullet points, no markdown."
+)
+
+
+def _build_summary_message(episodes: list[Episode]) -> str:
+    lines = [f"{i + 1}. {ep.content}" for i, ep in enumerate(episodes)]
+    return "Summarise these observations into one paragraph:\n" + "\n".join(lines)
+
 
 def _build_user_message(episodes: list[Episode]) -> str:
     lines = [f"{i + 1}. {ep.content}" for i, ep in enumerate(episodes)]
@@ -65,6 +77,14 @@ class LLMAdapter(Protocol):
         """
         ...
 
+    def summarise(self, episodes: list[Episode]) -> tuple[str, int]:
+        """Summarise a list of episodes into a single paragraph.
+
+        Returns:
+            Tuple of (summary_text, token_count).
+        """
+        ...
+
 
 class AnthropicAdapter:
     """Uses the Anthropic Messages API for fact extraction.
@@ -99,6 +119,18 @@ class AnthropicAdapter:
         )
         tokens = response.usage.input_tokens + response.usage.output_tokens
         return _parse_facts_json(response.content[0].text), tokens
+
+    def summarise(self, episodes: list[Episode]) -> tuple[str, int]:
+        """Summarise episodes into one paragraph via Claude."""
+        client = self._get_client()
+        response = client.messages.create(
+            model=self.model_name,
+            max_tokens=512,
+            system=SUMMARISATION_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": _build_summary_message(episodes)}],
+        )
+        tokens = response.usage.input_tokens + response.usage.output_tokens
+        return response.content[0].text.strip(), tokens
 
 
 class OpenAIAdapter:
@@ -143,9 +175,22 @@ class OpenAIAdapter:
         tokens = response.usage.total_tokens if response.usage else 0
         return _parse_facts_json(response.choices[0].message.content or ""), tokens
 
+    def summarise(self, episodes: list[Episode]) -> tuple[str, int]:
+        """Summarise episodes into one paragraph via OpenAI."""
+        client = self._get_client()
+        response = client.chat.completions.create(
+            model=self.model_name,
+            messages=[
+                {"role": "system", "content": SUMMARISATION_SYSTEM_PROMPT},
+                {"role": "user", "content": _build_summary_message(episodes)},
+            ],
+        )
+        tokens = response.usage.total_tokens if response.usage else 0
+        return (response.choices[0].message.content or "").strip(), tokens
+
 
 class StubLLMAdapter:
-    """Returns pre-configured facts verbatim. For tests only."""
+    """Returns pre-configured facts and summaries verbatim. For tests only."""
 
     model_name: str = "stub"
 
@@ -153,9 +198,14 @@ class StubLLMAdapter:
         self,
         facts: list[dict[str, Any]] | None = None,
         tokens: int = 0,
+        summary: str = "Stub summary.",
     ) -> None:
         self._facts = facts or []
         self._tokens = tokens
+        self._summary = summary
 
     def extract_facts(self, episodes: list[Episode]) -> tuple[list[dict[str, Any]], int]:
         return list(self._facts), self._tokens
+
+    def summarise(self, episodes: list[Episode]) -> tuple[str, int]:
+        return self._summary, self._tokens

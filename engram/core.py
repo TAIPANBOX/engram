@@ -13,7 +13,14 @@ from typing import TYPE_CHECKING, Any
 from engram.decay import run_decay
 from engram.embedder import DEFAULT_MODEL, Embedder
 from engram.importance import DecayConfig
-from engram.models import Fact, ForgetResult, ObserveInput, ReflectionRun, SearchResult
+from engram.models import (
+    CompressionRun,
+    Fact,
+    ForgetResult,
+    ObserveInput,
+    ReflectionRun,
+    SearchResult,
+)
 from engram.retrieval import recall as _recall
 from engram.schema import migrate
 from engram.store import Store
@@ -489,6 +496,76 @@ class Engram:
             Number of episodes updated.
         """
         return run_decay(self._store, self._decay_cfg)
+
+    def compress(
+        self,
+        *,
+        max_episodes: int = 1000,
+        importance_threshold: float = 0.3,
+        batch_size: int = 20,
+    ) -> CompressionRun:
+        """Compress low-importance episodes into LLM-generated summaries.
+
+        Selects episodes whose ``importance_score`` is below
+        *importance_threshold*, groups them into batches of *batch_size*,
+        calls the LLM to produce a single summary paragraph per batch, stores
+        each summary as a new episode (with ``summary_of`` pointing to the
+        originals), then hard-deletes the originals.
+
+        No-op if no LLM adapter was provided or the store has fewer than
+        *max_episodes* episodes.
+
+        Args:
+            max_episodes: Only compress when the store exceeds this count.
+                Protects small stores from premature lossy compression.
+            importance_threshold: Episodes with ``importance_score`` below
+                this value are candidates for compression (default 0.3).
+            batch_size: Number of episodes grouped into each summary.
+
+        Returns:
+            :class:`CompressionRun` with counts of removed episodes and
+            created summaries.
+        """
+        if self._llm is None:
+            return CompressionRun(episodes_removed=0, summaries_created=0)
+
+        total = self._store.episode_count()
+        if total <= max_episodes:
+            return CompressionRun(episodes_removed=0, summaries_created=0)
+
+        candidates = self._store.get_episodes_below_importance(importance_threshold)
+        if not candidates:
+            return CompressionRun(episodes_removed=0, summaries_created=0)
+
+        removed = 0
+        created = 0
+        total_tokens = 0
+
+        for i in range(0, len(candidates), batch_size):
+            batch = candidates[i : i + batch_size]
+            summary_text, tokens = self._llm.summarise(batch)
+            total_tokens += tokens
+
+            summary_ep_id = self.observe(
+                summary_text,
+                tags=["summary"],
+                salience=max(ep.salience for ep in batch),
+            )
+            # Update summary_of field on the new episode
+            batch_ids = [ep.id for ep in batch]
+            self._store.set_summary_of(summary_ep_id, batch_ids)
+
+            for ep in batch:
+                self._store.delete_episode(ep.id)
+                removed += 1
+            created += 1
+
+        return CompressionRun(
+            episodes_removed=removed,
+            summaries_created=created,
+            model_used=self._llm.model_name,
+            cost_tokens=total_tokens,
+        )
 
     # ------------------------------------------------------------------
     # Housekeeping

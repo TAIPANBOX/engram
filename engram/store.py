@@ -571,6 +571,31 @@ class Store:
             row = self._conn.execute("SELECT COUNT(*) FROM episodes").fetchone()
         return int(row[0])
 
+    def get_episodes_below_importance(self, threshold: float) -> list[Episode]:
+        """Return episodes whose importance_score < threshold, oldest first."""
+        if self._agent_id is not None:
+            rows: list[Any] = self._conn.execute(
+                f"SELECT {_EPISODE_COLS} FROM episodes "
+                "WHERE importance_score < ? AND agent_id = ? "
+                "ORDER BY timestamp ASC",
+                (threshold, self._agent_id),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                f"SELECT {_EPISODE_COLS} FROM episodes "
+                "WHERE importance_score < ? ORDER BY timestamp ASC",
+                (threshold,),
+            ).fetchall()
+        return [Episode.from_row(tuple(r)) for r in rows]
+
+    def set_summary_of(self, episode_id: str, source_ids: list[str]) -> None:
+        """Update the summary_of field of an existing episode."""
+        self._conn.execute(
+            "UPDATE episodes SET summary_of = ? WHERE id = ?",
+            (json.dumps(source_ids), episode_id),
+        )
+        self._conn.commit()
+
     def vec_count(self) -> int:
         row: Any = self._conn.execute("SELECT COUNT(*) FROM vec_episodes").fetchone()
         return int(row[0])
