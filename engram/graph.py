@@ -19,6 +19,7 @@ def spreading_recall(
     alpha: float = 0.6,
     beta: float = 0.3,
     gamma: float = 0.1,
+    as_of: datetime | None = None,
 ) -> list[SearchResult]:
     """BFS spreading-activation retrieval.
 
@@ -32,12 +33,16 @@ def spreading_recall(
         alpha: Weight of cosine similarity in final score.
         beta: Weight of graph activation in final score.
         gamma: Weight of importance score in final score.
+        as_of: If set, seeds are restricted to episodes with timestamp <= as_of.
 
     Returns:
         Top-k :class:`SearchResult` ordered by descending combined score.
     """
     query_vec = embedder.embed(query)
-    seeds = store.search_episodes(query_vec, k * 3)
+    if as_of is not None:
+        seeds = store.search_episodes_as_of(query_vec, k * 3, as_of)
+    else:
+        seeds = store.search_episodes(query_vec, k * 3)
 
     # Seed activation from cosine similarity.
     activation: dict[str, float] = {}

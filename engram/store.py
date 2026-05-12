@@ -419,3 +419,53 @@ class Store:
             ids,
         ).fetchall()
         return [Episode.from_row(tuple(r)) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Bitemporal queries
+    # ------------------------------------------------------------------
+
+    def search_episodes_as_of(
+        self, query_embedding: EmbeddedVector, k: int, as_of: datetime
+    ) -> list[tuple[Episode, float, float]]:
+        """Like search_episodes but restricted to episodes with timestamp <= as_of.
+
+        Uses k*10 as the inner vector-index limit so there are enough candidates
+        after the timestamp filter; returns at most k results.
+        """
+        k_inner = k * 10
+        rows: list[Any] = self._conn.execute(
+            """
+            SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
+                   e.salience, e.emotional_valence, e.summary_of, e.importance_score,
+                   v.distance
+            FROM vec_episodes v
+            JOIN episodes e ON e.rowid = v.rowid
+            WHERE v.embedding MATCH ?
+              AND k = ?
+              AND e.timestamp <= ?
+            ORDER BY v.distance ASC
+            """,
+            (_serialize(query_embedding), k_inner, as_of.isoformat()),
+        ).fetchall()
+        results: list[tuple[Episode, float, float]] = []
+        for row in rows[:k]:
+            ep = Episode.from_row(tuple(row[:9]))
+            distance = float(row[9])
+            score = _distance_to_score(distance)
+            results.append((ep, score, distance))
+        return results
+
+    def get_facts_as_of(self, subject: str, as_of: datetime) -> list[Fact]:
+        """Return facts for *subject* that were valid at *as_of*.
+
+        A fact is valid at T when valid_from <= T and (valid_to IS NULL or valid_to > T).
+        """
+        rows: list[Any] = self._conn.execute(
+            f"SELECT {self._FACT_COLS} FROM facts "
+            "WHERE subject = ? "
+            "  AND valid_from <= ? "
+            "  AND (valid_to IS NULL OR valid_to > ?)"
+            " ORDER BY valid_from ASC",
+            (subject, as_of.isoformat(), as_of.isoformat()),
+        ).fetchall()
+        return [Fact.from_row(tuple(r)) for r in rows]

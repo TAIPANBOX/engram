@@ -102,6 +102,7 @@ class Engram:
         mode: str = "cosine",
         depth: int = 2,
         decay: float = 0.5,
+        as_of: datetime | None = None,
     ) -> list[SearchResult]:
         """Retrieve the top-k episodes most semantically similar to *query*.
 
@@ -111,11 +112,21 @@ class Engram:
             mode: ``"cosine"`` (default) or ``"spreading"`` for graph-based recall.
             depth: BFS hops; only used when ``mode="spreading"``.
             decay: Activation decay per hop; only used when ``mode="spreading"``.
+            as_of: If set, only episodes with timestamp <= as_of are searched.
 
         Returns:
             List of :class:`SearchResult` ordered by descending score.
         """
-        return _recall(query, k, self._store, self._embedder, mode=mode, depth=depth, decay=decay)
+        return _recall(
+            query,
+            k,
+            self._store,
+            self._embedder,
+            mode=mode,
+            depth=depth,
+            decay=decay,
+            as_of=as_of,
+        )
 
     # ------------------------------------------------------------------
     # Facts
@@ -189,6 +200,19 @@ class Engram:
             "confidence": fact.confidence,
             "model": model_used,
         }
+
+    def timeline(self, entity: str) -> list[Fact]:
+        """Return the full fact history for *entity* in chronological order.
+
+        Includes superseded facts so the caller can see how beliefs evolved.
+
+        Args:
+            entity: Subject name (e.g. ``"Ivan"``).
+
+        Returns:
+            All facts where ``subject == entity``, sorted by ``valid_from`` ascending.
+        """
+        return self._store.get_all_facts(entity)
 
     def contradictions(self) -> list[tuple[Fact, Fact]]:
         """Return pairs of active facts that share (subject, predicate) but differ in object.
