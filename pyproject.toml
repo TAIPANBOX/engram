@@ -9,7 +9,7 @@ description = "Embeddable cognitive memory layer for AI agents"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Your Name", email = "you@example.com" }]
+authors = [{ name = "Yurii Kostiuk", email = "yukosemail@gmail.com" }]
 keywords = ["ai", "agents", "memory", "llm", "vector-database", "cognitive-architecture"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -44,9 +44,9 @@ dev = [
 engram-bench = "engram.benchmarks.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/yourname/engram"
-Repository = "https://github.com/yourname/engram"
-Documentation = "https://github.com/yourname/engram#readme"
+Homepage = "https://github.com/taipanbox/engram"
+Repository = "https://github.com/taipanbox/engram"
+Documentation = "https://github.com/taipanbox/engram#readme"
 
 [tool.hatch.build.targets.wheel]
 packages = ["engram"]

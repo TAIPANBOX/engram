@@ -1,130 +1,218 @@
-# Getting Started
+# Getting Started with Engram
 
-Покрокова інструкція як запустити Engram з нуля за допомогою Claude Code.
-
----
-
-## 1. Встанови Claude Code
-
-**macOS / Linux:**
-```bash
-curl -fsSL https://claude.ai/install.sh | sh
-```
-
-**Windows:** через WSL або Git Bash (рідного Windows-інсталера повноцінного немає).
-
-Перевір що працює:
-```bash
-claude --version
-```
+This guide walks you from zero to a working Engram integration in under 5 minutes.
 
 ---
 
-## 2. Помісти цю папку куди тобі зручно
-
-Наприклад:
-```bash
-mv engram ~/projects/
-cd ~/projects/engram
-```
-
----
-
-## 3. Ініціалізуй git
+## 1. Install
 
 ```bash
-git init
-git add .
-git commit -m "chore: initial scaffold from design"
+pip install engram
 ```
 
----
-
-## 4. Запусти Claude Code
+For LLM-powered reflection (optional):
 
 ```bash
-claude
+pip install 'engram[anthropic]'   # Claude
+pip install 'engram[openai]'      # OpenAI / Ollama
 ```
 
-При першому запуску попросить залогінитись через OAuth або API key.
+For integrations:
 
----
-
-## 5. Перший промпт у сесії
-
-Скопіюй і встав:
-
-```
-Прочитай CLAUDE.md і DESIGN.md. Це повний дизайн проєкту Engram —
-embeddable cognitive memory layer для AI-агентів.
-
-Не пиши код. Тільки підсумуй коротко що ти зрозумів і запропонуй
-конкретний план реалізації v0.1 skeleton (за DESIGN.md розділ 7):
-які саме файли треба створити, в якому порядку, і чому.
-
-Після цього я зайду в Plan Mode і ми затвердимо план.
+```bash
+pip install 'engram[mcp]'         # MCP server
+pip install 'engram[langchain]'   # LangChain
+pip install 'engram[llamaindex]'  # LlamaIndex
 ```
 
 ---
 
-## 6. Затверди план у Plan Mode
+## 2. First memory store
 
-Натисни `Shift+Tab` двічі — Claude Code зайде в Plan Mode (він може читати файли і думати, але **не змінює нічого**).
+```python
+from engram import Engram
 
-Обговори план, попроси уточнень, попроси альтернативи. Коли все ок — вийди з Plan Mode (`Shift+Tab` ще раз) і дозволь реалізацію.
+# Single-file store (like SQLite)
+mem = Engram(path="./my_agent.engram")
 
----
+# Record observations — instant, no LLM needed
+mem.observe("Alice joined the team as lead engineer")
+mem.observe("Ivan moved from Acme to Globex last month", actors=["Ivan"])
+mem.observe("The payment service shipped on Friday", tags=["shipping"])
 
-## 7. Імплементуй v0.1 малими шматками
+# Retrieve by semantic similarity
+for r in mem.recall("Ivan job", k=3):
+    print(f"[{r.score:.2f}] {r.episode.content}")
 
-Не намагайся зробити все за одну сесію. Приблизний порядок:
-
-1. **pyproject.toml + dev tooling** → commit
-2. **Схема БД** (`engram/storage.py`) + смоук-тест → commit
-3. **`Engram.__init__` + connect**, базовий міграційний код → commit
-4. **`observe()` + embedding** → commit
-5. **`recall()` (тільки cosine)** → commit
-6. **CLI заглушка** (`python -m engram.cli`) → commit
-
-Після кожного кроку: `pytest -x` має пройти, `ruff check` чистий, `mypy engram` без помилок. Тоді commit.
-
----
-
-## 8. Корисні команди в Claude Code
-
-- `/clear` — очистити контекст між непов'язаними задачами (роби часто, це покращує якість)
-- `/init` — згенерувати/оновити CLAUDE.md (у нас він уже є, але якщо знадобиться)
-- `/help` — список усіх команд
-- `Shift+Tab` × 2 — Plan Mode (план без змін)
-- `Esc` — перервати поточну дію
+mem.close()
+```
 
 ---
 
-## 9. Правила, які зекономлять години
+## 3. Add LLM reflection (fact extraction)
 
-1. **Маленькі сесії, одна задача.** Зробив крок → `/clear` → нова сесія для наступного.
-2. **Git-commit після кожного робочого шматка** — твоя страховка.
-3. **Тести — не опційно.** Завжди проси Claude *"напиши тест і запусти його"*.
-4. **Plan Mode перед будь-чим нетривіальним.** Дешеве задоволення, велика економія.
-5. **Якщо щось ламається 2+ рази — зупинись.** Не дай Claude зануритись у спіраль. `/clear` і перепиши промпт з нуля.
+Reflection extracts structured facts from episodes and runs asynchronously — it never blocks your write path.
+
+```python
+import os
+from engram import Engram, AnthropicAdapter
+
+mem = Engram(
+    path="./my_agent.engram",
+    llm=AnthropicAdapter(),  # reads ANTHROPIC_API_KEY from env
+)
+
+mem.observe("Ivan said he's now the CTO at Globex")
+mem.observe("Alice is leading the new infrastructure project")
+
+# Trigger reflection in the background
+thread = mem.reflect_async()
+thread.join()
+
+run = thread.result
+print(f"Extracted {run.facts_extracted} facts from {run.episodes_processed} episodes")
+print(f"Resolved {run.contradictions_resolved} contradictions")
+```
 
 ---
 
-## 10. Коли v0.1 готовий
+## 4. Time travel
 
-- усі тести зелені
-- `ruff check`, `mypy engram` чисті
-- можеш виконати в Python:
-  ```python
-  from engram import Engram
-  m = Engram(path="./test.engram")
-  m.observe("Hello world")
-  print(m.recall("hello"))
-  ```
-- зробити tag: `git tag v0.1.0`
+```python
+from datetime import datetime, UTC
 
-Тоді переходиш до v0.2 (importance + decay) — див. `DESIGN.md` розділ 7.
+# What did we know about Ivan in March 2024?
+results = mem.recall(
+    "Ivan employer",
+    k=5,
+    as_of=datetime(2024, 3, 1, tzinfo=UTC),
+)
+
+# Full history of facts about Ivan
+for fact in mem.timeline("Ivan"):
+    end = fact.valid_to.date() if fact.valid_to else "present"
+    print(f"[{fact.valid_from.date()} → {end}]  Ivan {fact.predicate} {fact.object}")
+```
 
 ---
 
-Успіхів! Якщо застрягнеш — повертайся в чат з Claude (не Claude Code), показуй конкретну проблему і питай.
+## 5. Graph-based spreading activation
+
+Surfaces contextually connected episodes beyond pure semantic similarity:
+
+```python
+results = mem.recall(
+    "what do I know about Ivan?",
+    mode="spreading",
+    depth=2,    # graph traversal hops
+    decay=0.5,  # activation decay per hop
+    k=10,
+)
+```
+
+---
+
+## 6. MCP server (Claude Desktop / Cursor)
+
+```bash
+python -m engram.mcp_server --path ./my_agent.engram
+```
+
+Add to `~/.claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "command": "python",
+      "args": ["-m", "engram.mcp_server", "--path", "/absolute/path/to/my_agent.engram"]
+    }
+  }
+}
+```
+
+Available tools in Claude Desktop: `observe`, `recall`, `assert_fact`, `timeline`, `why`, `reflect`.
+
+---
+
+## 7. LangChain integration
+
+```python
+from engram import Engram
+from engram.adapters.langchain import EngramRetriever, EngramChatMessageHistory
+
+mem = Engram(path="./my_agent.engram")
+
+# Use as a retriever in RAG chains
+retriever = EngramRetriever(engram=mem, k=5)
+docs = retriever.invoke("Ivan Globex project")
+
+# Persistent chat history across sessions
+history = EngramChatMessageHistory(engram=mem)
+history.add_user_message("What did Ivan say about Globex?")
+history.add_ai_message("Ivan mentioned he joined Globex last week.")
+```
+
+---
+
+## 8. LlamaIndex integration
+
+```python
+from engram.adapters.llamaindex import EngramMemory
+from llama_index.core.llms import ChatMessage, MessageRole
+
+memory = EngramMemory.from_defaults(engram_path="./my_agent.engram", k=5)
+memory.put(ChatMessage(role=MessageRole.USER, content="Ivan joined Globex"))
+msgs = memory.get("Ivan employer")
+```
+
+---
+
+## 9. Provenance and trust
+
+```python
+# Assert a fact directly (no LLM)
+fact_id = mem.assert_fact("Ivan", "works_at", "Globex", confidence=0.95)
+
+# Explain where any fact came from
+info = mem.why(fact_id)
+print(info)
+# {
+#   "fact": "Ivan works_at Globex",
+#   "extracted_from": ["ep-uuid-1"],
+#   "extracted_by": "reflection-run-uuid",
+#   "confidence": 0.95,
+#   "model": "direct assertion"
+# }
+
+# Surface contradictions
+for a, b in mem.contradictions():
+    print(f"CONFLICT: {a.subject} {a.predicate} '{a.object}' vs '{b.object}'")
+```
+
+---
+
+## 10. Configuration
+
+```python
+from engram import Engram, DecayConfig
+
+mem = Engram(
+    path="./my_agent.engram",
+    decay_config=DecayConfig(
+        lambda_=0.1,    # Forgetting rate. 0.1 ≈ half-life ~7 days.
+        alpha=0.2,      # Reinforcement per access.
+        beta=0.1,       # Emotional valence weight.
+        threshold=0.1,  # Prune below this importance during reflect().
+    ),
+)
+```
+
+---
+
+## Next steps
+
+- Read the full [API reference in README.md](README.md)
+- Explore the [architecture and design decisions in DESIGN.md](DESIGN.md)
+- Run benchmarks: `python -m engram.benchmarks all`
+- Browse [tests/](tests/) for usage examples of every feature
