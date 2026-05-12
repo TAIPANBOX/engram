@@ -5,7 +5,7 @@
 [![PyPI version](https://badge.fury.io/py/engram.svg)](https://badge.fury.io/py/engram)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-219%20passed-green)](tests/)
+[![Tests](https://img.shields.io/badge/tests-290%20passed-green)](tests/)
 
 ---
 
@@ -53,10 +53,14 @@ Every other solution forces a trade-off. Engram doesn't.
 | Capability | Pinecone / Chroma / Qdrant | Mem0 | Zep / Graphiti | Letta (MemGPT) | LangChain memory | **Engram** |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | Vector similarity search | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ |
+| **Hybrid BM25 + vector recall** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Semantic fact triples (s, p, o) | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ |
 | **Bitemporal validity** (`as_of` time travel) | ❌ | ❌ | ⚠️ | ❌ | ❌ | ✅ |
 | **Spreading-activation retrieval** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Importance decay (Ebbinghaus) | ❌ | ❌ | ✅ | ⚠️ | ❌ | ✅ |
+| **Working memory (7±2 scratchpad)** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| **Memory compression via LLM** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| **Async API** | ❌ | ❌ | ⚠️ | ❌ | ❌ | ✅ |
 | **Provenance tracking** (`why()`) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | GDPR right-to-be-forgotten | ❌ | ⚠️ | ⚠️ | ❌ | ❌ | ✅ |
 | **Multi-agent shared store** | ❌ | ❌ | ⚠️ | ❌ | ❌ | ✅ |
@@ -77,7 +81,7 @@ Every other solution forces a trade-off. Engram doesn't.
 
 ---
 
-## Six mechanisms you won't find elsewhere
+## Seven mechanisms you won't find elsewhere
 
 ### 1. Bitemporal validity
 
@@ -100,7 +104,30 @@ mem.timeline("Ivan")
 
 Old facts are never deleted — they're closed with `valid_to`. This is standard in financial databases and audit systems, but absent from the entire AI memory space.
 
-### 2. Spreading-activation retrieval
+### 2. Hybrid BM25 + cosine recall
+
+Three retrieval modes in a single API call:
+
+```
+mode="cosine"    → pure vector similarity (semantic)
+mode="hybrid"    → FTS5 BM25 + cosine, weighted blend
+mode="spreading" → graph-based spreading activation
+```
+
+Hybrid mode runs a full-text keyword search (FTS5 BM25) and a cosine vector search in parallel, normalises both score distributions, then returns a weighted blend:
+
+```python
+# Exact keyword match + semantic understanding combined
+results = mem.recall("Alice CTO Globex", k=5, mode="hybrid")
+
+# Tune the blend — default: 70% vector, 30% BM25
+results = mem.recall("quarterly budget", k=5, mode="hybrid",
+                     vector_weight=0.5, fts_weight=0.5)
+```
+
+FTS5 index is auto-populated on migration; existing stores need no manual upgrade.
+
+### 3. Spreading-activation retrieval
 
 Naive vector search returns "what's mathematically similar." Spreading activation returns "what's contextually connected."
 
@@ -116,7 +143,7 @@ query → seed memories (cosine KNN)
 
 One memory triggers its associates, just like human recall. If Ivan is connected to Project X, a query about Ivan surfaces relevant Project X episodes even without a semantic match.
 
-### 3. Importance scoring (Ebbinghaus + Hebbian)
+### 4. Importance scoring (Ebbinghaus + Hebbian)
 
 Each memory has a dynamic importance score recomputed by `decay()`:
 
@@ -129,7 +156,24 @@ importance(m, t) =
 
 Parameters `λ`, `α`, `β` are configurable via `DecayConfig`. Memories below threshold are pruned during reflection. Important memories survive; noise decays away automatically.
 
-### 4. Reflection loop (the agent's "sleep")
+### 5. Working memory (Miller's 7±2 law)
+
+A fixed-capacity LRU scratchpad for the agent's active reasoning context. When full, the least-recently-used item is evicted — optionally flushed to the long-term Engram store so nothing is lost:
+
+```python
+from engram import WorkingMemory
+
+wm = WorkingMemory(capacity=5, engram=mem)  # evicted items → long-term store
+wm.set("task", "Summarise the quarterly report")
+wm.set("context", "Revenue grew 12% YoY — needs explanation")
+
+item = wm.get("task")      # promotes to MRU
+item = wm.peek("context")  # does NOT change LRU order
+
+wm.flush()  # write all current items to long-term store + clear
+```
+
+### 6. Reflection loop (the agent's "sleep")
 
 LLM calls happen *asynchronously*, never blocking writes:
 
@@ -146,40 +190,20 @@ thread.join()                 # wait if needed
 print(f"{thread.result.facts_extracted} facts, {thread.result.cost_tokens} tokens")
 ```
 
-This is System-2 thinking for memory. Competitors either skip it entirely or block the write path.
+### 7. Memory compression
 
-### 5. Contradiction detection + resolution
-
-Engram never silently overwrites. When a new fact conflicts with an existing one, both are kept with correct temporal bounds:
-
-```
-Fact #142: Ivan works_at "Acme"   [valid: 2023-01 → 2024-06]  ← superseded
-Fact #891: Ivan works_at "Globex" [valid: 2024-06 →    now  ]  ← current
-```
-
-Surface active contradictions at any time:
+When a store grows large, `compress()` condenses old low-importance episodes into LLM-generated summaries — reducing storage while preserving key information:
 
 ```python
-for a, b in mem.contradictions():
-    print(f"CONFLICT: {a.subject} {a.predicate} '{a.object}' vs '{b.object}'")
+result = mem.compress(
+    max_episodes=1000,       # only compress when store exceeds this
+    importance_threshold=0.3, # candidate: importance_score < threshold
+    batch_size=20,           # episodes per summary
+)
+print(f"Removed {result.episodes_removed} episodes → {result.summaries_created} summaries")
 ```
 
-### 6. Provenance tracking
-
-Every fact knows exactly where it came from — which episodes, which reflection run, which model, and with what confidence:
-
-```python
-mem.why("fact-uuid")
-# {
-#   "fact": "Ivan works_at Globex",
-#   "extracted_from": ["ep-uuid-1", "ep-uuid-2"],
-#   "extracted_by": "reflection-run-2024-06-15",
-#   "confidence": 0.87,
-#   "model": "claude-haiku-4-5-20251001"
-# }
-```
-
-Critical for AI safety and trust: the agent can *explain* what it knows and why.
+Each summary is stored as a new episode with `summary_of` pointing to the originals. The originals are hard-deleted. Compression is lossy by design — run `reflect()` first to extract facts before compressing.
 
 ---
 
@@ -234,6 +258,68 @@ mem.assert_fact("Ivan", "works_at", "Globex", confidence=0.95)
 mem.close()
 ```
 
+### Async API
+
+```python
+import asyncio
+from engram import AsyncEngram, ObserveInput
+
+async def main():
+    async with AsyncEngram(path="./agent.engram") as mem:
+        # All methods are async — event loop never blocked by ONNX or SQLite
+        await mem.observe("Alice joined Globex as CTO", actors=["Alice"])
+        await mem.observe_many([
+            ObserveInput(content="Q3 planning complete", tags=["planning"]),
+            ObserveInput(content="Ivan submitted architecture proposal", actors=["Ivan"]),
+        ])
+
+        results = await mem.recall("who joined Globex?", k=3)
+        for r in results:
+            print(f"[{r.score:.2f}] {r.episode.content}")
+
+        await mem.assert_fact("Alice", "role", "CTO")
+        facts = await mem.timeline("Alice")
+
+asyncio.run(main())
+```
+
+### Working memory scratchpad
+
+```python
+from engram import Engram, WorkingMemory
+
+with Engram(path="./agent.engram") as mem:
+    # 5-slot scratchpad; evicted items automatically saved to long-term memory
+    wm = WorkingMemory(capacity=5, engram=mem)
+
+    wm.set("goal", "Draft the board presentation")
+    wm.set("context", "Q3 revenue up 12%, but CAC increased")
+    wm.set("constraint", "Must fit 10 slides, no more")
+
+    task = wm.get("goal")        # promotes to most-recently-used
+    note = wm.peek("constraint") # reads without changing LRU order
+
+    print(f"Current slots: {len(wm)} / {wm.capacity}")
+    wm.flush()  # write everything to long-term store + clear
+```
+
+### Hybrid recall
+
+```python
+with Engram(path="./agent.engram") as mem:
+    # BM25 keyword match + cosine vector search, blended
+    results = mem.recall("Alice quarterly roadmap", k=5, mode="hybrid")
+
+    # Tune the blend weights
+    results = mem.recall(
+        "exact phrase match needed",
+        k=5,
+        mode="hybrid",
+        vector_weight=0.3,  # less semantic
+        fts_weight=0.7,     # more keyword
+    )
+```
+
 ### Bulk import with observe_many
 
 When loading historical context, `observe_many()` runs a single ONNX inference pass for the whole batch and commits all rows in one transaction — about 2× faster than calling `observe()` in a loop:
@@ -282,6 +368,28 @@ print(f"Facts: {run.facts_extracted}  Contradictions resolved: {run.contradictio
 print(f"Tokens used: {run.cost_tokens}")
 ```
 
+### Memory compression
+
+```python
+from engram import Engram, AnthropicAdapter
+
+mem = Engram(
+    path="./agent.engram",
+    llm=AnthropicAdapter(model="claude-haiku-4-5-20251001"),
+)
+
+# Compress episodes with low importance into LLM summaries
+result = mem.compress(
+    max_episodes=500,         # no-op if store is smaller than this
+    importance_threshold=0.3, # episodes below this score are candidates
+    batch_size=20,            # episodes per LLM call
+)
+print(f"Compressed {result.episodes_removed} episodes → {result.summaries_created} summaries")
+print(f"Tokens used: {result.cost_tokens}")
+
+mem.close()
+```
+
 ### Time travel
 
 ```python
@@ -298,19 +406,6 @@ past_results = mem.recall(
 for fact in mem.timeline("Ivan"):
     end = fact.valid_to.date() if fact.valid_to else "now"
     print(f"[{fact.valid_from.date()} → {end}]  Ivan {fact.predicate} {fact.object}")
-```
-
-### Spreading-activation (graph-based recall)
-
-```python
-# Surface contextually connected episodes, not just similar ones
-results = mem.recall(
-    "what happened with Ivan?",
-    k=10,
-    mode="spreading",
-    depth=2,    # graph traversal depth
-    decay=0.5,  # activation decay per hop
-)
 ```
 
 ### Multi-agent shared store
@@ -341,6 +436,23 @@ planner.close()
 coder.close()
 ```
 
+### Backup and export
+
+```python
+# Hot backup — safe to call while the store is open
+mem.backup("./agent_backup.engram")
+
+# Portable JSON export (episodes, facts, entities, edges)
+doc = mem.export_json("./agent_dump.json")
+print(f"Exported {doc['counts']['episodes']} episodes, {doc['counts']['facts']} facts")
+
+# Import into another store
+with Engram(path="./new_store.engram") as dst:
+    counts = dst.import_json("./agent_dump.json")
+    # merge=True skips duplicate ids instead of raising
+    counts = dst.import_json("./agent_dump.json", merge=True)
+```
+
 ### GDPR right-to-be-forgotten
 
 ```python
@@ -360,7 +472,7 @@ Engram ships a command-line interface for inspecting and operating stores withou
 
 ```
 engram inspect     <path>
-engram recall      <path> <query> [--k K] [--mode cosine|spreading] [--as-of DATE]
+engram recall      <path> <query> [--k K] [--mode cosine|hybrid|spreading] [--as-of DATE]
                                   [--agent-id ID] [--cross-agent]
 engram timeline    <path> <entity>
 engram observe     <path> <content> [--actors NAME...] [--tags TAG...]
@@ -380,8 +492,9 @@ engram inspect ./agent.engram
 #   Entities:         41
 #   Reflections:      12   (last: 2025-05-11 09:14 UTC)
 
-# Recall
+# Recall (cosine, hybrid, or spreading)
 engram recall ./agent.engram "Ivan employer" --k 3
+engram recall ./agent.engram "Ivan employer" --mode hybrid --k 5
 
 # Recall as of a past date
 engram recall ./agent.engram "Ivan employer" --as-of 2024-03-01
@@ -420,7 +533,7 @@ mem = Engram(
         beta=0.1,      # Emotional valence weight.
         threshold=0.1, # Prune memories below this importance during reflect().
     ),
-    llm=AnthropicAdapter(),  # optional; only used by reflect()
+    llm=AnthropicAdapter(),  # optional; used by reflect() and compress()
     agent_id="my-agent",     # optional; scopes writes and reads to this agent
 )
 
@@ -464,11 +577,16 @@ ids = mem.observe_many([
 
 ---
 
-### `recall(query, k, *, mode, depth, decay, as_of, cross_agent) → list[SearchResult]`
+### `recall(query, k, *, mode, depth, decay, vector_weight, fts_weight, as_of, cross_agent) → list[SearchResult]`
 
 ```python
 # Default: cosine similarity
 results = mem.recall("where does Ivan work?", k=5)
+
+# Hybrid: BM25 keyword + cosine vector, blended
+results = mem.recall("Ivan Globex transfer", k=5, mode="hybrid")
+results = mem.recall("exact term", k=5, mode="hybrid",
+                     vector_weight=0.3, fts_weight=0.7)
 
 # Graph-based spreading-activation
 results = mem.recall("Ivan", k=5, mode="spreading", depth=2, decay=0.5)
@@ -556,7 +674,7 @@ for a, b in mem.contradictions():
 
 ### `forget(episode_id) → None`
 
-Permanently erase a single episode from all storage structures (vector index, access log, graph edges). Raises `KeyError` if the episode does not exist.
+Permanently erase a single episode from all storage structures (vector index, FTS index, access log, graph edges). Raises `KeyError` if the episode does not exist.
 
 ```python
 mem.forget(ep_id)
@@ -575,13 +693,50 @@ print(f"Deleted {result.episodes_deleted} episodes, {result.facts_deleted} facts
 
 ---
 
-### `list_agents() → list[str]`
+### `compress(*, max_episodes, importance_threshold, batch_size) → CompressionRun`
 
-Return all distinct `agent_id` values that have written to this store. Episodes written without an `agent_id` are not included.
+Compress low-importance episodes into LLM-generated summary episodes. Requires an `llm` adapter.
 
 ```python
-with Engram(path="./team.engram") as mem:
-    print(mem.list_agents())  # ['coder', 'planner', 'reviewer']
+result = mem.compress(
+    max_episodes=1000,        # no-op if store has fewer episodes than this
+    importance_threshold=0.3, # compress episodes with importance_score < threshold
+    batch_size=20,            # episodes grouped per LLM call
+)
+# CompressionRun fields: episodes_removed, summaries_created, model_used, cost_tokens
+print(f"Removed {result.episodes_removed} → {result.summaries_created} summaries")
+```
+
+---
+
+### `backup(dest) → None`
+
+Hot backup using SQLite's built-in online backup API. Safe to call while the store is open and actively written to.
+
+```python
+mem.backup("./agent_backup.engram")  # str or Path
+```
+
+---
+
+### `export_json(dest) → dict`
+
+Export the full store (episodes, facts, entities, edges) to a JSON file. Returns the document dict.
+
+```python
+doc = mem.export_json("./agent_dump.json")
+print(doc["counts"])  # {'episodes': 842, 'facts': 134, 'entities': 41, 'edges': 97}
+```
+
+---
+
+### `import_json(src, *, merge) → dict`
+
+Import from a JSON file produced by `export_json()`. Returns counts of inserted rows per table.
+
+```python
+counts = mem.import_json("./agent_dump.json")           # raises on duplicate ids
+counts = mem.import_json("./agent_dump.json", merge=True)  # skip duplicates silently
 ```
 
 ---
@@ -594,7 +749,70 @@ Uses a single SQL `GROUP BY` fetch and a single `executemany` update — O(1) SQ
 
 ---
 
+### `list_agents() → list[str]`
+
+Return all distinct `agent_id` values that have written to this store.
+
+```python
+with Engram(path="./team.engram") as mem:
+    print(mem.list_agents())  # ['coder', 'planner', 'reviewer']
+```
+
+---
+
+### `WorkingMemory(capacity, engram)`
+
+LRU scratchpad with optional long-term spillover.
+
+```python
+from engram import WorkingMemory, WorkingMemoryItem
+
+wm = WorkingMemory(
+    capacity=7,    # max slots (default 7, per Miller's 7±2 law)
+    engram=mem,    # optional; evicted items written via observe()
+)
+
+wm.set("key", "content", priority=1)  # kwargs stored in item.metadata
+item: WorkingMemoryItem = wm.get("key")   # promotes to MRU; None if missing
+item = wm.peek("key")                     # no LRU change
+wm.delete("key")                          # remove one item
+wm.flush()                                # write all to long-term store + clear
+wm.clear()                                # discard without writing
+
+len(wm)         # current size
+"key" in wm     # membership test
+wm.items()      # list[WorkingMemoryItem] from LRU to MRU
+wm.capacity     # int
+```
+
+`WorkingMemoryItem` fields: `key`, `content`, `metadata` (dict), `created_at`, `accessed_at`.
+
+---
+
+### `AsyncEngram(path, *, embedder_model, decay_config, llm, agent_id)`
+
+Async-compatible wrapper with the same interface as `Engram`. Every method is `async def` and dispatches to the synchronous implementation via `loop.run_in_executor` — the event loop is never blocked by ONNX inference or SQLite I/O.
+
+```python
+from engram import AsyncEngram
+
+async with AsyncEngram(path="./agent.engram") as mem:
+    ep_id = await mem.observe("Hello world")
+    results = await mem.recall("hello", k=3, mode="hybrid")
+    await mem.assert_fact("Alice", "role", "CTO")
+    await mem.decay()
+    await mem.backup("./backup.engram")
+    doc = await mem.export_json("./dump.json")
+    counts = await mem.import_json("./dump.json", merge=True)
+    await mem.forget(ep_id)
+    result = await mem.forget_entity("Bob")
+```
+
+---
+
 ## LLM Adapters
+
+Both `reflect()` and `compress()` use the LLM adapter:
 
 ```python
 from engram import AnthropicAdapter, OpenAIAdapter
@@ -680,15 +898,22 @@ msgs = memory.get("Ivan Globex")
 
 ```
 Engram
-├── observe() / observe_many()  → Episode (content + embedding stored immediately)
+├── observe() / observe_many()  → Episode (content + embedding + FTS stored immediately)
 │                                      ↓
 │                                 vec_episodes  (sqlite-vec ANN index)
+│                                 fts_episodes  (FTS5 full-text index)
 │                                 episodes      (metadata, agent_id, importance_score)
 │
 ├── recall()  ─cosine──────────→ KNN search → SearchResult[]
+│             ─hybrid───────────→ FTS5 BM25 + KNN → blended score → SearchResult[]
 │             ─spreading────────→ KNN seeds → BFS activation graph → SearchResult[]
 │             ─as_of────────────→ time-filtered KNN → SearchResult[]
 │             ─cross_agent──────→ bypass agent_id scope
+│
+├── WorkingMemory               → LRU scratchpad, capacity 7±2
+│                                 eviction → observe() into long-term store
+│
+├── AsyncEngram                 → async def wrappers via run_in_executor
 │
 ├── reflect() / reflect_async() → LLM fact extraction (async, background)
 │                                      ↓
@@ -696,11 +921,17 @@ Engram
 │                                 entities (unique named entities)
 │                                 edges    (Hebbian-weighted graph)
 │
+├── compress()                  → LLM summarisation of low-importance episodes
+│                                 originals hard-deleted → summary episode stored
+│
 ├── timeline(entity)   → facts WHERE subject=? ORDER BY valid_from
 ├── why(fact_id)       → provenance: derived_from + extracted_by
 ├── contradictions()   → active facts with same (subject, predicate)
 ├── forget()           → hard-delete one episode (all structures)
 ├── forget_entity()    → GDPR: hard-delete all data about a named entity
+├── backup(dest)       → SQLite online backup API (safe while open)
+├── export_json(dest)  → portable JSON dump (episodes, facts, entities, edges)
+├── import_json(src)   → restore from JSON dump, merge mode available
 └── list_agents()      → distinct agent_ids in the store
 ```
 
@@ -716,12 +947,16 @@ CREATE TABLE episodes (
     tags JSON,
     salience REAL,
     emotional_valence REAL,
+    summary_of JSON,           -- episode ids this row summarises (compress())
     importance_score REAL,
     agent_id TEXT DEFAULT NULL -- NULL = unscoped / backward-compatible
 );
 
 -- ANN vector index (sqlite-vec virtual table, mirrors episodes rowid)
 CREATE VIRTUAL TABLE vec_episodes USING vec0(embedding float[384]);
+
+-- Full-text search index (FTS5 content table, mirrors episodes rowid)
+CREATE VIRTUAL TABLE fts_episodes USING fts5(content, content='episodes', content_rowid='rowid');
 
 -- Bitemporal semantic facts (shared across all agents)
 CREATE TABLE facts (
@@ -760,11 +995,11 @@ CREATE TABLE reflections (
 );
 ```
 
-**Single-file design:** the `.engram` file is a standard SQLite database. Copy it, back it up with `rsync`, or open it with any SQLite browser. No migration daemon, no schema registry, no lock files.
+**Single-file design:** the `.engram` file is a standard SQLite database. Copy it, back it up with `rsync` or `mem.backup()`, or open it with any SQLite browser. No migration daemon, no schema registry, no lock files.
 
 **Zero-dependency writes:** every `observe()` call hits only Python + SQLite. The ONNX runtime for embeddings is already in-process. No network, no external API call.
 
-**Backward compatibility:** stores created before v1.3 (without `agent_id`) open without modification. The migration silently adds the column with `DEFAULT NULL`, preserving all existing data.
+**Backward compatibility:** stores created before v1.3 (without `agent_id`) open without modification. The migration silently adds missing columns with `DEFAULT NULL`, preserving all existing data.
 
 ---
 
@@ -785,6 +1020,7 @@ Measured on Apple M-series, fastembed `BAAI/bge-small-en-v1.5`, SQLite WAL mode.
 | Operation | p50 | p99 |
 |---|---|---|
 | `recall(mode="cosine")` | 4.3 ms | 5.0 ms |
+| `recall(mode="hybrid")` | 4.6 ms | 5.3 ms |
 | `recall(mode="spreading")` | 4.4 ms | 5.0 ms |
 | `recall(as_of=...)` | 4.5 ms | 5.2 ms |
 
@@ -867,26 +1103,32 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (219 tests)
+### Test coverage (290 tests)
 
 ```
 tests/
-  test_schema.py       schema + SQLite migrations (incl. pre-v1.3 backward compat)
-  test_observe.py      observe() + embeddings
-  test_recall.py       cosine recall
-  test_smoke.py        end-to-end Engram class
-  test_importance.py   decay formula
-  test_decay.py        decay background job
-  test_store_facts.py  fact CRUD + assert_fact()
-  test_reflection.py   reflection loop (stub LLM), cost_tokens, reflect_async
-  test_graph.py        entity/edge CRUD + spreading recall
-  test_bitemporal.py   as_of + timeline
-  test_forget.py       forget(), forget_entity(), GDPR cascade
-  test_cli.py          all CLI subcommands + --agent-id + --cross-agent
-  test_multiagent.py   agent_id scoping, shared facts, cross-agent recall
-  test_performance.py  observe_many correctness + batch decay + LRU cache
-  test_integrations.py MCP, LangChain, LlamaIndex
-  test_benchmarks.py   benchmark infrastructure
+  test_schema.py         schema + SQLite migrations (incl. backward compat)
+  test_observe.py        observe() + embeddings
+  test_recall.py         cosine recall
+  test_hybrid_recall.py  hybrid BM25 + cosine recall, FTS index population
+  test_smoke.py          end-to-end Engram class
+  test_importance.py     decay formula
+  test_decay.py          decay background job + access log
+  test_store_facts.py    fact CRUD + assert_fact()
+  test_reflection.py     reflection loop (stub LLM), cost_tokens, reflect_async
+  test_graph.py          entity/edge CRUD + spreading recall
+  test_bitemporal.py     as_of + timeline
+  test_forget.py         forget(), forget_entity(), GDPR cascade
+  test_cli.py            all CLI subcommands + --agent-id + --cross-agent
+  test_multiagent.py     agent_id scoping, shared facts, cross-agent recall
+  test_performance.py    observe_many correctness + batch decay + LRU cache
+  test_export.py         export_json / import_json round-trip + merge mode
+  test_backup.py         backup() — hot copy, openable as Engram
+  test_working_memory.py WorkingMemory LRU, eviction, flush, spillover
+  test_async_engram.py   AsyncEngram — all async methods
+  test_compress.py       compress() — LLM summarisation, batching, no-op paths
+  test_integrations.py   MCP, LangChain, LlamaIndex
+  test_benchmarks.py     benchmark infrastructure
 ```
 
 ---
@@ -902,9 +1144,10 @@ tests/
 - [x] v1.0 — Benchmarks, docs, production polish
 - [x] v1.1 — `forget()` / GDPR right-to-be-forgotten
 - [x] v1.2 — CLI (`engram inspect`, `recall`, `timeline`, `observe`, `reflect`, `forget`, `list-agents`)
-- [x] v1.3 — Multi-agent shared memory (`agent_id` column, `cross_agent` recall, `list_agents()`)
-- [x] v2.0 — Batch decay (21× speedup), `observe_many()` (2× speedup), embedding LRU cache
-- [x] v2.0.1 — WAL journal mode + 32 MB page cache (4× faster per-commit writes, concurrent reads + writes)
+- [x] v1.3 — Multi-agent shared memory (`agent_id`, `cross_agent`, `list_agents()`)
+- [x] v2.0 — Batch decay (21×), `observe_many()` (2×), embedding LRU cache
+- [x] v2.0.1 — WAL journal mode + 32 MB page cache (4× faster commits, concurrent reads/writes)
+- [x] v2.1 — Hybrid recall (FTS5 BM25 + cosine), `WorkingMemory`, `AsyncEngram`, `compress()`, `backup()`, `export_json` / `import_json`
 
 ---
 
