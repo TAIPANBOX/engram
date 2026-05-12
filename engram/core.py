@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import importlib
 import sqlite3
 import threading
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from engram.decay import run_decay
 from engram.embedder import DEFAULT_MODEL, Embedder
@@ -60,6 +61,26 @@ class ReflectionThread(threading.Thread):
             raise self._exc
 
 
+def _sqlite_module(key: str | None) -> Any:
+    """Return the sqlite3 module, or sqlcipher3.dbapi2 when a key is provided."""
+    if key is None:
+        return sqlite3
+    try:
+        return importlib.import_module("sqlcipher3.dbapi2")
+    except ImportError as exc:
+        raise ImportError(
+            "Encryption requires the 'sqlcipher3' package and the SQLCipher C library.\n"
+            "  macOS:  brew install sqlcipher && pip install 'engram[encryption]'\n"
+            "  Linux:  apt install libsqlcipher-dev && pip install 'engram[encryption]'"
+        ) from exc
+
+
+def _apply_key(conn: sqlite3.Connection, key: str) -> None:
+    """Set the SQLCipher encryption key as a hex blob (avoids injection risk)."""
+    key_hex = key.encode().hex()
+    conn.execute(f"PRAGMA key = \"x'{key_hex}'\"")
+
+
 def _configure_connection(conn: sqlite3.Connection, path: str) -> None:
     """Apply performance PRAGMAs to a freshly opened SQLite connection.
 
@@ -106,13 +127,20 @@ class Engram:
         decay_config: DecayConfig | None = None,
         llm: LLMAdapter | None = None,
         agent_id: str | None = None,
+        key: str | None = None,
     ) -> None:
         self._path = str(path)
         self._agent_id = agent_id
+        self._key = key
+
+        _mod: Any = _sqlite_module(key)
         # check_same_thread=False: reflect_async() runs on a background thread
         # but SQLite serialises writes, so this is safe for our single-writer model.
-        self._conn = sqlite3.connect(self._path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        raw_conn = _mod.connect(self._path, check_same_thread=False)
+        if key is not None:
+            _apply_key(cast(sqlite3.Connection, raw_conn), key)
+        self._conn: sqlite3.Connection = cast(sqlite3.Connection, raw_conn)
+        self._conn.row_factory = _mod.Row
         self._decay_cfg = decay_config or DecayConfig()
         self._llm = llm
 
@@ -479,11 +507,36 @@ class Engram:
                   Use a ``.engram`` extension by convention.
         """
         self._store.flush_access_log()
-        target = sqlite3.connect(str(dest))
+        _mod: Any = _sqlite_module(self._key)
+        raw = _mod.connect(str(dest))
+        target = cast(sqlite3.Connection, raw)
+        if self._key is not None:
+            _apply_key(target, self._key)
         try:
             self._conn.backup(target)
         finally:
             target.close()
+
+    def rekey(self, new_key: str | None) -> None:
+        """Change or remove the encryption passphrase (SQLCipher only).
+
+        Args:
+            new_key: New passphrase, or ``None`` to remove encryption.
+
+        Raises:
+            ValueError: If the database was not opened with a key.
+        """
+        if self._key is None:
+            raise ValueError(
+                "rekey() is only valid on encrypted databases. "
+                "To encrypt a plain database, use export_json() + a new Engram(key=...)."
+            )
+        if new_key is not None:
+            key_hex = new_key.encode().hex()
+            self._conn.execute(f"PRAGMA rekey = \"x'{key_hex}'\"")
+        else:
+            self._conn.execute("PRAGMA rekey = ''")
+        self._key = new_key
 
     # ------------------------------------------------------------------
     # Maintenance

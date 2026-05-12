@@ -309,6 +309,7 @@ Vectors via `sqlite-vec` extension. Graph stored as SQL edges; loaded into in-me
 | CLI | `engram inspect / recall / observe / reflect / timeline / forget / list-agents` | Debugging is critical |
 | Working memory | `WorkingMemory` class — LRU scratchpad, Miller 7±2 capacity, optional flush to store | Active reasoning without polluting long-term store |
 | Data portability | `export_json()` / `import_json()` / `backup()` | Migration, snapshots |
+| Encryption | Optional SQLCipher via `[encryption]` extra; `Engram(key=...)` | Privacy-critical deployments |
 
 ---
 
@@ -405,7 +406,7 @@ The novelty is in the **combination + DX**, not any single mechanism in isolatio
 - ✅ **Reflection trigger heuristics** — resolved: configurable N (episodes since last reflection) + optional idle-time threshold in `DecayConfig`.
 - ✅ **Decay λ** — resolved: default tuned from benchmark; user-configurable via `DecayConfig`.
 - ✅ **Multi-agent / shared memory** — resolved ahead of schedule: `agent_id` parameter added in v1. Each `Engram(agent_id=...)` instance scopes reads/writes; cross-agent recall available via `recall(cross_agent=True)`.
-- **Encryption-at-rest** — still out of scope. SQLite WAL is unencrypted. SQLCipher would be the upgrade path.
+- ✅ **Encryption-at-rest** — resolved: optional SQLCipher via `Engram(key="passphrase")` + `pip install 'engram[encryption]'`. Supports `rekey()` and encrypted `backup()`. Plain (no-key) databases unchanged.
 
 ---
 

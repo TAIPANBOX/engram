@@ -52,6 +52,7 @@ class AsyncEngram:
         decay_config: DecayConfig | None = None,
         llm: Any | None = None,
         agent_id: str | None = None,
+        key: str | None = None,
     ) -> None:
         from engram.embedder import DEFAULT_MODEL
 
@@ -61,6 +62,7 @@ class AsyncEngram:
             decay_config=decay_config,
             llm=llm,
             agent_id=agent_id,
+            key=key,
         )
 
     # ------------------------------------------------------------------
