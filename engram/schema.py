@@ -7,6 +7,16 @@ import sqlite3
 
 import sqlite_vec  # type: ignore[import-untyped]
 
+# Collect all OperationalError types that may appear depending on which
+# sqlite backend is in use (sqlite3 vs sqlcipher3.dbapi2).
+_OP_ERRORS: tuple[type[BaseException], ...] = (sqlite3.OperationalError,)
+try:
+    import sqlcipher3.dbapi2 as _sc  # type: ignore[import-untyped]
+
+    _OP_ERRORS = (*_OP_ERRORS, _sc.OperationalError)
+except ImportError:
+    pass
+
 # Embedding dimension for bge-small-en-v1.5
 DEFAULT_DIM: int = 384
 
@@ -88,20 +98,20 @@ def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
     conn.executescript(_DDL)
 
     # Backfill columns for databases created before v0.2/v0.3.
-    with contextlib.suppress(sqlite3.OperationalError):
+    with contextlib.suppress(*_OP_ERRORS):
         conn.execute("ALTER TABLE episodes ADD COLUMN importance_score REAL NOT NULL DEFAULT 1.0")
-    with contextlib.suppress(sqlite3.OperationalError):
+    with contextlib.suppress(*_OP_ERRORS):
         conn.execute("ALTER TABLE facts ADD COLUMN extracted_by TEXT REFERENCES reflections(id)")
 
     # Backfill columns for databases created before v1.3 (multi-agent).
-    with contextlib.suppress(sqlite3.OperationalError):
+    with contextlib.suppress(*_OP_ERRORS):
         conn.execute("ALTER TABLE episodes ADD COLUMN agent_id TEXT DEFAULT NULL")
-    with contextlib.suppress(sqlite3.OperationalError):
+    with contextlib.suppress(*_OP_ERRORS):
         conn.execute("ALTER TABLE reflections ADD COLUMN agent_id TEXT DEFAULT NULL")
-    with contextlib.suppress(sqlite3.OperationalError):
+    with contextlib.suppress(*_OP_ERRORS):
         conn.execute("ALTER TABLE access_log ADD COLUMN agent_id TEXT DEFAULT NULL")
 
-    with contextlib.suppress(sqlite3.OperationalError):
+    with contextlib.suppress(*_OP_ERRORS):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_agent ON episodes(agent_id)")
 
     # vec0 virtual table dimension is baked in at creation; IF NOT EXISTS guards re-runs.
