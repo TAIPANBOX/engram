@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from engram import Engram, ReflectionRun, StubLLMAdapter
+from engram import Engram, ReflectionRun, ReflectionThread, StubLLMAdapter
 
 
 @pytest.fixture()
@@ -119,12 +119,22 @@ def test_reflect_contradiction_detection() -> None:
 # ------------------------------------------------------------------
 
 
-def test_reflect_async_returns_thread(mem: Engram) -> None:
+def test_reflect_async_returns_reflection_thread(mem: Engram) -> None:
     mem.observe("Background event")
     t = mem.reflect_async()
-    assert isinstance(t, threading.Thread)
+    assert isinstance(t, ReflectionThread)
+    assert isinstance(t, threading.Thread)  # subclass contract
     t.join(timeout=30)
     assert not t.is_alive()
+
+
+def test_reflect_async_result_accessible(mem: Engram) -> None:
+    mem.observe("Background event")
+    t = mem.reflect_async()
+    t.join(timeout=30)
+    assert t.result is not None
+    assert isinstance(t.result, ReflectionRun)
+    assert t.result.finished_at is not None
 
 
 def test_reflect_async_completes_successfully(mem: Engram) -> None:
@@ -220,3 +230,44 @@ def test_reflection_run_model_recorded(mem_with_llm: Engram) -> None:
     stored = mem_with_llm._store.get_last_reflection()
     assert stored is not None
     assert stored.model_used == "stub"
+
+
+# ------------------------------------------------------------------
+# cost_tokens
+# ------------------------------------------------------------------
+
+
+def test_cost_tokens_zero_without_llm(mem: Engram) -> None:
+    mem.observe("Some event")
+    run = mem.reflect()
+    assert run.cost_tokens == 0
+
+
+def test_cost_tokens_zero_when_stub_returns_zero(mem_with_llm: Engram) -> None:
+    mem_with_llm.observe("Some event")
+    run = mem_with_llm.reflect()
+    assert run.cost_tokens == 0
+
+
+def test_cost_tokens_tracked_from_stub() -> None:
+    stub = StubLLMAdapter(
+        facts=[{"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9}],
+        tokens=42,
+    )
+    with Engram(path=":memory:", llm=stub) as mem:
+        mem.observe("Ivan works at Globex")
+        run = mem.reflect()
+        assert run.cost_tokens == 42
+
+
+def test_cost_tokens_persisted_in_store() -> None:
+    stub = StubLLMAdapter(
+        facts=[{"subject": "Alice", "predicate": "role", "object": "CTO", "confidence": 1.0}],
+        tokens=100,
+    )
+    with Engram(path=":memory:", llm=stub) as mem:
+        mem.observe("Alice is the CTO")
+        mem.reflect()
+        stored = mem._store.get_last_reflection()
+        assert stored is not None
+        assert stored.cost_tokens == 100

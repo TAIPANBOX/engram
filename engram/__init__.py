@@ -3,7 +3,7 @@
 See DESIGN.md for architecture and intended API.
 """
 
-from engram.core import Engram
+from engram.core import Engram, ReflectionThread
 from engram.importance import DecayConfig
 from engram.llm import AnthropicAdapter, OpenAIAdapter, StubLLMAdapter
 from engram.models import Episode, Fact, ReflectionRun, SearchResult
@@ -18,6 +18,7 @@ __all__ = [
     "Fact",
     "OpenAIAdapter",
     "ReflectionRun",
+    "ReflectionThread",
     "SearchResult",
     "StubLLMAdapter",
     "__version__",

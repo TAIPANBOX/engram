@@ -22,6 +22,37 @@ if TYPE_CHECKING:
     from engram.llm import LLMAdapter
 
 
+class ReflectionThread(threading.Thread):
+    """Background thread returned by :meth:`Engram.reflect_async`.
+
+    After :meth:`join` returns, access the completed run via :attr:`result`.
+    Any exception raised inside the thread is re-raised on ``join()``.
+
+    Example::
+
+        thread = mem.reflect_async()
+        thread.join()
+        print(thread.result.facts_extracted)
+    """
+
+    def __init__(self, engram: Engram) -> None:
+        super().__init__(daemon=True)
+        self._engram = engram
+        self.result: ReflectionRun | None = None
+        self._exc: BaseException | None = None
+
+    def run(self) -> None:
+        try:
+            self.result = self._engram.reflect()
+        except BaseException as exc:  # noqa: BLE001
+            self._exc = exc
+
+    def join(self, timeout: float | None = None) -> None:
+        super().join(timeout)
+        if self._exc is not None:
+            raise self._exc
+
+
 class Engram:
     """Single-file cognitive memory store for AI agents.
 
@@ -246,13 +277,14 @@ class Engram:
 
         return _reflect(self._store, self._llm, self._decay_cfg)
 
-    def reflect_async(self) -> threading.Thread:
+    def reflect_async(self) -> ReflectionThread:
         """Run the reflection loop in a background thread.
 
         Returns:
-            The started :class:`threading.Thread`. Call ``.join()`` to wait for completion.
+            A started :class:`ReflectionThread`. Call ``.join()`` to wait for
+            completion, then access ``.result`` for the :class:`ReflectionRun`.
         """
-        thread = threading.Thread(target=self.reflect, daemon=True)
+        thread = ReflectionThread(self)
         thread.start()
         return thread
 

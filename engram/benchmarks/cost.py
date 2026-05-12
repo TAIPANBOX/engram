@@ -63,13 +63,15 @@ class _CountingAdapter:
         self.input_tokens = 0
         self.output_tokens = 0
 
-    def extract_facts(self, episodes: list[Episode]) -> list[dict[str, Any]]:
+    def extract_facts(self, episodes: list[Episode]) -> tuple[list[dict[str, Any]], int]:
         msg = EXTRACTION_SYSTEM_PROMPT + _build_user_message(episodes)
         # Approximate: 1 token ≈ 4 characters (GPT tokenizer heuristic)
-        self.input_tokens += len(msg) // 4
+        input_tokens = len(msg) // 4
+        self.input_tokens += input_tokens
         # Each fact JSON object ≈ 60 tokens
-        self.output_tokens += self._facts_per_batch * 60
-        return [
+        output_tokens = self._facts_per_batch * 60
+        self.output_tokens += output_tokens
+        facts = [
             {
                 "subject": f"entity_{i}",
                 "predicate": "has_property",
@@ -78,6 +80,7 @@ class _CountingAdapter:
             }
             for i in range(self._facts_per_batch)
         ]
+        return facts, input_tokens + output_tokens
 
 
 def run_cost_bench(

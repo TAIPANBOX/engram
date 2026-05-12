@@ -55,8 +55,14 @@ class LLMAdapter(Protocol):
 
     model_name: str
 
-    def extract_facts(self, episodes: list[Episode]) -> list[dict[str, Any]]:
-        """Return a list of raw fact dicts with keys subject, predicate, object, confidence."""
+    def extract_facts(self, episodes: list[Episode]) -> tuple[list[dict[str, Any]], int]:
+        """Extract facts from episodes.
+
+        Returns:
+            Tuple of (facts, token_count) where facts is a list of dicts with keys
+            subject, predicate, object, confidence, and token_count is the total
+            number of tokens consumed by the LLM call (0 if unavailable).
+        """
         ...
 
 
@@ -82,8 +88,8 @@ class AnthropicAdapter:
             self._client = anthropic.Anthropic()
         return self._client
 
-    def extract_facts(self, episodes: list[Episode]) -> list[dict[str, Any]]:
-        """Extract facts via Claude. Returns [] if the LLM response is unparseable."""
+    def extract_facts(self, episodes: list[Episode]) -> tuple[list[dict[str, Any]], int]:
+        """Extract facts via Claude. Returns ([], 0) if the LLM response is unparseable."""
         client = self._get_client()
         response = client.messages.create(
             model=self.model_name,
@@ -91,7 +97,8 @@ class AnthropicAdapter:
             system=EXTRACTION_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": _build_user_message(episodes)}],
         )
-        return _parse_facts_json(response.content[0].text)
+        tokens = response.usage.input_tokens + response.usage.output_tokens
+        return _parse_facts_json(response.content[0].text), tokens
 
 
 class OpenAIAdapter:
@@ -123,8 +130,8 @@ class OpenAIAdapter:
             self._client = openai.OpenAI(**kwargs)
         return self._client
 
-    def extract_facts(self, episodes: list[Episode]) -> list[dict[str, Any]]:
-        """Extract facts via OpenAI. Returns [] if the LLM response is unparseable."""
+    def extract_facts(self, episodes: list[Episode]) -> tuple[list[dict[str, Any]], int]:
+        """Extract facts via OpenAI. Returns ([], 0) if the LLM response is unparseable."""
         client = self._get_client()
         response = client.chat.completions.create(
             model=self.model_name,
@@ -133,7 +140,8 @@ class OpenAIAdapter:
                 {"role": "user", "content": _build_user_message(episodes)},
             ],
         )
-        return _parse_facts_json(response.choices[0].message.content or "")
+        tokens = response.usage.total_tokens if response.usage else 0
+        return _parse_facts_json(response.choices[0].message.content or ""), tokens
 
 
 class StubLLMAdapter:
@@ -141,8 +149,13 @@ class StubLLMAdapter:
 
     model_name: str = "stub"
 
-    def __init__(self, facts: list[dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        facts: list[dict[str, Any]] | None = None,
+        tokens: int = 0,
+    ) -> None:
         self._facts = facts or []
+        self._tokens = tokens
 
-    def extract_facts(self, episodes: list[Episode]) -> list[dict[str, Any]]:
-        return list(self._facts)
+    def extract_facts(self, episodes: list[Episode]) -> tuple[list[dict[str, Any]], int]:
+        return list(self._facts), self._tokens

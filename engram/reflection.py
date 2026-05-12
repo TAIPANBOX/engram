@@ -56,8 +56,10 @@ def reflect(
     facts_extracted = 0
     contradictions_resolved = 0
 
+    cost_tokens = 0
     if llm and episodes:
-        raw_facts = llm.extract_facts(episodes)
+        raw_facts, call_tokens = llm.extract_facts(episodes)
+        cost_tokens += call_tokens
         episode_ids = [ep.id for ep in episodes]
 
         for rf in raw_facts:
@@ -108,10 +110,11 @@ def reflect(
         episodes_processed=len(episodes),
         facts_extracted=facts_extracted,
         contradictions_resolved=contradictions_resolved,
-        cost_tokens=0,
+        cost_tokens=cost_tokens,
     )
     run.finished_at = now
     run.episodes_processed = len(episodes)
     run.facts_extracted = facts_extracted
     run.contradictions_resolved = contradictions_resolved
+    run.cost_tokens = cost_tokens
     return run
