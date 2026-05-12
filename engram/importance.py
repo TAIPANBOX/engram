@@ -17,10 +17,10 @@ class DecayConfig:
       + beta * emotional_valence
     """
 
-    lambda_: float = 0.1   # decay rate (per day); half-life ≈ 7 days
-    alpha: float = 0.2     # reinforcement weight from access frequency
-    beta: float = 0.1      # emotional weight
-    threshold: float = 0.1 # minimum importance before pruning (used in reflection, v0.3)
+    lambda_: float = 0.1  # decay rate (per day); half-life ≈ 7 days
+    alpha: float = 0.2  # reinforcement weight from access frequency
+    beta: float = 0.1  # emotional weight
+    threshold: float = 0.1  # minimum importance before pruning (used in reflection, v0.3)
 
 
 def compute_importance(

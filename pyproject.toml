@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "engram"
-version = "0.0.1"
+version = "1.0.0"
 description = "Embeddable cognitive memory layer for AI agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,7 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "Your Name", email = "you@example.com" }]
 keywords = ["ai", "agents", "memory", "llm", "vector-database", "cognitive-architecture"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.11",
@@ -39,6 +39,9 @@ dev = [
     "langchain-core>=0.1",
     "llama-index-core>=0.10",
 ]
+
+[project.scripts]
+engram-bench = "engram.benchmarks.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/yourname/engram"
@@ -68,7 +71,7 @@ disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
 # Integration files depend on optional packages; exempt from strict checking.
-module = ["engram.adapters.*", "engram.mcp_server"]
+module = ["engram.adapters.*", "engram.mcp_server", "engram.benchmarks.*"]
 ignore_errors = true
 
 [tool.pytest.ini_options]

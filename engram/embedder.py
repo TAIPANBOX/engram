@@ -32,7 +32,7 @@ class Embedder:
 
     def embed(self, text: str) -> np.ndarray:
         """Embed a single string. Returns a float32 ndarray of shape (dim,)."""
-        result = list(self._get_model().embed([text]))[0]
+        result = next(iter(self._get_model().embed([text])))
         return np.array(result, dtype=np.float32)
 
     def embed_batch(self, texts: list[str]) -> list[np.ndarray]:

@@ -15,9 +15,11 @@ def mem() -> Engram:
 
 @pytest.fixture()
 def mem_with_llm() -> Engram:
-    stub = StubLLMAdapter(facts=[
-        {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
-    ])
+    stub = StubLLMAdapter(
+        facts=[
+            {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
+        ]
+    )
     with Engram(path=":memory:", llm=stub) as m:
         yield m
 
@@ -25,6 +27,7 @@ def mem_with_llm() -> Engram:
 # ------------------------------------------------------------------
 # reflect() without LLM
 # ------------------------------------------------------------------
+
 
 def test_reflect_no_llm_returns_run(mem: Engram) -> None:
     mem.observe("Something happened today")
@@ -48,6 +51,7 @@ def test_reflect_no_llm_empty_store(mem: Engram) -> None:
 # reflect() with StubLLM
 # ------------------------------------------------------------------
 
+
 def test_reflect_with_llm_extracts_facts(mem_with_llm: Engram) -> None:
     mem_with_llm.observe("Ivan mentioned he now works at Globex")
     run = mem_with_llm.reflect()
@@ -63,9 +67,11 @@ def test_reflect_inserts_fact_into_store(mem_with_llm: Engram) -> None:
 
 
 def test_reflect_second_run_processes_only_new_episodes() -> None:
-    stub = StubLLMAdapter(facts=[
-        {"subject": "Ivan", "predicate": "works_at", "object": "Acme", "confidence": 0.9},
-    ])
+    stub = StubLLMAdapter(
+        facts=[
+            {"subject": "Ivan", "predicate": "works_at", "object": "Acme", "confidence": 0.9},
+        ]
+    )
     with Engram(path=":memory:", llm=stub) as mem:
         mem.observe("Ivan works at Acme")
         run1 = mem.reflect()
@@ -78,12 +84,16 @@ def test_reflect_second_run_processes_only_new_episodes() -> None:
 
 def test_reflect_contradiction_detection() -> None:
     """When the LLM extracts a new (s,p) that already exists, close the old fact."""
-    stub_acme = StubLLMAdapter(facts=[
-        {"subject": "Ivan", "predicate": "works_at", "object": "Acme", "confidence": 0.9},
-    ])
-    stub_globex = StubLLMAdapter(facts=[
-        {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.95},
-    ])
+    stub_acme = StubLLMAdapter(
+        facts=[
+            {"subject": "Ivan", "predicate": "works_at", "object": "Acme", "confidence": 0.9},
+        ]
+    )
+    stub_globex = StubLLMAdapter(
+        facts=[
+            {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.95},
+        ]
+    )
     with Engram(path=":memory:", llm=stub_acme) as mem:
         mem.observe("Ivan works at Acme")
         mem.reflect()
@@ -108,6 +118,7 @@ def test_reflect_contradiction_detection() -> None:
 # reflect_async()
 # ------------------------------------------------------------------
 
+
 def test_reflect_async_returns_thread(mem: Engram) -> None:
     mem.observe("Background event")
     t = mem.reflect_async()
@@ -127,6 +138,7 @@ def test_reflect_async_completes_successfully(mem: Engram) -> None:
 # ------------------------------------------------------------------
 # assert_fact() / why() / contradictions()
 # ------------------------------------------------------------------
+
 
 def test_assert_fact_returns_id(mem: Engram) -> None:
     fid = mem.assert_fact("Ivan", "lives_in", "Kyiv")
@@ -186,9 +198,11 @@ def test_contradictions_detects_conflict(mem: Engram) -> None:
 
 
 def test_contradictions_resolved_after_reflect() -> None:
-    stub = StubLLMAdapter(facts=[
-        {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
-    ])
+    stub = StubLLMAdapter(
+        facts=[
+            {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
+        ]
+    )
     with Engram(path=":memory:", llm=stub) as mem:
         mem.assert_fact("Ivan", "works_at", "Acme")
         mem.observe("Ivan moved to Globex")

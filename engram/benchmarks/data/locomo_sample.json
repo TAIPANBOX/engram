@@ -1,0 +1,185 @@
+{
+  "meta": {
+    "version": "1.0",
+    "description": "Synthetic LoCoMo-format benchmark for Engram (5 sessions, 15 questions)"
+  },
+  "sessions": [
+    {
+      "id": "s1",
+      "turns": [
+        {
+          "speaker": "User",
+          "text": "I recently moved to Berlin for a new job at Acme Corp."
+        },
+        {
+          "speaker": "Assistant",
+          "text": "Welcome to Berlin! What role are you starting at Acme Corp?"
+        },
+        {
+          "speaker": "User",
+          "text": "I joined as a senior software engineer. My manager is Sarah Chen. The onboarding has been smooth."
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "turns": [
+        {
+          "speaker": "User",
+          "text": "Just got back from visiting my parents in Kyiv for the holidays. It was a long trip."
+        },
+        {
+          "speaker": "Assistant",
+          "text": "How was the trip back home?"
+        },
+        {
+          "speaker": "User",
+          "text": "Really good. My sister Olena came from Lviv to join us. We had a great time together."
+        }
+      ]
+    },
+    {
+      "id": "s3",
+      "turns": [
+        {
+          "speaker": "User",
+          "text": "Our team at Acme is building a new payment processing microservice."
+        },
+        {
+          "speaker": "Assistant",
+          "text": "Interesting project. What tech stack are you using?"
+        },
+        {
+          "speaker": "User",
+          "text": "We chose Go for the backend and PostgreSQL as the database. The deadline is end of Q2."
+        }
+      ]
+    },
+    {
+      "id": "s4",
+      "turns": [
+        {
+          "speaker": "User",
+          "text": "I have some big news — I decided to leave Acme Corp. I got an offer from Globex International."
+        },
+        {
+          "speaker": "Assistant",
+          "text": "Congratulations! That sounds like a great opportunity. When do you start?"
+        },
+        {
+          "speaker": "User",
+          "text": "I start at Globex next Monday. It's a promotion to staff engineer, which I'm really excited about."
+        }
+      ]
+    },
+    {
+      "id": "s5",
+      "turns": [
+        {
+          "speaker": "User",
+          "text": "I've been playing chess to unwind ever since moving to Berlin."
+        },
+        {
+          "speaker": "Assistant",
+          "text": "Nice! Do you play at a club or just online?"
+        },
+        {
+          "speaker": "User",
+          "text": "I joined the Berlin Chess Club three months ago and actually won my first tournament last weekend."
+        }
+      ]
+    }
+  ],
+  "questions": [
+    {
+      "id": "q1",
+      "question": "What city does the user live in?",
+      "answer": "Berlin",
+      "keywords": ["Berlin"]
+    },
+    {
+      "id": "q2",
+      "question": "Where did the user first work after moving?",
+      "answer": "Acme Corp",
+      "keywords": ["Acme"]
+    },
+    {
+      "id": "q3",
+      "question": "Who is the user's manager at Acme Corp?",
+      "answer": "Sarah Chen",
+      "keywords": ["Sarah"]
+    },
+    {
+      "id": "q4",
+      "question": "What role did the user have at Acme Corp?",
+      "answer": "senior software engineer",
+      "keywords": ["senior software engineer", "senior engineer"]
+    },
+    {
+      "id": "q5",
+      "question": "Where do the user's parents live?",
+      "answer": "Kyiv",
+      "keywords": ["Kyiv"]
+    },
+    {
+      "id": "q6",
+      "question": "What is the user's sister's name?",
+      "answer": "Olena",
+      "keywords": ["Olena"]
+    },
+    {
+      "id": "q7",
+      "question": "Where does the user's sister live?",
+      "answer": "Lviv",
+      "keywords": ["Lviv"]
+    },
+    {
+      "id": "q8",
+      "question": "What programming language does the team use for the backend?",
+      "answer": "Go",
+      "keywords": ["Go", " Go "]
+    },
+    {
+      "id": "q9",
+      "question": "What database is used in the payment microservice?",
+      "answer": "PostgreSQL",
+      "keywords": ["PostgreSQL"]
+    },
+    {
+      "id": "q10",
+      "question": "What was the project deadline at Acme Corp?",
+      "answer": "end of Q2",
+      "keywords": ["Q2"]
+    },
+    {
+      "id": "q11",
+      "question": "What company did the user join after Acme Corp?",
+      "answer": "Globex International",
+      "keywords": ["Globex"]
+    },
+    {
+      "id": "q12",
+      "question": "What is the user's new engineering title at the new company?",
+      "answer": "staff engineer",
+      "keywords": ["staff engineer", "staff"]
+    },
+    {
+      "id": "q13",
+      "question": "What hobby does the user pursue in Berlin?",
+      "answer": "chess",
+      "keywords": ["chess", "Chess"]
+    },
+    {
+      "id": "q14",
+      "question": "What club did the user join for their hobby?",
+      "answer": "Berlin Chess Club",
+      "keywords": ["Chess Club", "chess club"]
+    },
+    {
+      "id": "q15",
+      "question": "Did the user win a chess tournament?",
+      "answer": "yes",
+      "keywords": ["won", "tournament", "first tournament"]
+    }
+  ]
+}

@@ -29,10 +29,7 @@ def test_migrate_creates_all_tables(conn: sqlite3.Connection) -> None:
 def test_migrate_creates_vec_episodes(conn: sqlite3.Connection) -> None:
     migrate(conn)
     # vec0 virtual tables appear in sqlite_master as type='table'
-    all_names = {
-        r[0]
-        for r in conn.execute("SELECT name FROM sqlite_master").fetchall()
-    }
+    all_names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master").fetchall()}
     assert "vec_episodes" in all_names
 
 

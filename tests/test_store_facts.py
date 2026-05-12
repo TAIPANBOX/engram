@@ -45,6 +45,7 @@ def _make_fact(
 # Facts CRUD
 # ------------------------------------------------------------------
 
+
 def test_insert_and_get_fact() -> None:
     store = _make_store()
     fact = _make_fact()
@@ -116,6 +117,7 @@ def test_get_all_active_facts() -> None:
 # Episodes since
 # ------------------------------------------------------------------
 
+
 def test_get_episodes_since_none_returns_all(populated_store: Store) -> None:
     episodes = populated_store.get_episodes_since(None)
     assert len(episodes) == 3
@@ -148,6 +150,7 @@ def populated_store() -> Store:
 # Prune
 # ------------------------------------------------------------------
 
+
 def test_prune_removes_low_importance(populated_store: Store) -> None:
     # Set one episode to low importance
     populated_store.update_importance("ep0", 0.05)
@@ -165,6 +168,7 @@ def test_prune_nothing_above_threshold(populated_store: Store) -> None:
 # ------------------------------------------------------------------
 # Reflections CRUD
 # ------------------------------------------------------------------
+
 
 def test_insert_and_get_last_reflection() -> None:
     store = _make_store()
@@ -185,8 +189,14 @@ def test_update_reflection() -> None:
     store = _make_store()
     store.insert_reflection(ReflectionRun(id="r1", started_at=_T0))
     t1 = _T0 + timedelta(seconds=5)
-    store.update_reflection("r1", finished_at=t1, episodes_processed=10,
-                            facts_extracted=3, contradictions_resolved=1, cost_tokens=500)
+    store.update_reflection(
+        "r1",
+        finished_at=t1,
+        episodes_processed=10,
+        facts_extracted=3,
+        contradictions_resolved=1,
+        cost_tokens=500,
+    )
     run = store.get_reflection_by_id("r1")
     assert run is not None
     assert run.finished_at is not None

@@ -18,6 +18,7 @@ def mem() -> Engram:
 # Access logging
 # ------------------------------------------------------------------
 
+
 def test_recall_logs_access(mem: Engram) -> None:
     mem.observe("The board approved the merger")
     mem.recall("merger approval")
@@ -63,6 +64,7 @@ def test_multiple_recalls_accumulate(mem: Engram) -> None:
 # Decay job
 # ------------------------------------------------------------------
 
+
 def test_decay_updates_all_episodes(mem: Engram) -> None:
     for i in range(5):
         mem.observe(f"Event {i}")
@@ -102,6 +104,7 @@ def test_decay_reinforces_frequently_accessed(mem: Engram) -> None:
 # SearchResult.importance
 # ------------------------------------------------------------------
 
+
 def test_search_result_exposes_importance(mem: Engram) -> None:
     mem.observe("Important announcement from the CEO")
     results = mem.recall("CEO announcement")
@@ -122,6 +125,7 @@ def test_importance_reflects_stored_score(mem: Engram) -> None:
 # ------------------------------------------------------------------
 # Engram.decay() public API
 # ------------------------------------------------------------------
+
 
 def test_engram_decay_returns_count(mem: Engram) -> None:
     for i in range(4):

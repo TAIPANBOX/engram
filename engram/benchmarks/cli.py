@@ -1,0 +1,121 @@
+"""CLI entry point for Engram benchmarks.
+
+Usage:
+    python -m engram.benchmarks latency [--n N] [--k K]
+    python -m engram.benchmarks locomo [--data FILE] [--k K]
+    python -m engram.benchmarks cost [--n N]
+    python -m engram.benchmarks all
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+
+def _header(title: str) -> None:
+    width = 60
+    print()
+    print("=" * width)
+    print(f"  {title}")
+    print("=" * width)
+
+
+def _run_latency(n: int, k: int) -> None:
+    _header(f"Latency Benchmark  (n={n}, k={k})")
+    print("  Warming up fastembed model…", flush=True)
+    from engram.benchmarks.latency import run_latency_suite
+
+    results = run_latency_suite(n=n, k=k)
+    print()
+    header = f"  {'Operation':<24} {'p50 ms':>8} {'p99 ms':>8} {'mean ms':>8} {'tput/s':>8}"
+    print(header)
+    print("  " + "-" * (len(header) - 2))
+    for name, stats in results.items():
+        print(
+            f"  {name:<24} {stats.p50_ms:>8.1f} {stats.p99_ms:>8.1f} "
+            f"{stats.mean_ms:>8.1f} {stats.throughput_per_sec:>8.0f}"
+        )
+
+
+def _run_locomo(data_path: str | None, k: int) -> None:
+    if data_path is None:
+        data_path = str(Path(__file__).parent / "data" / "locomo_sample.json")
+    _header(f"LoCoMo Benchmark  (k={k}, data={Path(data_path).name})")
+    print("  Ingesting sessions and running QA eval…", flush=True)
+    from engram.benchmarks.locomo import run_locomo
+
+    result = run_locomo(data_path, k=k)
+    print()
+    print(f"  Sessions:     {result.n_sessions}")
+    print(f"  Episodes:     {result.n_episodes}")
+    print(f"  Questions:    {result.n_questions}")
+    print()
+    print(f"  hit@1:        {result.hit_rate_at_1:.1%}")
+    print(f"  hit@{k}:        {result.hit_rate_at_5:.1%}")
+    print(f"  MRR:          {result.mrr:.3f}")
+
+
+def _run_cost(n: int) -> None:
+    _header(f"Cost Benchmark  (n={n} episodes)")
+    print("  Simulating reflection passes…", flush=True)
+    from engram.benchmarks.cost import _MODEL_PRICES, run_cost_bench
+
+    result = run_cost_bench(n_episodes=n)
+    print()
+    print(f"  Episodes processed:    {result.n_episodes:,}")
+    print(f"  Reflection runs:       {result.n_reflect_runs:,}")
+    print(f"  Facts extracted:       {result.facts_extracted:,}")
+    print(f"  Est. input tokens:     {result.est_input_tokens:,}")
+    print(f"  Est. output tokens:    {result.est_output_tokens:,}")
+    print(f"  Tokens / 1k episodes:  {result.tokens_per_1000_episodes:,.0f}")
+    print()
+    print(f"  {'Model':<22} {'$/1M in':>8} {'$/1M out':>9} {'$/1k ep':>10}")
+    print("  " + "-" * 54)
+    for model, (inp_p, out_p) in _MODEL_PRICES.items():
+        cost = result.projected_cost_per_1000_episodes(model)
+        print(f"  {model:<22} {inp_p:>8.2f} {out_p:>9.2f} ${cost:>9.4f}")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        prog="engram-bench",
+        description="Engram benchmark suite",
+    )
+    sub = parser.add_subparsers(dest="cmd", metavar="COMMAND")
+
+    lat = sub.add_parser("latency", help="observe/recall latency (p50, p99)")
+    lat.add_argument("--n", type=int, default=200, help="iterations (default 200)")
+    lat.add_argument("--k", type=int, default=5, help="recall top-k (default 5)")
+
+    loc = sub.add_parser("locomo", help="LoCoMo recall accuracy benchmark")
+    loc.add_argument("--data", default=None, metavar="FILE", help="path to LoCoMo JSON")
+    loc.add_argument("--k", type=int, default=5, help="recall top-k (default 5)")
+
+    cost = sub.add_parser("cost", help="reflection token cost projection")
+    cost.add_argument("--n", type=int, default=200, help="episodes to simulate (default 200)")
+
+    sub.add_parser("all", help="run latency + locomo + cost with defaults")
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "latency":
+        _run_latency(args.n, args.k)
+    elif args.cmd == "locomo":
+        _run_locomo(args.data, args.k)
+    elif args.cmd == "cost":
+        _run_cost(args.n)
+    elif args.cmd == "all":
+        _run_latency(200, 5)
+        _run_locomo(None, 5)
+        _run_cost(200)
+    else:
+        parser.print_help()
+        sys.exit(1)
+
+    print()
+
+
+if __name__ == "__main__":
+    main()

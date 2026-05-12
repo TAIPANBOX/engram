@@ -45,13 +45,11 @@ def test_access_reinforcement_increases_score() -> None:
 
 def test_access_reinforcement_logarithmic() -> None:
     # Marginal gain per +1 access shrinks as count grows (diminishing returns)
-    gain_first = (
-        compute_importance(0.5, 0.0, _NOW, 1, _NOW, _CFG)
-        - compute_importance(0.5, 0.0, _NOW, 0, _NOW, _CFG)
+    gain_first = compute_importance(0.5, 0.0, _NOW, 1, _NOW, _CFG) - compute_importance(
+        0.5, 0.0, _NOW, 0, _NOW, _CFG
     )
-    gain_tenth = (
-        compute_importance(0.5, 0.0, _NOW, 10, _NOW, _CFG)
-        - compute_importance(0.5, 0.0, _NOW, 9, _NOW, _CFG)
+    gain_tenth = compute_importance(0.5, 0.0, _NOW, 10, _NOW, _CFG) - compute_importance(
+        0.5, 0.0, _NOW, 9, _NOW, _CFG
     )
     assert gain_first > gain_tenth
 
@@ -66,9 +64,5 @@ def test_full_formula_composition() -> None:
         now=_NOW,
         cfg=_CFG,
     )
-    expected = (
-        0.6 * math.exp(-0.1 * 7.0)
-        + 0.2 * math.log1p(3)
-        + 0.1 * 0.5
-    )
+    expected = 0.6 * math.exp(-0.1 * 7.0) + 0.2 * math.log1p(3) + 0.1 * 0.5
     assert math.isclose(score, expected, rel_tol=1e-6)

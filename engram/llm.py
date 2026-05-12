@@ -104,9 +104,7 @@ class OpenAIAdapter:
         base_url: Optional custom endpoint (Ollama, Azure, etc.).
     """
 
-    def __init__(
-        self, model: str = "gpt-4o-mini", base_url: str | None = None
-    ) -> None:
+    def __init__(self, model: str = "gpt-4o-mini", base_url: str | None = None) -> None:
         self.model_name = model
         self._base_url = base_url
         self._client: Any = None
