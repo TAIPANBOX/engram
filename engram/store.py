@@ -429,6 +429,24 @@ class Store:
         row: Any = self._conn.execute("SELECT COUNT(*) FROM vec_episodes").fetchone()
         return int(row[0])
 
+    def fact_count(self) -> int:
+        row: Any = self._conn.execute("SELECT COUNT(*) FROM facts").fetchone()
+        return int(row[0])
+
+    def active_fact_count(self) -> int:
+        row: Any = self._conn.execute(
+            "SELECT COUNT(*) FROM facts WHERE valid_to IS NULL AND superseded_at IS NULL"
+        ).fetchone()
+        return int(row[0])
+
+    def entity_count(self) -> int:
+        row: Any = self._conn.execute("SELECT COUNT(*) FROM entities").fetchone()
+        return int(row[0])
+
+    def reflection_count(self) -> int:
+        row: Any = self._conn.execute("SELECT COUNT(*) FROM reflections").fetchone()
+        return int(row[0])
+
     # ------------------------------------------------------------------
     # Entities
     # ------------------------------------------------------------------

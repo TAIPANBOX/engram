@@ -41,6 +41,7 @@ dev = [
 ]
 
 [project.scripts]
+engram      = "engram.cli:main"
 engram-bench = "engram.benchmarks.cli:main"
 
 [project.urls]
@@ -71,7 +72,7 @@ disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
 # Integration files depend on optional packages; exempt from strict checking.
-module = ["engram.adapters.*", "engram.mcp_server", "engram.benchmarks.*"]
+module = ["engram.adapters.*", "engram.mcp_server", "engram.benchmarks.*", "engram.cli"]
 ignore_errors = true
 
 [tool.pytest.ini_options]
