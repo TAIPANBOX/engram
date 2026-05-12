@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 
 import sqlite_vec  # type: ignore[import-untyped]
@@ -18,7 +19,8 @@ CREATE TABLE IF NOT EXISTS episodes (
     tags            JSON DEFAULT '[]',
     salience        REAL DEFAULT 0.5,
     emotional_valence REAL DEFAULT 0.0,
-    summary_of      JSON DEFAULT '[]'
+    summary_of      JSON DEFAULT '[]',
+    importance_score REAL NOT NULL DEFAULT 1.0
 );
 
 CREATE TABLE IF NOT EXISTS facts (
@@ -80,6 +82,10 @@ def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
     conn.enable_load_extension(False)
 
     conn.executescript(_DDL)
+
+    # Backfill column for databases created before v0.2.
+    with contextlib.suppress(sqlite3.OperationalError):
+        conn.execute("ALTER TABLE episodes ADD COLUMN importance_score REAL NOT NULL DEFAULT 1.0")
 
     # vec0 virtual table dimension is baked in at creation; IF NOT EXISTS guards re-runs.
     conn.execute(

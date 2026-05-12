@@ -22,10 +22,11 @@ class Episode:
     salience: float = 0.5
     emotional_valence: float = 0.0
     summary_of: list[str] = field(default_factory=list)
+    importance_score: float = 1.0
 
     @classmethod
     def from_row(cls, row: tuple[Any, ...]) -> Episode:
-        """Construct from a DB row (id, content, timestamp, actors, tags, salience, emotional_valence, summary_of)."""
+        """Construct from a DB row (id, content, timestamp, actors, tags, salience, emotional_valence, summary_of, importance_score)."""
         return cls(
             id=row[0],
             content=row[1],
@@ -35,6 +36,7 @@ class Episode:
             salience=row[5],
             emotional_valence=row[6],
             summary_of=json.loads(row[7] or "[]"),
+            importance_score=float(row[8]) if row[8] is not None else 1.0,
         )
 
 
@@ -43,8 +45,9 @@ class SearchResult:
     """A retrieval hit returned by recall()."""
 
     episode: Episode
-    score: float  # cosine similarity in [0, 1], higher is better
-    distance: float  # raw L2 distance from vec index
+    score: float      # cosine similarity in [0, 1], higher is better
+    distance: float   # raw L2 distance from vec index
+    importance: float = 1.0  # cached importance score at time of retrieval
 
 
 @dataclass

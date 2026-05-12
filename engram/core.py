@@ -7,7 +7,9 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+from engram.decay import run_decay
 from engram.embedder import DEFAULT_MODEL, Embedder
+from engram.importance import DecayConfig
 from engram.models import SearchResult
 from engram.retrieval import recall as _recall
 from engram.schema import migrate
@@ -26,10 +28,12 @@ class Engram:
         self,
         path: str | Path = ":memory:",
         embedder_model: str = DEFAULT_MODEL,
+        decay_config: DecayConfig | None = None,
     ) -> None:
         self._path = str(path)
         self._conn = sqlite3.connect(self._path)
         self._conn.row_factory = sqlite3.Row
+        self._decay_cfg = decay_config or DecayConfig()
 
         self._embedder = Embedder(embedder_model)
         migrate(self._conn, dim=self._embedder.dim)
@@ -91,6 +95,18 @@ class Engram:
             List of :class:`SearchResult` ordered by descending similarity.
         """
         return _recall(query, k, self._store, self._embedder)
+
+    # ------------------------------------------------------------------
+    # Maintenance
+    # ------------------------------------------------------------------
+
+    def decay(self) -> int:
+        """Recompute importance scores for all episodes (synchronous).
+
+        Returns:
+            Number of episodes updated.
+        """
+        return run_decay(self._store, self._decay_cfg)
 
     # ------------------------------------------------------------------
     # Housekeeping
