@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from engram.decay import run_decay
 from engram.embedder import DEFAULT_MODEL, Embedder
 from engram.importance import DecayConfig
-from engram.models import Fact, ForgetResult, ReflectionRun, SearchResult
+from engram.models import Fact, ForgetResult, ObserveInput, ReflectionRun, SearchResult
 from engram.retrieval import recall as _recall
 from engram.schema import migrate
 from engram.store import Store
@@ -44,7 +44,7 @@ class ReflectionThread(threading.Thread):
     def run(self) -> None:
         try:
             self.result = self._engram.reflect()
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             self._exc = exc
 
     def join(self, timeout: float | None = None) -> None:
@@ -128,6 +128,42 @@ class Engram:
         embedding = self._embedder.embed(content)
         self._store.insert_episode(ep, embedding)
         return episode_id
+
+    def observe_many(self, items: list[ObserveInput]) -> list[str]:
+        """Record multiple observations in a single transaction.
+
+        Uses batch ONNX inference and a single SQL transaction, giving roughly
+        linear throughput independent of batch size rather than paying per-call
+        overhead for each observation.
+
+        Args:
+            items: Observations to record; each is an :class:`ObserveInput` instance.
+
+        Returns:
+            Episode ids in the same order as *items*.
+        """
+        if not items:
+            return []
+
+        from engram.models import Episode
+
+        now = datetime.now(tz=UTC)
+        episode_ids = [str(uuid.uuid4()) for _ in items]
+        episodes = [
+            Episode(
+                id=ep_id,
+                content=item.content,
+                timestamp=now,
+                actors=item.actors,
+                tags=item.tags,
+                salience=item.salience,
+                emotional_valence=item.emotional_valence,
+            )
+            for ep_id, item in zip(episode_ids, items, strict=True)
+        ]
+        embeddings = self._embedder.embed_batch([item.content for item in items])
+        self._store.insert_episode_batch(episodes, embeddings)
+        return episode_ids
 
     # ------------------------------------------------------------------
     # Read

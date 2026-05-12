@@ -163,5 +163,24 @@ class ForgetResult:
     facts_deleted: int
 
 
+@dataclass
+class ObserveInput:
+    """Input descriptor for observe_many().
+
+    Args:
+        content: Raw text of the observed event.
+        actors: Named entities involved.
+        tags: Categorical labels.
+        salience: Subjective importance at encoding time (0-1).
+        emotional_valence: Affective weight (-1 to +1).
+    """
+
+    content: str
+    actors: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    salience: float = 0.5
+    emotional_valence: float = 0.0
+
+
 # Convenience type alias used by Store
 EmbeddedVector = np.ndarray

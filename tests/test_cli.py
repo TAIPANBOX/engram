@@ -255,7 +255,7 @@ def test_version_flag(capsys):
         main(["--version"])
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    assert "1.0.0" in out
+    assert "2.0.0" in out
 
 
 def test_no_command_exits(capsys):

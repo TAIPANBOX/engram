@@ -7,7 +7,6 @@ import pytest
 from engram import Engram, StubLLMAdapter
 from engram.cli import main
 
-
 # ------------------------------------------------------------------
 # Fixtures
 # ------------------------------------------------------------------
@@ -76,7 +75,7 @@ def test_episode_count_scoped_per_agent(two_agents):
 
 
 def test_episode_agent_id_stored_on_model(two_agents):
-    a, b = two_agents
+    a, _ = two_agents
     ep_id = a.observe("Agent A event")
     ep = a._store.get_episode(ep_id)
     assert ep is not None

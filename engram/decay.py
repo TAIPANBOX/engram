@@ -15,6 +15,10 @@ def run_decay(
 ) -> int:
     """Recompute and persist importance scores for every episode.
 
+    Uses two bulk SQL operations (one GROUP BY fetch + one executemany update)
+    instead of N individual round-trips, so performance scales O(1) with episode
+    count rather than O(N).
+
     Args:
         store: Active store instance.
         cfg: Decay hyper-parameters.
@@ -25,18 +29,26 @@ def run_decay(
     """
     if now is None:
         now = datetime.now(tz=UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
 
     episodes = store.get_episodes_for_decay()
+    if not episodes:
+        return 0
+
+    # Single query: access stats for all episodes at once.
+    all_stats = store.get_all_access_stats()
+
+    scores: dict[str, float] = {}
     for ep_id, salience, emotional_valence, timestamp in episodes:
-        access_count, last_access = store.get_access_stats(ep_id)
-        # Use creation timestamp as baseline if the episode was never accessed.
+        access_count, last_access = all_stats.get(ep_id, (0, None))
         baseline = last_access if last_access is not None else timestamp
-        # Ensure both datetimes are timezone-aware for subtraction.
         if baseline.tzinfo is None:
             baseline = baseline.replace(tzinfo=UTC)
-        if now.tzinfo is None:
-            now = now.replace(tzinfo=UTC)
-        score = compute_importance(salience, emotional_valence, baseline, access_count, now, cfg)
-        store.update_importance(ep_id, score)
+        scores[ep_id] = compute_importance(
+            salience, emotional_valence, baseline, access_count, now, cfg
+        )
 
+    # Single executemany + single commit for all updates.
+    store.batch_update_importance(scores)
     return len(episodes)

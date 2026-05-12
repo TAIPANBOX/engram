@@ -155,6 +155,64 @@ class Store:
             (row[0], float(row[1]), float(row[2]), datetime.fromisoformat(row[3])) for row in rows
         ]
 
+    def get_all_access_stats(self) -> dict[str, tuple[int, datetime | None]]:
+        """Return access stats for every episode in a single GROUP BY query."""
+        rows: list[Any] = self._conn.execute(
+            "SELECT memory_id, COUNT(*) AS cnt, MAX(accessed_at) AS last "
+            "FROM access_log GROUP BY memory_id"
+        ).fetchall()
+        result: dict[str, tuple[int, datetime | None]] = {}
+        for row in rows:
+            last: datetime | None = datetime.fromisoformat(row[2]) if row[2] else None
+            result[str(row[0])] = (int(row[1]), last)
+        return result
+
+    def batch_update_importance(self, scores: dict[str, float]) -> None:
+        """Persist importance scores for multiple episodes in a single transaction."""
+        self._conn.executemany(
+            "UPDATE episodes SET importance_score = ? WHERE id = ?",
+            [(score, ep_id) for ep_id, score in scores.items()],
+        )
+        self._conn.commit()
+
+    def insert_episode_batch(
+        self, episodes: list[Episode], embeddings: list[EmbeddedVector]
+    ) -> None:
+        """Insert multiple episodes and their vectors in a single transaction."""
+        self._conn.executemany(
+            "INSERT INTO episodes (id, content, timestamp, actors, tags, "
+            "salience, emotional_valence, summary_of, agent_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    ep.id,
+                    ep.content,
+                    ep.timestamp.isoformat(),
+                    json.dumps(ep.actors),
+                    json.dumps(ep.tags),
+                    ep.salience,
+                    ep.emotional_valence,
+                    json.dumps(ep.summary_of),
+                    self._agent_id,
+                )
+                for ep in episodes
+            ],
+        )
+        placeholders = ",".join("?" * len(episodes))
+        rowid_rows: list[Any] = self._conn.execute(
+            f"SELECT id, rowid FROM episodes WHERE id IN ({placeholders})",
+            [ep.id for ep in episodes],
+        ).fetchall()
+        rowid_map = {str(r[0]): int(r[1]) for r in rowid_rows}
+        self._conn.executemany(
+            "INSERT INTO vec_episodes(rowid, embedding) VALUES (?, ?)",
+            [
+                (rowid_map[ep.id], _serialize(emb))
+                for ep, emb in zip(episodes, embeddings, strict=True)
+            ],
+        )
+        self._conn.commit()
+
     def get_episodes_since(self, since: datetime | None, limit: int = 200) -> list[Episode]:
         """Return episodes created after *since* for this agent, up to *limit*.
 
@@ -573,9 +631,7 @@ class Store:
         ).fetchall()
         return [(str(r[0]), float(r[1])) for r in rows]
 
-    def get_episodes_by_ids(
-        self, ids: list[str], agent_id: str | None = None
-    ) -> list[Episode]:
+    def get_episodes_by_ids(self, ids: list[str], agent_id: str | None = None) -> list[Episode]:
         """Bulk-fetch episodes by id list; silently skips unknown ids.
 
         Args:
@@ -619,7 +675,12 @@ class Store:
         k_inner = k * 10
         if agent_id is not None:
             agent_clause = "AND e.agent_id = ?"
-            params: tuple[Any, ...] = (_serialize(query_embedding), k_inner, as_of.isoformat(), agent_id)
+            params: tuple[Any, ...] = (
+                _serialize(query_embedding),
+                k_inner,
+                as_of.isoformat(),
+                agent_id,
+            )
         else:
             agent_clause = ""
             params = (_serialize(query_embedding), k_inner, as_of.isoformat())
@@ -672,7 +733,6 @@ class Store:
         Episodes with no agent (agent_id IS NULL) are excluded.
         """
         rows: list[Any] = self._conn.execute(
-            "SELECT DISTINCT agent_id FROM episodes "
-            "WHERE agent_id IS NOT NULL ORDER BY agent_id"
+            "SELECT DISTINCT agent_id FROM episodes WHERE agent_id IS NOT NULL ORDER BY agent_id"
         ).fetchall()
         return [str(r[0]) for r in rows]

@@ -21,7 +21,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
@@ -81,7 +80,9 @@ def _cmd_inspect(args: argparse.Namespace) -> None:
 
     print(f"\nStore: {args.path}{size_str}\n")
     print(f"  Episodes:       {ep:>6}   (vec index: {vec})")
-    print(f"  Facts:          {facts_total:>6}   (active: {facts_active}, superseded: {facts_total - facts_active})")
+    print(
+        f"  Facts:          {facts_total:>6}   (active: {facts_active}, superseded: {facts_total - facts_active})"
+    )
     print(f"  Entities:       {entities:>6}")
     if runs == 0:
         print(f"  Reflections:    {runs:>6}   (never run)")
