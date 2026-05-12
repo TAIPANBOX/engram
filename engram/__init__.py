@@ -8,7 +8,7 @@ from engram.importance import DecayConfig
 from engram.llm import AnthropicAdapter, OpenAIAdapter, StubLLMAdapter
 from engram.models import Episode, Fact, ForgetResult, ObserveInput, ReflectionRun, SearchResult
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 __all__ = [
     "AnthropicAdapter",
