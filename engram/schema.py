@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS facts (
     superseded_at   DATETIME,
     superseded_by   TEXT REFERENCES facts(id),
     confidence      REAL NOT NULL DEFAULT 1.0,
-    derived_from    JSON DEFAULT '[]'
+    derived_from    JSON DEFAULT '[]',
+    extracted_by    TEXT REFERENCES reflections(id)
 );
 
 CREATE TABLE IF NOT EXISTS entities (
@@ -83,9 +84,11 @@ def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
 
     conn.executescript(_DDL)
 
-    # Backfill column for databases created before v0.2.
+    # Backfill columns for databases created before v0.2/v0.3.
     with contextlib.suppress(sqlite3.OperationalError):
         conn.execute("ALTER TABLE episodes ADD COLUMN importance_score REAL NOT NULL DEFAULT 1.0")
+    with contextlib.suppress(sqlite3.OperationalError):
+        conn.execute("ALTER TABLE facts ADD COLUMN extracted_by TEXT REFERENCES reflections(id)")
 
     # vec0 virtual table dimension is baked in at creation; IF NOT EXISTS guards re-runs.
     conn.execute(

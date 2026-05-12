@@ -65,6 +65,55 @@ class Fact:
     superseded_by: str | None
     confidence: float
     derived_from: list[str] = field(default_factory=list)
+    extracted_by: str | None = None  # reflection run id that created this fact
+
+    @classmethod
+    def from_row(cls, row: tuple[Any, ...]) -> Fact:
+        """Construct from a DB row (id, subject, predicate, object, valid_from, valid_to,
+        recorded_at, superseded_at, superseded_by, confidence, derived_from, extracted_by)."""
+        return cls(
+            id=row[0],
+            subject=row[1],
+            predicate=row[2],
+            object=row[3],
+            valid_from=datetime.fromisoformat(row[4]),
+            valid_to=datetime.fromisoformat(row[5]) if row[5] else None,
+            recorded_at=datetime.fromisoformat(row[6]),
+            superseded_at=datetime.fromisoformat(row[7]) if row[7] else None,
+            superseded_by=row[8],
+            confidence=float(row[9]),
+            derived_from=json.loads(row[10] or "[]"),
+            extracted_by=row[11],
+        )
+
+
+@dataclass
+class ReflectionRun:
+    """Audit record for a single reflection pass."""
+
+    id: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    episodes_processed: int = 0
+    facts_extracted: int = 0
+    contradictions_resolved: int = 0
+    model_used: str | None = None
+    cost_tokens: int = 0
+
+    @classmethod
+    def from_row(cls, row: tuple[Any, ...]) -> ReflectionRun:
+        """Construct from a DB row (id, started_at, finished_at, episodes_processed,
+        facts_extracted, contradictions_resolved, model_used, cost_tokens)."""
+        return cls(
+            id=row[0],
+            started_at=datetime.fromisoformat(row[1]),
+            finished_at=datetime.fromisoformat(row[2]) if row[2] else None,
+            episodes_processed=int(row[3] or 0),
+            facts_extracted=int(row[4] or 0),
+            contradictions_resolved=int(row[5] or 0),
+            model_used=row[6],
+            cost_tokens=int(row[7] or 0),
+        )
 
 
 @dataclass

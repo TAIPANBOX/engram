@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from engram.models import EmbeddedVector, Episode
+from engram.models import EmbeddedVector, Episode, Fact, ReflectionRun
 
 
 def _serialize(vec: EmbeddedVector) -> bytes:
@@ -134,6 +134,196 @@ class Store:
             (row[0], float(row[1]), float(row[2]), datetime.fromisoformat(row[3]))
             for row in rows
         ]
+
+    def get_episodes_since(
+        self, since: datetime | None, limit: int = 200
+    ) -> list[Episode]:
+        """Return episodes created after *since* (or all episodes if None), up to *limit*."""
+        if since is None:
+            rows: list[Any] = self._conn.execute(
+                "SELECT id, content, timestamp, actors, tags, salience, emotional_valence, "
+                "summary_of, importance_score FROM episodes ORDER BY timestamp ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT id, content, timestamp, actors, tags, salience, emotional_valence, "
+                "summary_of, importance_score FROM episodes WHERE timestamp > ? "
+                "ORDER BY timestamp ASC LIMIT ?",
+                (since.isoformat(), limit),
+            ).fetchall()
+        return [Episode.from_row(tuple(r)) for r in rows]
+
+    def prune_episodes(self, threshold: float) -> int:
+        """Delete episodes whose importance_score is below *threshold*.
+
+        Returns the number of pruned episodes.
+        """
+        rows: list[Any] = self._conn.execute(
+            "SELECT id FROM episodes WHERE importance_score < ?", (threshold,)
+        ).fetchall()
+        ids = [r[0] for r in rows]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" * len(ids))
+        self._conn.execute(
+            f"DELETE FROM access_log WHERE memory_id IN ({placeholders})", ids
+        )
+        self._conn.execute(f"DELETE FROM episodes WHERE id IN ({placeholders})", ids)
+        self._conn.commit()
+        return len(ids)
+
+    # ------------------------------------------------------------------
+    # Facts
+    # ------------------------------------------------------------------
+
+    _FACT_COLS = (
+        "id, subject, predicate, object, valid_from, valid_to, recorded_at, "
+        "superseded_at, superseded_by, confidence, derived_from, extracted_by"
+    )
+
+    def insert_fact(self, fact: Fact) -> None:
+        """Persist a semantic fact triple."""
+        self._conn.execute(
+            """
+            INSERT INTO facts (id, subject, predicate, object, valid_from, valid_to,
+                               recorded_at, superseded_at, superseded_by, confidence,
+                               derived_from, extracted_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                fact.id,
+                fact.subject,
+                fact.predicate,
+                fact.object,
+                fact.valid_from.isoformat(),
+                fact.valid_to.isoformat() if fact.valid_to else None,
+                fact.recorded_at.isoformat(),
+                fact.superseded_at.isoformat() if fact.superseded_at else None,
+                fact.superseded_by,
+                fact.confidence,
+                json.dumps(fact.derived_from),
+                fact.extracted_by,
+            ),
+        )
+        self._conn.commit()
+
+    def get_fact(self, fact_id: str) -> Fact | None:
+        """Fetch a single fact by id."""
+        row: Any = self._conn.execute(
+            f"SELECT {self._FACT_COLS} FROM facts WHERE id = ?", (fact_id,)
+        ).fetchone()
+        return Fact.from_row(tuple(row)) if row else None
+
+    def get_active_facts(self, subject: str, predicate: str) -> list[Fact]:
+        """Return currently valid facts for (subject, predicate)."""
+        rows: list[Any] = self._conn.execute(
+            f"SELECT {self._FACT_COLS} FROM facts "
+            "WHERE subject = ? AND predicate = ? "
+            "AND valid_to IS NULL AND superseded_at IS NULL",
+            (subject, predicate),
+        ).fetchall()
+        return [Fact.from_row(tuple(r)) for r in rows]
+
+    def get_all_active_facts(self) -> list[Fact]:
+        """Return all currently valid facts (for contradictions surface query)."""
+        rows: list[Any] = self._conn.execute(
+            f"SELECT {self._FACT_COLS} FROM facts "
+            "WHERE valid_to IS NULL AND superseded_at IS NULL"
+        ).fetchall()
+        return [Fact.from_row(tuple(r)) for r in rows]
+
+    def get_all_facts(self, subject: str) -> list[Fact]:
+        """Return all facts for *subject* regardless of validity."""
+        rows: list[Any] = self._conn.execute(
+            f"SELECT {self._FACT_COLS} FROM facts WHERE subject = ? ORDER BY valid_from ASC",
+            (subject,),
+        ).fetchall()
+        return [Fact.from_row(tuple(r)) for r in rows]
+
+    def close_fact(
+        self, fact_id: str, valid_to: datetime, superseded_by: str
+    ) -> None:
+        """Mark a fact as superseded by setting its validity end."""
+        self._conn.execute(
+            "UPDATE facts SET valid_to = ?, superseded_by = ?, superseded_at = ? WHERE id = ?",
+            (valid_to.isoformat(), superseded_by, valid_to.isoformat(), fact_id),
+        )
+        self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Reflections
+    # ------------------------------------------------------------------
+
+    _REFLECTION_COLS = (
+        "id, started_at, finished_at, episodes_processed, facts_extracted, "
+        "contradictions_resolved, model_used, cost_tokens"
+    )
+
+    def insert_reflection(self, run: ReflectionRun) -> None:
+        """Persist a new reflection run record."""
+        self._conn.execute(
+            """
+            INSERT INTO reflections (id, started_at, finished_at, episodes_processed,
+                                     facts_extracted, contradictions_resolved,
+                                     model_used, cost_tokens)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run.id,
+                run.started_at.isoformat(),
+                run.finished_at.isoformat() if run.finished_at else None,
+                run.episodes_processed,
+                run.facts_extracted,
+                run.contradictions_resolved,
+                run.model_used,
+                run.cost_tokens,
+            ),
+        )
+        self._conn.commit()
+
+    def update_reflection(
+        self,
+        run_id: str,
+        finished_at: datetime,
+        episodes_processed: int,
+        facts_extracted: int,
+        contradictions_resolved: int,
+        cost_tokens: int,
+    ) -> None:
+        """Update a reflection run once it completes."""
+        self._conn.execute(
+            """
+            UPDATE reflections
+            SET finished_at = ?, episodes_processed = ?, facts_extracted = ?,
+                contradictions_resolved = ?, cost_tokens = ?
+            WHERE id = ?
+            """,
+            (
+                finished_at.isoformat(),
+                episodes_processed,
+                facts_extracted,
+                contradictions_resolved,
+                cost_tokens,
+                run_id,
+            ),
+        )
+        self._conn.commit()
+
+    def get_last_reflection(self) -> ReflectionRun | None:
+        """Return the most recently started reflection run, or None."""
+        row: Any = self._conn.execute(
+            f"SELECT {self._REFLECTION_COLS} FROM reflections "
+            "ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+        return ReflectionRun.from_row(tuple(row)) if row else None
+
+    def get_reflection_by_id(self, run_id: str) -> ReflectionRun | None:
+        """Fetch a specific reflection run by id."""
+        row: Any = self._conn.execute(
+            f"SELECT {self._REFLECTION_COLS} FROM reflections WHERE id = ?", (run_id,)
+        ).fetchone()
+        return ReflectionRun.from_row(tuple(row)) if row else None
 
     def episode_count(self) -> int:
         row: Any = self._conn.execute("SELECT COUNT(*) FROM episodes").fetchone()
