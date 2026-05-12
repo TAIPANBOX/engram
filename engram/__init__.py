@@ -6,7 +6,15 @@ See DESIGN.md for architecture and intended API.
 from engram.async_engram import AsyncEngram
 from engram.core import Engram, ReflectionThread
 from engram.importance import DecayConfig
-from engram.llm import AnthropicAdapter, OpenAIAdapter, StubLLMAdapter
+from engram.llm import (
+    AnthropicAdapter,
+    DeepSeekAdapter,
+    GeminiAdapter,
+    KimiAdapter,
+    OpenAIAdapter,
+    QwenAdapter,
+    StubLLMAdapter,
+)
 from engram.models import (
     CompressionRun,
     Episode,
@@ -25,12 +33,16 @@ __all__ = [
     "AsyncEngram",
     "CompressionRun",
     "DecayConfig",
+    "DeepSeekAdapter",
     "Engram",
     "Episode",
     "Fact",
     "ForgetResult",
+    "GeminiAdapter",
+    "KimiAdapter",
     "ObserveInput",
     "OpenAIAdapter",
+    "QwenAdapter",
     "ReflectionRun",
     "ReflectionThread",
     "SearchResult",

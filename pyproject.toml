@@ -27,6 +27,7 @@ dependencies = [
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40.0"]
 openai = ["openai>=1.50.0"]
+gemini = ["google-genai>=1.0.0"]
 mcp = ["mcp>=1.0"]
 langchain = ["langchain-core>=0.1"]
 llamaindex = ["llama-index-core>=0.10"]
