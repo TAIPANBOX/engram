@@ -793,9 +793,18 @@ Measured on Apple M-series, fastembed `BAAI/bge-small-en-v1.5`, SQLite WAL mode.
 | Implementation | Latency |
 |---|---|
 | v1.x: N individual SQL round-trips | ~52 ms |
-| **v2.0: batch GROUP BY + executemany** | **~2.5 ms** |
+| **v2.0+: batch GROUP BY + executemany** | **~2.5 ms** |
 
 The batch rewrite eliminates 5 000 SQL calls and replaces them with 3.
+
+### Per-commit write (WAL vs DELETE journal)
+
+| Journal mode | Latency per commit | Notes |
+|---|---|---|
+| DELETE (SQLite default) | ~0.31 ms | Exclusive lock + random-write sync |
+| **WAL (v2.0.1+)** | **~0.07 ms** | Sequential append, no exclusive lock |
+
+WAL mode is enabled automatically for all file-based stores. Readers (`recall`, `timeline`) and writers (`observe`, `reflect_async`) now run concurrently without blocking each other.
 
 ### LoCoMo Recall Accuracy (5 sessions, 15 questions)
 
@@ -895,6 +904,7 @@ tests/
 - [x] v1.2 — CLI (`engram inspect`, `recall`, `timeline`, `observe`, `reflect`, `forget`, `list-agents`)
 - [x] v1.3 — Multi-agent shared memory (`agent_id` column, `cross_agent` recall, `list_agents()`)
 - [x] v2.0 — Batch decay (21× speedup), `observe_many()` (2× speedup), embedding LRU cache
+- [x] v2.0.1 — WAL journal mode + 32 MB page cache (4× faster per-commit writes, concurrent reads + writes)
 
 ---
 
