@@ -418,6 +418,60 @@ class Engram:
         return self._store.list_agents()
 
     # ------------------------------------------------------------------
+    # Export / import
+    # ------------------------------------------------------------------
+
+    def export_json(self, dest: str) -> dict[str, Any]:
+        """Export the full store to a JSON file.
+
+        Exports episodes, facts, entities, and graph edges. Access log and
+        reflection records are omitted (operational data, not portable).
+
+        Args:
+            dest: File path to write. Extension ``.json`` recommended.
+
+        Returns:
+            The exported document as a plain dict.
+        """
+        from engram.export import export_json
+
+        return export_json(self, dest)
+
+    def import_json(self, src: str, *, merge: bool = False) -> dict[str, int]:
+        """Import from a JSON file produced by :meth:`export_json`.
+
+        Args:
+            src: Path to the JSON file.
+            merge: If ``True``, skip duplicate ids instead of raising.
+
+        Returns:
+            Dict with counts of inserted rows per table:
+            ``{"episodes": N, "facts": N, "entities": N, "edges": N}``.
+        """
+        from engram.export import import_json
+
+        return import_json(self, src, merge=merge)
+
+    def backup(self, dest: str | Path) -> None:
+        """Create a consistent hot backup of the store to *dest*.
+
+        Uses SQLite's built-in online backup API, which is safe to call while
+        the database is open and actively written to.  The destination file
+        is created (or overwritten) as a complete, self-contained copy of the
+        current database, including all WAL frames.
+
+        Args:
+            dest: File path for the backup. Parent directory must exist.
+                  Use a ``.engram`` extension by convention.
+        """
+        self._store.flush_access_log()
+        target = sqlite3.connect(str(dest))
+        try:
+            self._conn.backup(target)
+        finally:
+            target.close()
+
+    # ------------------------------------------------------------------
     # Maintenance
     # ------------------------------------------------------------------
 
