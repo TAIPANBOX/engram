@@ -33,6 +33,7 @@ def test_recall_logs_rank(mem: Engram) -> None:
     for i in range(3):
         mem.observe(f"Meeting update number {i}")
     mem.recall("meeting", k=3)
+    mem._store.flush_access_log()  # flush buffer before reading DB directly
     row = mem._store._conn.execute(
         "SELECT rank FROM access_log ORDER BY rank ASC LIMIT 1"
     ).fetchone()

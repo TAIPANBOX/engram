@@ -434,7 +434,8 @@ class Engram:
     # ------------------------------------------------------------------
 
     def close(self) -> None:
-        """Close the underlying database connection."""
+        """Flush buffered access log entries and close the database connection."""
+        self._store.flush_access_log()
         self._conn.close()
 
     def __enter__(self) -> Engram:

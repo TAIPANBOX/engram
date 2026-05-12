@@ -28,6 +28,9 @@ _EPISODE_COLS = (
 )
 
 
+_ACCESS_LOG_FLUSH_SIZE = 50  # flush buffer after this many entries
+
+
 class Store:
     """Thin wrapper around a sqlite3 connection providing episode persistence."""
 
@@ -35,6 +38,10 @@ class Store:
         self._conn = conn
         self._dim = dim
         self._agent_id = agent_id
+        # Access log entries are buffered and written in a single transaction
+        # to avoid one commit per recall result. Flushed on close() or when
+        # the buffer reaches _ACCESS_LOG_FLUSH_SIZE.
+        self._access_buffer: list[tuple[str, str, str | None, int, str | None]] = []
 
     def insert_episode(self, ep: Episode, embedding: EmbeddedVector) -> None:
         """Persist an episode and its embedding vector."""
@@ -118,24 +125,42 @@ class Store:
     def log_access(
         self, memory_id: str, accessed_at: datetime, query: str | None, rank: int
     ) -> None:
-        """Record a retrieval event in the access log."""
-        self._conn.execute(
+        """Buffer a retrieval event; flushes to DB when buffer is full."""
+        self._access_buffer.append(
+            (memory_id, accessed_at.isoformat(), query, rank, self._agent_id)
+        )
+        if len(self._access_buffer) >= _ACCESS_LOG_FLUSH_SIZE:
+            self.flush_access_log()
+
+    def flush_access_log(self) -> None:
+        """Write all buffered access log entries in a single transaction."""
+        if not self._access_buffer:
+            return
+        self._conn.executemany(
             "INSERT INTO access_log (memory_id, accessed_at, query, rank, agent_id) "
             "VALUES (?, ?, ?, ?, ?)",
-            (memory_id, accessed_at.isoformat(), query, rank, self._agent_id),
+            self._access_buffer,
         )
         self._conn.commit()
+        self._access_buffer.clear()
 
     def get_access_stats(self, memory_id: str) -> tuple[int, datetime | None]:
-        """Return (access_count, last_accessed_at) for a memory."""
+        """Return (access_count, last_accessed_at) including buffered entries."""
         row: Any = self._conn.execute(
             "SELECT COUNT(*), MAX(accessed_at) FROM access_log WHERE memory_id = ?",
             (memory_id,),
         ).fetchone()
         count = int(row[0]) if row[0] else 0
-        last: datetime | None = None
-        if row[1]:
-            last = datetime.fromisoformat(row[1])
+        last: datetime | None = datetime.fromisoformat(row[1]) if row[1] else None
+
+        # Include entries that are still in the write buffer.
+        for entry in self._access_buffer:
+            if entry[0] == memory_id:
+                count += 1
+                entry_dt = datetime.fromisoformat(entry[1])
+                if last is None or entry_dt > last:
+                    last = entry_dt
+
         return count, last
 
     def update_importance(self, memory_id: str, score: float) -> None:
@@ -156,7 +181,7 @@ class Store:
         ]
 
     def get_all_access_stats(self) -> dict[str, tuple[int, datetime | None]]:
-        """Return access stats for every episode in a single GROUP BY query."""
+        """Return access stats for every episode including buffered entries."""
         rows: list[Any] = self._conn.execute(
             "SELECT memory_id, COUNT(*) AS cnt, MAX(accessed_at) AS last "
             "FROM access_log GROUP BY memory_id"
@@ -165,6 +190,17 @@ class Store:
         for row in rows:
             last: datetime | None = datetime.fromisoformat(row[2]) if row[2] else None
             result[str(row[0])] = (int(row[1]), last)
+
+        # Merge buffered entries not yet written to the DB.
+        for entry in self._access_buffer:
+            mid = entry[0]
+            entry_dt = datetime.fromisoformat(entry[1])
+            if mid in result:
+                cnt, last = result[mid]
+                result[mid] = (cnt + 1, entry_dt if last is None or entry_dt > last else last)
+            else:
+                result[mid] = (1, entry_dt)
+
         return result
 
     def batch_update_importance(self, scores: dict[str, float]) -> None:
