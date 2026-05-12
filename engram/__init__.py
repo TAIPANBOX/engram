@@ -3,6 +3,7 @@
 See DESIGN.md for architecture and intended API.
 """
 
+from engram.async_engram import AsyncEngram
 from engram.core import Engram, ReflectionThread
 from engram.importance import DecayConfig
 from engram.llm import AnthropicAdapter, OpenAIAdapter, StubLLMAdapter
@@ -13,6 +14,7 @@ __version__ = "2.0.1"
 
 __all__ = [
     "AnthropicAdapter",
+    "AsyncEngram",
     "DecayConfig",
     "Engram",
     "Episode",
