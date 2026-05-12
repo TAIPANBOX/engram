@@ -9,44 +9,78 @@
 
 ---
 
-## What is Engram?
+## The problem
 
-AI agents forget everything the moment a conversation ends. They have no sense of what happened yesterday, who they've spoken to before, or what they've already figured out. Giving an agent "memory" with a plain vector database only solves part of the problem — you get similarity search, but you lose time, structure, and understanding.
+Every AI agent starts from zero. Ask it something it answered last week — it has no idea. Show it a document it already processed — it processes it again. Tell it Ivan moved to a new company — it still thinks Ivan works at the old one.
 
-Engram is a **complete cognitive memory layer** for AI agents, packaged as a single local file. It is to agent memory what SQLite is to relational storage: self-contained, zero-configuration, production-capable, and designed to be embedded inside whatever framework or agent loop you already use.
+This happens because agents have no persistent memory. When the conversation ends, everything is gone.
 
-### The cognitive model
+The usual fix is to throw a vector database at the problem. Store text, embed it, search by similarity. That helps — but it's not enough. You still can't ask *"what did the agent think in March?"* or *"where did this belief come from?"* or *"show me everything the agent knows about Ivan."* A vector search finds similar text. It doesn't understand time, relationships, or importance.
 
-Human memory isn't a flat list of facts — it's a dynamic system. Engram models three layers:
+**Engram is memory done properly.**
 
-**Episodic memory** — raw observations stored as they happen, with actors, tags, salience, and emotional weight. No LLM required at write time; writes complete in ~4 ms.
+---
 
-**Semantic memory** — structured knowledge extracted from episodes via a background reflection loop: `(subject, predicate, object)` triples with full bitemporal validity. Every fact knows *when it was true* and *when the system learned it* — independently tracked on two timelines. When Ivan switches jobs, the old fact is closed with `valid_to`, not deleted. You can query what the agent believed in March even if the truth has since changed.
+## What Engram does
 
-**Dynamic importance** — each memory carries a living importance score based on the Ebbinghaus forgetting curve, reinforced by retrieval frequency and emotional weight. Memories below threshold decay and are pruned automatically during reflection. The agent forgets what doesn't matter; critical memories survive.
-
-### Why this matters in practice
-
-- **Debugging**: when the agent says "Ivan works at Globex," you can call `mem.why(fact_id)` to see exactly which episode produced that belief, in which reflection run, by which model, with what confidence.
-- **Compliance**: `forget_entity("Ivan")` permanently removes all episodes, facts, and graph edges connected to Ivan — a proper GDPR right-to-be-forgotten implementation.
-- **Time travel**: `mem.recall("Ivan employer", as_of=datetime(2024, 3, 1))` returns what the agent knew at that point, not what it knows now. Essential for auditing and debugging.
-- **Multi-agent**: multiple agents can share a single `.engram` file. Each writes its own scoped episodes; facts and the entity graph are shared. One agent's reflection enriches another's recall.
+Engram gives your agent a persistent memory that works like a file — one `.engram` file on disk, no server required. You `pip install` it and start using it in two lines:
 
 ```python
 from engram import Engram
 
 with Engram(path="./agent.engram") as mem:
+    # Remember something
     mem.observe("Ivan moved from Acme to Globex last week", actors=["Ivan"])
 
+    # Recall it later — even in a completely different session
     for r in mem.recall("where does Ivan work?", k=3):
         print(f"[{r.score:.2f}] {r.episode.content}")
 ```
 
-That's it. No server to start, no API key for the store, no Docker, no configuration file.
+No server to start. No API key for the store. No Docker. No configuration file.
+
+Here is what Engram gives you that a plain vector database does not:
+
+**Remembers raw events** — every observation is stored with who was involved, what tags apply, and how important it felt at the time. Search finds the right memories even when the query is phrased differently.
+
+**Understands facts** — a background process (no LLM needed at write time) reads your observations and extracts structured knowledge: *Ivan works at Globex*, *Alice is the CTO*. These facts can be queried directly, updated when things change, and traced back to their source.
+
+**Knows what happened when** — if Ivan changes jobs, the old fact is not deleted. It is closed with an end date. You can ask what the agent believed in March even if the truth has changed since.
+
+**Forgets wisely** — memories that haven't been accessed in a while gradually become less important. Memories that matter (accessed often, emotionally significant) stay sharp. The agent doesn't accumulate noise forever.
+
+**Explains itself** — for any fact, you can ask where it came from: which observation triggered it, which LLM run extracted it, with what confidence.
+
+**Works with multiple agents** — several agents can share a single `.engram` file. Each has its own private observations; extracted facts and the relationship graph are shared between them.
 
 ---
 
-## Why Engram?
+## What is Engram, technically?
+
+Engram is a **cognitive memory layer** for AI agents — a single local file (`agent.engram`) built on SQLite. It models three kinds of memory that mirror how human memory works:
+
+**Episodic memory** — raw observations stored as they happen, with actors, tags, salience, and emotional weight. No LLM required at write time; writes complete in ~4 ms.
+
+**Semantic memory** — structured knowledge extracted from episodes via a background reflection loop: `(subject, predicate, object)` triples with full bitemporal validity. Every fact tracks *when it was true in reality* and *when the system learned it* — independently on two timelines. When Ivan switches jobs, the old fact is closed with `valid_to`, not deleted. You can query what the agent believed in March even if the truth has since changed.
+
+**Dynamic importance** — each memory carries a living importance score based on the Ebbinghaus forgetting curve, reinforced by retrieval frequency and emotional weight. Memories below threshold decay and are pruned automatically during reflection. The agent forgets what doesn't matter; critical memories survive.
+
+### What you can actually do with it
+
+- **Debug beliefs**: when the agent says "Ivan works at Globex," call `mem.why(fact_id)` to see exactly which episode produced that belief, which reflection run extracted it, which model, and with what confidence.
+- **Erase a person**: `forget_entity("Ivan")` permanently removes all episodes, facts, and graph edges connected to Ivan — a proper GDPR right-to-be-forgotten.
+- **Query the past**: `mem.recall("Ivan employer", as_of=datetime(2024, 3, 1))` returns what the agent knew at that exact point in time, not what it knows now.
+- **Run multiple agents**: a planner and a coder can share one file — each sees its own episodes, both benefit from shared extracted facts.
+
+---
+
+## Why not just use a vector database?
+
+Vector databases (Pinecone, Chroma, Qdrant) store text and find similar text. That is useful, but it is a fraction of what memory requires.
+
+They cannot tell you *when* something was true. They cannot explain *why* the agent believes something. They have no concept of facts becoming outdated, of contradictions, or of some memories mattering more than others. And they run as separate servers — you need Docker, a network connection, and an API call just to write a sentence.
+
+Engram is not a replacement for a vector database — it includes one, built in, with no separate process. On top of it, Engram adds time, structure, importance, and provenance that vector DBs do not have.
 
 Every other solution forces a trade-off. Engram doesn't.
 
@@ -81,9 +115,112 @@ Every other solution forces a trade-off. Engram doesn't.
 
 ---
 
-## Seven mechanisms you won't find elsewhere
+## How Engram works
 
-### 1. Bitemporal validity
+### Memory that doesn't forget the wrong things
+
+Most tools either remember everything forever (noise accumulates) or forget everything when the session ends (nothing persists). Engram does neither.
+
+Every memory gets an importance score. Memories you access often, or that carry emotional weight, stay sharp. Memories that sit untouched gradually fade. When the agent runs its background reflection pass, low-importance memories are pruned automatically. The result is a store that stays useful instead of bloating.
+
+This is modelled on the [Ebbinghaus forgetting curve](https://en.wikipedia.org/wiki/Forgetting_curve) — the same pattern that describes how humans forget — combined with Hebbian reinforcement from repeated retrieval.
+
+### Facts that know when they were true
+
+When you just store text and search it, you lose track of time. "Ivan works at Acme" and "Ivan works at Globex" are just two strings — you don't know which is current, or what changed.
+
+Engram extracts structured facts from your observations — triples like *(Ivan, works_at, Globex)* — and tracks two independent timelines for each:
+
+- **When it was true in reality** (`valid_from` / `valid_to`)
+- **When the system learned it** (`recorded_at` / `superseded_at`)
+
+When Ivan changes jobs, the old fact is not deleted — it is closed with an end date. The new fact is added alongside it. You can query what the agent believed at any point in the past:
+
+```python
+# What did the agent think about Ivan's employer in March?
+mem.recall("Ivan employer", k=5, as_of=datetime(2024, 3, 1, tzinfo=UTC))
+
+# Full fact history — every job Ivan ever had, with dates
+mem.timeline("Ivan")
+```
+
+This two-timeline approach is standard in financial databases and audit systems. In the AI memory space, Engram is the only tool that implements it.
+
+### Three ways to search
+
+Engram ships three retrieval modes behind the same API:
+
+**`mode="cosine"`** (default) — pure semantic vector search. Finds memories that mean the same thing as your query, even if the words are different.
+
+**`mode="hybrid"`** — combines keyword search (BM25) with semantic search, then blends the scores. Best when you need both exact term matching and conceptual understanding. The blend is configurable:
+
+```python
+# BM25 keyword + cosine vector, weighted blend
+results = mem.recall("Alice CTO Globex", k=5, mode="hybrid")
+
+# More weight on exact keywords, less on semantics
+results = mem.recall("quarterly budget", k=5, mode="hybrid",
+                     vector_weight=0.3, fts_weight=0.7)
+```
+
+**`mode="spreading"`** — follows relationship edges between memories. If Ivan is connected to Project X in the graph, a query about Ivan can surface Project X episodes even if they share no words or meaning. One memory activates its associates, like human associative recall.
+
+Technically: spreading activation runs BFS over Hebbian-weighted graph edges, ranking results by `α·cosine_similarity + β·graph_activation + γ·importance_score`.
+
+### A scratchpad for the agent's current task
+
+Engram also provides `WorkingMemory` — a small, fast, in-memory scratchpad for whatever the agent is actively thinking about. It holds a fixed number of items (default 7, matching the average human working memory capacity). When it fills up, the least-recently-used item is dropped — and if you pass an Engram store, it is automatically saved to long-term memory before being evicted:
+
+```python
+from engram import WorkingMemory
+
+wm = WorkingMemory(capacity=5, engram=mem)  # evicted items → long-term store
+wm.set("task", "Summarise the quarterly report")
+wm.set("context", "Revenue grew 12% YoY — needs explanation")
+
+item = wm.get("task")      # read + promote to most-recently-used
+item = wm.peek("context")  # read without changing eviction order
+
+wm.flush()  # write everything to long-term store + clear
+```
+
+### Background reflection (the agent's "sleep")
+
+LLM calls in Engram never block writes. The reflection loop runs asynchronously — while the agent keeps working:
+
+1. Group recent observations by entity or topic
+2. Call the LLM to extract structured facts (`Ivan works_at Globex`)
+3. Detect contradictions — same subject and predicate, different value
+4. Close outdated facts with an end date
+5. Recompute importance scores
+6. Prune memories below threshold
+
+```python
+thread = mem.reflect_async()  # starts in background, returns immediately
+thread.join()                 # wait only when you need the results
+print(f"{thread.result.facts_extracted} facts, {thread.result.cost_tokens} tokens")
+```
+
+### Compressing old memories
+
+When a store grows large, `compress()` groups low-importance observations into batches and asks the LLM to summarise each batch into a single paragraph. The originals are hard-deleted; the summary is stored in their place, with a `summary_of` pointer to what it replaced:
+
+```python
+result = mem.compress(
+    max_episodes=1000,        # only compress when store exceeds this
+    importance_threshold=0.3, # target: episodes below this importance score
+    batch_size=20,            # observations per LLM call
+)
+print(f"Removed {result.episodes_removed} episodes → {result.summaries_created} summaries")
+```
+
+Compression is lossy by design. Run `reflect()` first to extract facts from episodes before compressing them — facts survive compression, raw text does not.
+
+---
+
+## Under the hood — technical details
+
+### Bitemporal validity
 
 Every fact carries *two* independent timelines:
 
@@ -92,44 +229,28 @@ valid_from / valid_to       → when the fact was TRUE in reality
 recorded_at / superseded_at → when the system LEARNED it
 ```
 
-This enables queries that no other memory system supports:
+### Hybrid BM25 + cosine recall
 
-```python
-# What did the agent believe about Ivan in March?
-mem.recall("Ivan employer", k=5, as_of=datetime(2024, 3, 1, tzinfo=UTC))
-
-# Full fact history — every job Ivan ever had, with dates
-mem.timeline("Ivan")
-```
-
-Old facts are never deleted — they're closed with `valid_to`. This is standard in financial databases and audit systems, but absent from the entire AI memory space.
-
-### 2. Hybrid BM25 + cosine recall
-
-Three retrieval modes in a single API call:
+Three retrieval modes unified in one API:
 
 ```
 mode="cosine"    → pure vector similarity (semantic)
-mode="hybrid"    → FTS5 BM25 + cosine, weighted blend
-mode="spreading" → graph-based spreading activation
+mode="hybrid"    → FTS5 BM25 + cosine, normalised and blended
+mode="spreading" → cosine KNN seeds → BFS over Hebbian graph
 ```
 
-Hybrid mode runs a full-text keyword search (FTS5 BM25) and a cosine vector search in parallel, normalises both score distributions, then returns a weighted blend:
+### Importance scoring formula
 
-```python
-# Exact keyword match + semantic understanding combined
-results = mem.recall("Alice CTO Globex", k=5, mode="hybrid")
-
-# Tune the blend — default: 70% vector, 30% BM25
-results = mem.recall("quarterly budget", k=5, mode="hybrid",
-                     vector_weight=0.5, fts_weight=0.5)
+```
+importance(m, t) =
+    salience(m) × exp(−λ × (t − last_access(m)))   # Ebbinghaus forgetting curve
+  + α × log(1 + access_count(m))                    # Hebbian reinforcement
+  + β × emotional_weight(m)                          # affective weight
 ```
 
-FTS5 index is auto-populated on migration; existing stores need no manual upgrade.
+Parameters `λ`, `α`, `β` are configurable via `DecayConfig`.
 
-### 3. Spreading-activation retrieval
-
-Naive vector search returns "what's mathematically similar." Spreading activation returns "what's contextually connected."
+### Spreading-activation graph traversal
 
 ```
 query → seed memories (cosine KNN)
@@ -141,69 +262,9 @@ query → seed memories (cosine KNN)
     rank by: α·similarity + β·activation + γ·importance
 ```
 
-One memory triggers its associates, just like human recall. If Ivan is connected to Project X, a query about Ivan surfaces relevant Project X episodes even without a semantic match.
+### Working memory — Miller's 7±2 law
 
-### 4. Importance scoring (Ebbinghaus + Hebbian)
-
-Each memory has a dynamic importance score recomputed by `decay()`:
-
-```
-importance(m, t) =
-    salience(m) × exp(−λ × (t − last_access(m)))   # Ebbinghaus forgetting curve
-  + α × log(1 + access_count(m))                    # reinforcement from retrieval
-  + β × emotional_weight(m)                          # affective tag
-```
-
-Parameters `λ`, `α`, `β` are configurable via `DecayConfig`. Memories below threshold are pruned during reflection. Important memories survive; noise decays away automatically.
-
-### 5. Working memory (Miller's 7±2 law)
-
-A fixed-capacity LRU scratchpad for the agent's active reasoning context. When full, the least-recently-used item is evicted — optionally flushed to the long-term Engram store so nothing is lost:
-
-```python
-from engram import WorkingMemory
-
-wm = WorkingMemory(capacity=5, engram=mem)  # evicted items → long-term store
-wm.set("task", "Summarise the quarterly report")
-wm.set("context", "Revenue grew 12% YoY — needs explanation")
-
-item = wm.get("task")      # promotes to MRU
-item = wm.peek("context")  # does NOT change LRU order
-
-wm.flush()  # write all current items to long-term store + clear
-```
-
-### 6. Reflection loop (the agent's "sleep")
-
-LLM calls happen *asynchronously*, never blocking writes:
-
-1. Cluster recent episodes by entity / topic
-2. Extract semantic triples via LLM (`Ivan works_at Globex`)
-3. Detect contradictions (same subject + predicate, different object)
-4. Close older facts with `valid_to = now`
-5. Recompute importance scores
-6. Prune memories below threshold
-
-```python
-thread = mem.reflect_async()  # non-blocking, runs in background
-thread.join()                 # wait if needed
-print(f"{thread.result.facts_extracted} facts, {thread.result.cost_tokens} tokens")
-```
-
-### 7. Memory compression
-
-When a store grows large, `compress()` condenses old low-importance episodes into LLM-generated summaries — reducing storage while preserving key information:
-
-```python
-result = mem.compress(
-    max_episodes=1000,       # only compress when store exceeds this
-    importance_threshold=0.3, # candidate: importance_score < threshold
-    batch_size=20,           # episodes per summary
-)
-print(f"Removed {result.episodes_removed} episodes → {result.summaries_created} summaries")
-```
-
-Each summary is stored as a new episode with `summary_of` pointing to the originals. The originals are hard-deleted. Compression is lossy by design — run `reflect()` first to extract facts before compressing.
+Fixed-capacity LRU cache backed by `collections.OrderedDict`. Evicted items optionally written to long-term store via `observe()`. Capacity default of 7 matches the average human working memory span (Miller, 1956).
 
 ---
 
