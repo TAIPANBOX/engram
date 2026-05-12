@@ -68,6 +68,10 @@ class Store:
             "INSERT INTO vec_episodes(rowid, embedding) VALUES (?, ?)",
             (rowid, _serialize(embedding)),
         )
+        self._conn.execute(
+            "INSERT INTO fts_episodes(rowid, content) VALUES (?, ?)",
+            (rowid, ep.content),
+        )
         self._conn.commit()
 
     def get_episode(self, episode_id: str) -> Episode | None:
@@ -247,6 +251,10 @@ class Store:
                 for ep, emb in zip(episodes, embeddings, strict=True)
             ],
         )
+        self._conn.executemany(
+            "INSERT INTO fts_episodes(rowid, content) VALUES (?, ?)",
+            [(rowid_map[ep.id], ep.content) for ep in episodes],
+        )
         self._conn.commit()
 
     def get_episodes_since(self, since: datetime | None, limit: int = 200) -> list[Episode]:
@@ -320,6 +328,7 @@ class Store:
         if rowid is None:
             return False
         self._conn.execute("DELETE FROM vec_episodes WHERE rowid = ?", (rowid,))
+        self._conn.execute("DELETE FROM fts_episodes WHERE rowid = ?", (rowid,))
         self._conn.execute("DELETE FROM access_log WHERE memory_id = ?", (episode_id,))
         self._conn.execute(
             "DELETE FROM edges WHERE src_id = ? OR dst_id = ?", (episode_id, episode_id)
@@ -742,6 +751,132 @@ class Store:
             distance = float(row[10])
             score = _distance_to_score(distance)
             results.append((ep, score, distance))
+        return results
+
+    def search_episodes_hybrid(
+        self,
+        query: str,
+        query_embedding: EmbeddedVector,
+        k: int,
+        *,
+        vector_weight: float = 0.7,
+        fts_weight: float = 0.3,
+        agent_id: str | None = None,
+    ) -> list[tuple[Episode, float, float]]:
+        """Return top-k episodes using BM25 + cosine blended score.
+
+        Pulls up to ``k * 4`` candidates from each source, normalises both
+        score distributions to [0, 1], then returns the top-k by the weighted
+        combination ``vector_weight * cosine + fts_weight * bm25``.
+
+        Args:
+            query: Raw text used for the FTS5 BM25 search.
+            query_embedding: Pre-computed embedding for vector search.
+            k: Maximum number of results to return.
+            vector_weight: Weight applied to the normalised cosine score.
+            fts_weight: Weight applied to the normalised BM25 score.
+            agent_id: If set, restrict to this agent's episodes.
+        """
+        candidate_limit = k * 4
+
+        # --- Vector candidates ---
+        if agent_id is not None:
+            agent_clause = "AND e.agent_id = ?"
+            vec_params: tuple[Any, ...] = (_serialize(query_embedding), candidate_limit, agent_id)
+        else:
+            agent_clause = ""
+            vec_params = (_serialize(query_embedding), candidate_limit)
+
+        vec_rows: list[Any] = self._conn.execute(
+            f"""
+            SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
+                   e.salience, e.emotional_valence, e.summary_of, e.importance_score,
+                   e.agent_id, v.distance
+            FROM vec_episodes v
+            JOIN episodes e ON e.rowid = v.rowid
+            WHERE v.embedding MATCH ?
+              AND k = ?
+              {agent_clause}
+            ORDER BY v.distance ASC
+            """,
+            vec_params,
+        ).fetchall()
+
+        # distance → cosine score, then normalise to [0, 1] across candidates
+        vec_scores: dict[str, float] = {
+            str(row[0]): _distance_to_score(float(row[10])) for row in vec_rows
+        }
+        vec_episodes: dict[str, Episode] = {
+            str(row[0]): Episode.from_row(tuple(row[:10])) for row in vec_rows
+        }
+
+        max_vec = max(vec_scores.values(), default=1.0)
+        min_vec = min(vec_scores.values(), default=0.0)
+        range_vec = max_vec - min_vec or 1.0
+        norm_vec: dict[str, float] = {
+            eid: (s - min_vec) / range_vec for eid, s in vec_scores.items()
+        }
+
+        # --- FTS candidates (BM25, lower is better — negate to make higher = better) ---
+        fts_query = query.replace('"', '""')  # escape FTS5 special chars
+        if agent_id is not None:
+            fts_rows: list[Any] = self._conn.execute(
+                """
+                SELECT e.id, -bm25(fts_episodes) AS bm25_score
+                FROM fts_episodes
+                JOIN episodes e ON e.rowid = fts_episodes.rowid
+                WHERE fts_episodes MATCH ?
+                  AND e.agent_id = ?
+                ORDER BY bm25_score DESC
+                LIMIT ?
+                """,
+                (fts_query, agent_id, candidate_limit),
+            ).fetchall()
+        else:
+            fts_rows = self._conn.execute(
+                """
+                SELECT e.id, -bm25(fts_episodes) AS bm25_score
+                FROM fts_episodes
+                JOIN episodes e ON e.rowid = fts_episodes.rowid
+                WHERE fts_episodes MATCH ?
+                ORDER BY bm25_score DESC
+                LIMIT ?
+                """,
+                (fts_query, candidate_limit),
+            ).fetchall()
+
+        fts_scores: dict[str, float] = {str(row[0]): float(row[1]) for row in fts_rows}
+        max_fts = max(fts_scores.values(), default=1.0)
+        min_fts = min(fts_scores.values(), default=0.0)
+        range_fts = max_fts - min_fts or 1.0
+        norm_fts: dict[str, float] = {
+            eid: (s - min_fts) / range_fts for eid, s in fts_scores.items()
+        }
+
+        # --- Merge and rank ---
+        all_ids = set(norm_vec) | set(norm_fts)
+        blended: list[tuple[str, float]] = [
+            (
+                eid,
+                vector_weight * norm_vec.get(eid, 0.0) + fts_weight * norm_fts.get(eid, 0.0),
+            )
+            for eid in all_ids
+        ]
+        blended.sort(key=lambda x: x[1], reverse=True)
+
+        results: list[tuple[Episode, float, float]] = []
+        for eid, blend_score in blended[:k]:
+            if eid in vec_episodes:
+                ep = vec_episodes[eid]
+            else:
+                ep_row: Any = self._conn.execute(
+                    f"SELECT {_EPISODE_COLS} FROM episodes WHERE id = ?", (eid,)
+                ).fetchone()
+                if ep_row is None:
+                    continue
+                ep = Episode.from_row(tuple(ep_row))
+            raw_dist = 1.0 / blend_score - 1.0 if blend_score > 0 else float("inf")
+            results.append((ep, blend_score, raw_dist))
         return results
 
     def get_facts_as_of(self, subject: str, as_of: datetime) -> list[Fact]:

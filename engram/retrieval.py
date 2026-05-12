@@ -21,6 +21,8 @@ def recall(
     alpha: float = 0.6,
     beta: float = 0.3,
     gamma: float = 0.1,
+    vector_weight: float = 0.7,
+    fts_weight: float = 0.3,
     as_of: datetime | None = None,
     agent_id: str | None = None,
 ) -> list[SearchResult]:
@@ -31,12 +33,15 @@ def recall(
         k: Maximum number of results.
         store: Active store instance.
         embedder: Embedder for the query.
-        mode: ``"cosine"`` (default) or ``"spreading"`` for graph-based recall.
+        mode: ``"cosine"`` (default), ``"spreading"`` for graph-based recall,
+            or ``"hybrid"`` for BM25 + cosine blended search.
         depth: BFS hops for spreading mode.
         decay: Activation decay per hop for spreading mode.
         alpha: Cosine weight in spreading score.
         beta: Graph activation weight in spreading score.
         gamma: Importance weight in spreading score.
+        vector_weight: Cosine fraction for hybrid mode (default 0.7).
+        fts_weight: BM25 fraction for hybrid mode (default 0.3).
         as_of: If set, only episodes with timestamp <= as_of are considered.
         agent_id: If set, restrict results to this agent. None searches all agents.
 
@@ -61,10 +66,21 @@ def recall(
         )
 
     query_vec = embedder.embed(query)
-    if as_of is not None:
+
+    if mode == "hybrid":
+        hits = store.search_episodes_hybrid(
+            query,
+            query_vec,
+            k,
+            vector_weight=vector_weight,
+            fts_weight=fts_weight,
+            agent_id=agent_id,
+        )
+    elif as_of is not None:
         hits = store.search_episodes_as_of(query_vec, k, as_of, agent_id=agent_id)
     else:
         hits = store.search_episodes(query_vec, k, agent_id=agent_id)
+
     now = datetime.now(tz=UTC)
     results: list[SearchResult] = []
     for rank, (ep, score, dist) in enumerate(hits):

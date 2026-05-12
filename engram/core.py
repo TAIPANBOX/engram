@@ -203,6 +203,8 @@ class Engram:
         mode: str = "cosine",
         depth: int = 2,
         decay: float = 0.5,
+        vector_weight: float = 0.7,
+        fts_weight: float = 0.3,
         as_of: datetime | None = None,
         cross_agent: bool = False,
     ) -> list[SearchResult]:
@@ -211,9 +213,12 @@ class Engram:
         Args:
             query: Natural-language search query.
             k: Maximum number of results to return.
-            mode: ``"cosine"`` (default) or ``"spreading"`` for graph-based recall.
+            mode: Retrieval strategy — ``"cosine"`` (default), ``"spreading"``
+                for graph-based recall, or ``"hybrid"`` for BM25 + cosine blend.
             depth: BFS hops; only used when ``mode="spreading"``.
             decay: Activation decay per hop; only used when ``mode="spreading"``.
+            vector_weight: Cosine fraction for hybrid mode (default 0.7).
+            fts_weight: BM25 fraction for hybrid mode (default 0.3).
             as_of: If set, only episodes with timestamp <= as_of are searched.
             cross_agent: If ``True``, search all agents' episodes regardless of
                 the instance's ``agent_id``. Ignored when no ``agent_id`` is set.
@@ -230,6 +235,8 @@ class Engram:
             mode=mode,
             depth=depth,
             decay=decay,
+            vector_weight=vector_weight,
+            fts_weight=fts_weight,
             as_of=as_of,
             agent_id=agent_id,
         )

@@ -108,4 +108,16 @@ def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
     conn.execute(
         f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_episodes USING vec0(embedding float[{dim}])"
     )
+
+    # FTS5 full-text index over episode content (added in v2.1).
+    conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS fts_episodes "
+        "USING fts5(content, content='episodes', content_rowid='rowid')"
+    )
+    # Populate FTS for any pre-existing episodes that predate this migration.
+    conn.execute(
+        "INSERT INTO fts_episodes(rowid, content) "
+        "SELECT rowid, content FROM episodes "
+        "WHERE rowid NOT IN (SELECT rowid FROM fts_episodes)"
+    )
     conn.commit()
