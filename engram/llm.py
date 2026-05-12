@@ -189,6 +189,170 @@ class OpenAIAdapter:
         return (response.choices[0].message.content or "").strip(), tokens
 
 
+class GeminiAdapter:
+    """Uses the Google Gemini API for fact extraction and summarisation.
+
+    Reads ``GOOGLE_API_KEY`` from the environment by default.  Pass
+    ``api_key`` explicitly to override.
+
+    Args:
+        model: Gemini model id (default ``"gemini-2.0-flash"``).
+        api_key: Google API key. Falls back to ``GOOGLE_API_KEY`` env var.
+    """
+
+    def __init__(self, model: str = "gemini-2.0-flash", api_key: str | None = None) -> None:
+        self.model_name = model
+        self._api_key = api_key
+        self._client: Any = None
+
+    def _get_client(self) -> Any:
+        try:
+            from google import genai  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise ImportError(
+                "Google Gen AI SDK not installed. Run: pip install 'engram[gemini]'"
+            ) from exc
+        if self._client is None:
+            kwargs: dict[str, Any] = {}
+            if self._api_key:
+                kwargs["api_key"] = self._api_key
+            self._client = genai.Client(**kwargs)
+        return self._client
+
+    def extract_facts(self, episodes: list[Episode]) -> tuple[list[dict[str, Any]], int]:
+        """Extract facts via Gemini. Returns ([], 0) if the response is unparseable."""
+        from google.genai import types  # type: ignore[import-untyped]
+
+        client = self._get_client()
+        response = client.models.generate_content(
+            model=self.model_name,
+            contents=_build_user_message(episodes),
+            config=types.GenerateContentConfig(
+                system_instruction=EXTRACTION_SYSTEM_PROMPT,
+                max_output_tokens=1024,
+            ),
+        )
+        tokens = 0
+        if response.usage_metadata:
+            tokens = (response.usage_metadata.prompt_token_count or 0) + (
+                response.usage_metadata.candidates_token_count or 0
+            )
+        return _parse_facts_json(response.text or ""), tokens
+
+    def summarise(self, episodes: list[Episode]) -> tuple[str, int]:
+        """Summarise episodes into one paragraph via Gemini."""
+        from google.genai import types
+
+        client = self._get_client()
+        response = client.models.generate_content(
+            model=self.model_name,
+            contents=_build_summary_message(episodes),
+            config=types.GenerateContentConfig(
+                system_instruction=SUMMARISATION_SYSTEM_PROMPT,
+                max_output_tokens=512,
+            ),
+        )
+        tokens = 0
+        if response.usage_metadata:
+            tokens = (response.usage_metadata.prompt_token_count or 0) + (
+                response.usage_metadata.candidates_token_count or 0
+            )
+        return (response.text or "").strip(), tokens
+
+
+class DeepSeekAdapter(OpenAIAdapter):
+    """OpenAI-compatible adapter pre-configured for DeepSeek.
+
+    Reads ``DEEPSEEK_API_KEY`` (or ``OPENAI_API_KEY``) from the environment.
+
+    Args:
+        model: DeepSeek model id (default ``"deepseek-chat"``).
+        api_key: Explicit API key; falls back to env var.
+    """
+
+    _BASE_URL = "https://api.deepseek.com/v1"
+
+    def __init__(self, model: str = "deepseek-chat", api_key: str | None = None) -> None:
+        super().__init__(model=model, base_url=self._BASE_URL)
+        self._api_key = api_key
+
+    def _get_client(self) -> Any:
+        try:
+            import openai
+        except ImportError as exc:
+            raise ImportError(
+                "OpenAI SDK not installed. Run: pip install 'engram[openai]'"
+            ) from exc
+        if self._client is None:
+            kwargs: dict[str, Any] = {"base_url": self._BASE_URL}
+            if self._api_key:
+                kwargs["api_key"] = self._api_key
+            self._client = openai.OpenAI(**kwargs)
+        return self._client
+
+
+class QwenAdapter(OpenAIAdapter):
+    """OpenAI-compatible adapter pre-configured for Alibaba Qwen (DashScope).
+
+    Reads ``DASHSCOPE_API_KEY`` (or ``OPENAI_API_KEY``) from the environment.
+
+    Args:
+        model: Qwen model id (default ``"qwen-max"``).
+        api_key: Explicit API key; falls back to env var.
+    """
+
+    _BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    def __init__(self, model: str = "qwen-max", api_key: str | None = None) -> None:
+        super().__init__(model=model, base_url=self._BASE_URL)
+        self._api_key = api_key
+
+    def _get_client(self) -> Any:
+        try:
+            import openai
+        except ImportError as exc:
+            raise ImportError(
+                "OpenAI SDK not installed. Run: pip install 'engram[openai]'"
+            ) from exc
+        if self._client is None:
+            kwargs: dict[str, Any] = {"base_url": self._BASE_URL}
+            if self._api_key:
+                kwargs["api_key"] = self._api_key
+            self._client = openai.OpenAI(**kwargs)
+        return self._client
+
+
+class KimiAdapter(OpenAIAdapter):
+    """OpenAI-compatible adapter pre-configured for Moonshot Kimi.
+
+    Reads ``MOONSHOT_API_KEY`` (or ``OPENAI_API_KEY``) from the environment.
+
+    Args:
+        model: Kimi model id (default ``"moonshot-v1-8k"``).
+        api_key: Explicit API key; falls back to env var.
+    """
+
+    _BASE_URL = "https://api.moonshot.cn/v1"
+
+    def __init__(self, model: str = "moonshot-v1-8k", api_key: str | None = None) -> None:
+        super().__init__(model=model, base_url=self._BASE_URL)
+        self._api_key = api_key
+
+    def _get_client(self) -> Any:
+        try:
+            import openai
+        except ImportError as exc:
+            raise ImportError(
+                "OpenAI SDK not installed. Run: pip install 'engram[openai]'"
+            ) from exc
+        if self._client is None:
+            kwargs: dict[str, Any] = {"base_url": self._BASE_URL}
+            if self._api_key:
+                kwargs["api_key"] = self._api_key
+            self._client = openai.OpenAI(**kwargs)
+        return self._client
+
+
 class StubLLMAdapter:
     """Returns pre-configured facts and summaries verbatim. For tests only."""
 
