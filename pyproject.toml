@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "engram-ai"
+name = "engdbram"
 version = "2.1.1"
 description = "Embeddable cognitive memory layer for AI agents"
 readme = "README.md"
