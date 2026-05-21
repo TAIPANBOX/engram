@@ -64,6 +64,34 @@ if _LLAMAINDEX_AVAILABLE:
             self._engram = Engram(path=self.engram_path)
             self._history = []
 
+            # Hydrate existing messages from the database
+            try:
+                episodes = self._engram._store.get_episodes_since(since=None, limit=1000)
+                role_values = {role.value for role in MessageRole}
+                for ep in episodes:
+                    role = None
+                    for tag in ep.tags:
+                        if tag in role_values:
+                            role = MessageRole(tag)
+                            break
+                        # Handle common aliases / fallbacks
+                        elif tag == "assistant":
+                            role = MessageRole.ASSISTANT
+                            break
+                        elif tag == "chatbot":
+                            role = MessageRole.CHATBOT
+                            break
+                        elif tag == "user":
+                            role = MessageRole.USER
+                            break
+                        elif tag == "system":
+                            role = MessageRole.SYSTEM
+                            break
+                    if role is not None:
+                        self._history.append(ChatMessage(role=role, content=ep.content))
+            except Exception:
+                pass
+
         @classmethod
         def from_defaults(cls, **kwargs: Any) -> EngramMemory:
             return cls(**kwargs)
@@ -72,13 +100,25 @@ if _LLAMAINDEX_AVAILABLE:
             """Return recent messages, optionally re-ranked by semantic similarity."""
             if input:
                 results = self._engram.recall(input, k=self.k)
-                return [
-                    ChatMessage(
-                        role=MessageRole.USER,
-                        content=r.episode.content,
-                    )
-                    for r in results
-                ]
+                chat_messages = []
+                for r in results:
+                    role = MessageRole.USER
+                    for tag in r.episode.tags:
+                        try:
+                            role = MessageRole(tag)
+                            break
+                        except ValueError:
+                            if tag == "assistant" or tag == "chatbot":
+                                role = MessageRole.ASSISTANT
+                                break
+                            elif tag == "user":
+                                role = MessageRole.USER
+                                break
+                            elif tag == "system":
+                                role = MessageRole.SYSTEM
+                                break
+                    chat_messages.append(ChatMessage(role=role, content=r.episode.content))
+                return chat_messages
             return list(self._history[-self.k :])
 
         def get_all(self) -> list[ChatMessage]:

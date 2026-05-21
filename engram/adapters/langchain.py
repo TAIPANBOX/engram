@@ -20,7 +20,13 @@ try:
         BaseChatMessageHistory,
     )
     from langchain_core.documents import Document  # type: ignore[import-not-found]
-    from langchain_core.messages import BaseMessage  # type: ignore[import-not-found]
+    from langchain_core.messages import (  # type: ignore[import-not-found]
+        AIMessage,
+        BaseMessage,
+        ChatMessage,
+        HumanMessage,
+        SystemMessage,
+    )
     from langchain_core.retrievers import BaseRetriever  # type: ignore[import-not-found]
     from pydantic import ConfigDict  # type: ignore[import-not-found]
 
@@ -109,6 +115,30 @@ if _LANGCHAIN_AVAILABLE:
             self._engram = engram
             self._messages: list[BaseMessage] = []
 
+            # Hydrate existing messages from the database
+            chat_tags = {"human", "user", "ai", "assistant", "system", "unknown", "chat"}
+            try:
+                episodes = self._engram._store.get_episodes_since(since=None, limit=1000)
+                for ep in episodes:
+                    msg_role = None
+                    for t in ep.tags:
+                        if t in chat_tags:
+                            msg_role = t
+                            break
+                    if not msg_role:
+                        continue
+
+                    if msg_role in ("human", "user"):
+                        self._messages.append(HumanMessage(content=ep.content))
+                    elif msg_role in ("ai", "assistant"):
+                        self._messages.append(AIMessage(content=ep.content))
+                    elif msg_role == "system":
+                        self._messages.append(SystemMessage(content=ep.content))
+                    else:
+                        self._messages.append(ChatMessage(content=ep.content, role=msg_role))
+            except Exception:
+                pass
+
         @property
         def messages(self) -> list[BaseMessage]:
             return list(self._messages)
@@ -123,10 +153,10 @@ if _LANGCHAIN_AVAILABLE:
                 self._messages.append(msg)
 
         def clear(self) -> None:
-            """Clear the in-memory session history.
+            """Clear the in-memory session history list.
 
-            Note: episodes already persisted in Engram are not deleted —
-            Engram does not support deletion in v0.6.
+            Note: Persistent episodes in Engram are not hard-deleted by default
+            to preserve the agent's long-term episodic memory layer.
             """
             self._messages.clear()
 
