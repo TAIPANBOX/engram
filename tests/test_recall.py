@@ -1,4 +1,4 @@
-"""Tests for Engram.recall()."""
+from datetime import UTC, datetime
 
 import pytest
 
@@ -47,3 +47,12 @@ def test_recall_returns_search_result_type(mem: Engram) -> None:
     assert all(isinstance(r, SearchResult) for r in results)
     assert all(isinstance(r.score, float) for r in results)
     assert all(isinstance(r.distance, float) for r in results)
+
+
+def test_recall_accepts_k_inner_and_candidate_limit(mem: Engram) -> None:
+    mem.observe("Acme Corp signed a deal")
+    results_as_of = mem.recall("Acme", k=1, as_of=datetime.now(tz=UTC), k_inner=10)
+    assert len(results_as_of) == 1
+
+    results_hybrid = mem.recall("Acme", k=1, mode="hybrid", candidate_limit=5)
+    assert len(results_hybrid) == 1

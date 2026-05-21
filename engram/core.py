@@ -242,6 +242,8 @@ class Engram:
         fts_weight: float = 0.3,
         as_of: datetime | None = None,
         cross_agent: bool = False,
+        k_inner: int | None = None,
+        candidate_limit: int | None = None,
     ) -> list[SearchResult]:
         """Retrieve the top-k episodes most semantically similar to *query*.
 
@@ -257,6 +259,8 @@ class Engram:
             as_of: If set, only episodes with timestamp <= as_of are searched.
             cross_agent: If ``True``, search all agents' episodes regardless of
                 the instance's ``agent_id``. Ignored when no ``agent_id`` is set.
+            k_inner: Inner vector-index limit for as_of search (defaults to k * 10).
+            candidate_limit: Candidate search limit per source for hybrid search (defaults to k * 4).
 
         Returns:
             List of :class:`SearchResult` ordered by descending score.
@@ -274,6 +278,8 @@ class Engram:
             fts_weight=fts_weight,
             as_of=as_of,
             agent_id=agent_id,
+            k_inner=k_inner,
+            candidate_limit=candidate_limit,
         )
 
     # ------------------------------------------------------------------

@@ -733,16 +733,19 @@ class Store:
         k: int,
         as_of: datetime,
         agent_id: str | None = None,
+        k_inner: int | None = None,
     ) -> list[tuple[Episode, float, float]]:
         """Like search_episodes but restricted to episodes with timestamp <= as_of.
 
-        Uses k*10 as the inner vector-index limit so there are enough candidates
+        Uses k_inner as the inner vector-index limit so there are enough candidates
         after the timestamp filter; returns at most k results.
 
         Args:
             agent_id: If set, restrict to this agent's episodes.
+            k_inner: The inner vector-index limit (defaults to k * 10).
         """
-        k_inner = k * 10
+        if k_inner is None:
+            k_inner = k * 10
         if agent_id is not None:
             agent_clause = "AND e.agent_id = ?"
             params: tuple[Any, ...] = (
@@ -787,10 +790,11 @@ class Store:
         vector_weight: float = 0.7,
         fts_weight: float = 0.3,
         agent_id: str | None = None,
+        candidate_limit: int | None = None,
     ) -> list[tuple[Episode, float, float]]:
         """Return top-k episodes using BM25 + cosine blended score.
 
-        Pulls up to ``k * 4`` candidates from each source, normalises both
+        Pulls up to ``candidate_limit`` candidates from each source, normalises both
         score distributions to [0, 1], then returns the top-k by the weighted
         combination ``vector_weight * cosine + fts_weight * bm25``.
 
@@ -801,8 +805,10 @@ class Store:
             vector_weight: Weight applied to the normalised cosine score.
             fts_weight: Weight applied to the normalised BM25 score.
             agent_id: If set, restrict to this agent's episodes.
+            candidate_limit: Candidate search limit per source (defaults to k * 4).
         """
-        candidate_limit = k * 4
+        if candidate_limit is None:
+            candidate_limit = k * 4
 
         # --- Vector candidates ---
         if agent_id is not None:
