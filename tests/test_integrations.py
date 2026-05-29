@@ -274,3 +274,95 @@ def test_llamaindex_memory_get_without_query_returns_recent() -> None:
     recent = mem.get()
     assert len(recent) == 2
     assert recent[-1].content == "message 4"
+
+
+# ------------------------------------------------------------------
+# Adapter hydration from a persisted store
+# ------------------------------------------------------------------
+
+
+def test_langchain_chat_history_hydrates_from_persisted_engram(tmp_path) -> None:
+    """Reopening an EngramChatMessageHistory on the same file must restore
+    the prior conversation, mapping role tags to the correct LangChain
+    message subclasses in chronological order."""
+    pytest.importorskip("langchain_core")
+    from langchain_core.messages import AIMessage, ChatMessage, HumanMessage, SystemMessage
+
+    from engram.adapters.langchain import EngramChatMessageHistory
+    from engram.core import Engram
+
+    path = str(tmp_path / "history.engram")
+
+    # Session 1: write messages to disk.
+    with Engram(path=path) as mem:
+        history = EngramChatMessageHistory(engram=mem)
+        history.add_messages(
+            [
+                SystemMessage(content="you are an assistant"),
+                HumanMessage(content="hello there"),
+                AIMessage(content="hi, how can I help?"),
+                ChatMessage(content="custom role text", role="moderator"),
+            ]
+        )
+        # add_messages stores the role on the message via .type, not the
+        # tag — but EngramChatMessageHistory observes with tags=[msg.type],
+        # which is a known LangChain attribute (human/ai/system/chat).
+
+    # Session 2: fresh process, same file. Hydration must succeed.
+    with Engram(path=path) as mem2:
+        restored = EngramChatMessageHistory(engram=mem2)
+        kinds = [type(m).__name__ for m in restored.messages]
+        contents = [m.content for m in restored.messages]
+
+    assert "SystemMessage" in kinds
+    assert "HumanMessage" in kinds
+    assert "AIMessage" in kinds
+    assert "hello there" in contents
+    assert "hi, how can I help?" in contents
+    # Chronological order preserved.
+    assert contents.index("hello there") < contents.index("hi, how can I help?")
+
+
+def test_langchain_chat_history_skips_episodes_without_chat_tag(tmp_path) -> None:
+    """Episodes without a recognised chat role tag must not appear in the
+    hydrated history."""
+    pytest.importorskip("langchain_core")
+    from engram.adapters.langchain import EngramChatMessageHistory
+    from engram.core import Engram
+
+    path = str(tmp_path / "mixed.engram")
+    with Engram(path=path) as mem:
+        mem.observe("non-chat note", tags=["note"])
+        mem.observe("conversation turn", tags=["human"])
+
+    with Engram(path=path) as mem2:
+        restored = EngramChatMessageHistory(engram=mem2)
+
+    contents = [m.content for m in restored.messages]
+    assert contents == ["conversation turn"]
+
+
+def test_llamaindex_memory_hydrates_from_persisted_engram(tmp_path) -> None:
+    """Reopening EngramMemory on the same path must restore prior turns
+    with their roles intact, preserving chronological order."""
+    pytest.importorskip("llama_index")
+    from llama_index.core.llms import ChatMessage, MessageRole
+
+    from engram.adapters.llamaindex import EngramMemory
+
+    path = str(tmp_path / "lh.engram")
+
+    mem = EngramMemory.from_defaults(engram_path=path, k=10)
+    mem.put(ChatMessage(role=MessageRole.USER, content="hi"))
+    mem.put(ChatMessage(role=MessageRole.ASSISTANT, content="hello, world"))
+    # Engram instance keeps the file handle open — close it to flush.
+    mem._engram.close()
+
+    restored = EngramMemory.from_defaults(engram_path=path, k=10)
+    all_msgs = restored.get_all()
+    contents = [m.content for m in all_msgs]
+    roles = [m.role for m in all_msgs]
+    assert "hi" in contents
+    assert "hello, world" in contents
+    assert MessageRole.USER in roles
+    assert MessageRole.ASSISTANT in roles

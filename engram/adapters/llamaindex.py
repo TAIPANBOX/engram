@@ -8,7 +8,10 @@ Provides:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 try:
     from llama_index.core.llms import (  # type: ignore[import-not-found]
@@ -64,33 +67,37 @@ if _LLAMAINDEX_AVAILABLE:
             self._engram = Engram(path=self.engram_path)
             self._history = []
 
-            # Hydrate existing messages from the database
+            # Hydrate existing messages from the database, preserving the
+            # persisted chronological order so the conversation buffer is the
+            # same on first construction as it was at the end of the previous
+            # session.
             try:
                 episodes = self._engram._store.get_episodes_since(since=None, limit=1000)
-                role_values = {role.value for role in MessageRole}
-                for ep in episodes:
-                    role = None
-                    for tag in ep.tags:
-                        if tag in role_values:
-                            role = MessageRole(tag)
-                            break
-                        # Handle common aliases / fallbacks
-                        elif tag == "assistant":
-                            role = MessageRole.ASSISTANT
-                            break
-                        elif tag == "chatbot":
-                            role = MessageRole.CHATBOT
-                            break
-                        elif tag == "user":
-                            role = MessageRole.USER
-                            break
-                        elif tag == "system":
-                            role = MessageRole.SYSTEM
-                            break
-                    if role is not None:
-                        self._history.append(ChatMessage(role=role, content=ep.content))
             except Exception:
-                pass
+                logger.exception("Failed to hydrate chat history from Engram store")
+                return
+
+            role_values = {role.value for role in MessageRole}
+            for ep in episodes:
+                role: MessageRole | None = None
+                for tag in ep.tags:
+                    if tag in role_values:
+                        role = MessageRole(tag)
+                        break
+                    if tag == "assistant":
+                        role = MessageRole.ASSISTANT
+                        break
+                    if tag == "chatbot":
+                        role = MessageRole.CHATBOT
+                        break
+                    if tag == "user":
+                        role = MessageRole.USER
+                        break
+                    if tag == "system":
+                        role = MessageRole.SYSTEM
+                        break
+                if role is not None:
+                    self._history.append(ChatMessage(role=role, content=ep.content))
 
         @classmethod
         def from_defaults(cls, **kwargs: Any) -> EngramMemory:

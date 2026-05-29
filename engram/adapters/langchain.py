@@ -9,8 +9,11 @@ Provides:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 try:
     from langchain_core.callbacks.manager import (  # type: ignore[import-not-found]
@@ -115,29 +118,28 @@ if _LANGCHAIN_AVAILABLE:
             self._engram = engram
             self._messages: list[BaseMessage] = []
 
-            # Hydrate existing messages from the database
+            # Hydrate existing messages from the database. Episodes are stored
+            # in chronological order (timestamp ASC); we preserve that order
+            # here so the in-memory conversation matches what was persisted.
             chat_tags = {"human", "user", "ai", "assistant", "system", "unknown", "chat"}
             try:
                 episodes = self._engram._store.get_episodes_since(since=None, limit=1000)
-                for ep in episodes:
-                    msg_role = None
-                    for t in ep.tags:
-                        if t in chat_tags:
-                            msg_role = t
-                            break
-                    if not msg_role:
-                        continue
-
-                    if msg_role in ("human", "user"):
-                        self._messages.append(HumanMessage(content=ep.content))
-                    elif msg_role in ("ai", "assistant"):
-                        self._messages.append(AIMessage(content=ep.content))
-                    elif msg_role == "system":
-                        self._messages.append(SystemMessage(content=ep.content))
-                    else:
-                        self._messages.append(ChatMessage(content=ep.content, role=msg_role))
             except Exception:
-                pass
+                logger.exception("Failed to hydrate chat history from Engram store")
+                return
+
+            for ep in episodes:
+                msg_role = next((t for t in ep.tags if t in chat_tags), None)
+                if not msg_role:
+                    continue
+                if msg_role in ("human", "user"):
+                    self._messages.append(HumanMessage(content=ep.content))
+                elif msg_role in ("ai", "assistant"):
+                    self._messages.append(AIMessage(content=ep.content))
+                elif msg_role == "system":
+                    self._messages.append(SystemMessage(content=ep.content))
+                else:
+                    self._messages.append(ChatMessage(content=ep.content, role=msg_role))
 
         @property
         def messages(self) -> list[BaseMessage]:
