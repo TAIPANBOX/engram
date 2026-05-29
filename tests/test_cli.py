@@ -251,11 +251,13 @@ def test_forget_no_flags_exits(store_path):
 
 
 def test_version_flag(capsys):
+    from engram import __version__
+
     with pytest.raises(SystemExit) as exc:
         main(["--version"])
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    assert "2.1.1" in out
+    assert __version__ in out
 
 
 def test_no_command_exits(capsys):

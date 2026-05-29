@@ -26,7 +26,7 @@ from engram.models import (
 )
 from engram.working_memory import WorkingMemory, WorkingMemoryItem
 
-__version__ = "2.1.1"
+__version__ = "2.1.2"
 
 __all__ = [
     "AnthropicAdapter",
