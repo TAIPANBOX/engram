@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from engram.decay import run_decay
 from engram.importance import DecayConfig
+from engram.llm import MAX_EXTRACTED_CONFIDENCE
 from engram.models import Fact, ReflectionRun
 from engram.store import Store
 
@@ -63,7 +64,12 @@ def reflect(
         episode_ids = [ep.id for ep in episodes]
 
         for rf in raw_facts:
-            confidence = float(rf.get("confidence", 1.0))
+            # Belt-and-braces: cap confidence again in case the adapter
+            # bypasses _parse_facts_json (e.g. test stubs feeding raw dicts).
+            confidence = min(
+                max(float(rf.get("confidence", 0.5)), 0.0),
+                MAX_EXTRACTED_CONFIDENCE,
+            )
             fact = Fact(
                 id=str(uuid.uuid4()),
                 subject=str(rf["subject"]),
