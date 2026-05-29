@@ -11,7 +11,7 @@ import sqlite_vec  # type: ignore[import-untyped]
 # sqlite backend is in use (sqlite3 vs sqlcipher3.dbapi2).
 _OP_ERRORS: tuple[type[BaseException], ...] = (sqlite3.OperationalError,)
 try:
-    import sqlcipher3.dbapi2 as _sc  # type: ignore[import-untyped]
+    import sqlcipher3.dbapi2 as _sc
 
     _OP_ERRORS = (*_OP_ERRORS, _sc.OperationalError)
 except ImportError:
