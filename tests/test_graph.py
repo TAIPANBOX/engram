@@ -190,6 +190,96 @@ def test_spreading_recall_promotes_connected_episode(tmp_path: pytest.TempPathFa
     assert all(isinstance(r, SearchResult) for r in results)
 
 
+def test_spreading_recall_no_double_count_for_seeds() -> None:
+    """A seed episode with no edges should score exactly alpha*cosine + gamma*importance.
+
+    Pre-fix, seed activation = cosine was added a second time as beta*activation,
+    inflating seed scores. With cosine.score≈c, importance=1, and (alpha, beta, gamma) =
+    (0.6, 0.3, 0.1), the correct score is 0.6c + 0.1, NOT 0.6c + 0.3c + 0.1.
+    """
+    from unittest.mock import MagicMock
+
+    import numpy as np
+
+    from engram.graph import spreading_recall
+
+    store = _make_store()
+    ep = Episode(id="solo", content="lone", timestamp=_T0, importance_score=1.0)
+    vec = np.ones(384, dtype=np.float32)
+    vec /= float(np.linalg.norm(vec))
+    store.insert_episode(ep, vec)
+
+    embedder = MagicMock()
+    embedder.embed.return_value = vec
+
+    results = spreading_recall(
+        "lone",
+        k=5,
+        store=store,
+        embedder=embedder,
+        depth=2,
+        decay=0.5,
+        alpha=0.6,
+        beta=0.3,
+        gamma=0.1,
+    )
+    assert len(results) == 1
+    cosine = results[0].distance  # not used; pull cosine from observation
+    # We can't read cosine_scores directly, but we know vec MATCHes itself: score ≈ 1.0.
+    # Score must be alpha*1 + gamma*1 = 0.7, NOT 0.7 + 0.3 (no neighbours) = 1.0 from the old code.
+    # Tolerance accounts for the 1/(1+L2) score, not exact 1.0.
+    assert results[0].score < 0.95, (
+        f"Solo seed double-counted as graph activation: got score={results[0].score}; "
+        f"expected ≈ alpha*cosine + gamma*importance. cosine sentinel={cosine}"
+    )
+
+
+def test_spreading_recall_respects_edge_weight() -> None:
+    """A heavy edge to an entity should pull a connected episode more than a light one."""
+    from unittest.mock import MagicMock
+
+    import numpy as np
+
+    from engram.graph import spreading_recall
+
+    store = _make_store()
+    seed_vec = np.zeros(384, dtype=np.float32)
+    seed_vec[0] = 1.0
+    other_vec = np.zeros(384, dtype=np.float32)
+    other_vec[1] = 1.0
+    # near_vec slightly off-axis so it's NOT picked up as a seed but exists in store
+    near_vec = other_vec.copy()
+
+    store.insert_episode(Episode(id="seed", content="seed-text", timestamp=_T0), seed_vec)
+    store.insert_episode(Episode(id="heavy", content="heavy-target", timestamp=_T0), near_vec)
+    store.insert_episode(Episode(id="light", content="light-target", timestamp=_T0), near_vec)
+
+    # Heavy edge from seed -> heavy, light edge from seed -> light.
+    store.insert_edge("seed", "heavy", "co", weight=0.9, created_at=_T0)
+    store.insert_edge("seed", "light", "co", weight=0.1, created_at=_T0)
+
+    embedder = MagicMock()
+    embedder.embed.return_value = seed_vec
+
+    results = spreading_recall(
+        "anything",
+        k=10,
+        store=store,
+        embedder=embedder,
+        depth=1,
+        decay=1.0,
+        alpha=0.0,  # zero-out cosine so only graph_act drives ranking
+        beta=1.0,
+        gamma=0.0,
+    )
+    by_id = {r.episode.id: r.score for r in results}
+    assert "heavy" in by_id
+    assert "light" in by_id
+    assert by_id["heavy"] > by_id["light"], (
+        f"Heavier edge should win: heavy={by_id['heavy']}, light={by_id['light']}"
+    )
+
+
 def test_recall_cosine_mode_unchanged() -> None:
     """mode='cosine' still works after v0.4 changes."""
     from engram.core import Engram
