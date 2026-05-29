@@ -210,6 +210,35 @@ def test_list_agents_excludes_unscoped(shared_path):
 # ------------------------------------------------------------------
 
 
+def test_prune_episodes_does_not_touch_other_agents(shared_path):
+    """Reflection-driven prune in agent-a must not delete agent-b's low-importance episodes."""
+    with Engram(path=shared_path, agent_id="agent-a") as a:
+        a.observe("agent-a low-importance event")
+        a._store.update_importance(a._store.get_episodes_since(None)[0].id, 0.01)
+    with Engram(path=shared_path, agent_id="agent-b") as b:
+        b.observe("agent-b low-importance event")
+        b._store.update_importance(b._store.get_episodes_since(None)[0].id, 0.01)
+
+    with Engram(path=shared_path, agent_id="agent-a") as a:
+        pruned = a._store.prune_episodes(threshold=0.1)
+        assert pruned == 1  # only agent-a's
+
+    with Engram(path=shared_path, agent_id="agent-b") as b:
+        assert b._store.episode_count() == 1  # agent-b's still there
+
+
+def test_prune_episodes_cleans_fts_index(shared_path):
+    """prune_episodes must remove pruned rows from the FTS index so they don't surface in hybrid recall."""
+    with Engram(path=shared_path, agent_id="agent-a") as a:
+        ep_id = a.observe("globally unique fts marker xyzzy")
+        a._store.update_importance(ep_id, 0.01)
+        pruned = a._store.prune_episodes(threshold=0.1)
+        assert pruned == 1
+        # Hybrid recall on the unique term must return nothing.
+        results = a.recall("xyzzy", k=5, mode="hybrid")
+        assert results == []
+
+
 def test_forget_entity_erases_across_all_agents(two_agents):
     a, b = two_agents
     a.observe("Alice joined Globex", actors=["Alice"])

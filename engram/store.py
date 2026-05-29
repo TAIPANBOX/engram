@@ -287,11 +287,23 @@ class Store:
     def prune_episodes(self, threshold: float) -> int:
         """Delete episodes whose importance_score is below *threshold*.
 
+        Scoped to this store's agent_id when set, so reflection-driven pruning
+        cannot delete another agent's episodes from a shared file. Also cleans
+        up the vec0 index, the FTS index, access_log, and any incident edges
+        (both src and dst directions).
+
         Returns the number of pruned episodes.
         """
-        rows: list[Any] = self._conn.execute(
-            "SELECT rowid, id FROM episodes WHERE importance_score < ?", (threshold,)
-        ).fetchall()
+        if self._agent_id is not None:
+            rows: list[Any] = self._conn.execute(
+                "SELECT rowid, id FROM episodes "
+                "WHERE importance_score < ? AND agent_id = ?",
+                (threshold, self._agent_id),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT rowid, id FROM episodes WHERE importance_score < ?", (threshold,)
+            ).fetchall()
         if not rows:
             return 0
         rowids = [r[0] for r in rows]
@@ -299,8 +311,12 @@ class Store:
         rowid_ph = ",".join("?" * len(rowids))
         id_ph = ",".join("?" * len(ids))
         self._conn.execute(f"DELETE FROM vec_episodes WHERE rowid IN ({rowid_ph})", rowids)
+        self._conn.execute(f"DELETE FROM fts_episodes WHERE rowid IN ({rowid_ph})", rowids)
         self._conn.execute(f"DELETE FROM access_log WHERE memory_id IN ({id_ph})", ids)
-        self._conn.execute(f"DELETE FROM edges WHERE src_id IN ({id_ph})", ids)
+        self._conn.execute(
+            f"DELETE FROM edges WHERE src_id IN ({id_ph}) OR dst_id IN ({id_ph})",
+            (*ids, *ids),
+        )
         self._conn.execute(f"DELETE FROM episodes WHERE id IN ({id_ph})", ids)
         self._conn.commit()
         return len(ids)
@@ -348,10 +364,14 @@ class Store:
         return cur.rowcount > 0
 
     def get_episodes_by_actor(self, actor_name: str) -> list[Episode]:
-        """Return all episodes where *actor_name* appears in the actors list."""
+        """Return all episodes where *actor_name* appears in the actors list.
+
+        Intentionally cross-agent: ``forget_entity`` is a GDPR-style erasure
+        that must reach every agent's episodes in a shared store. Selects the
+        full 10-column tuple so :meth:`Episode.from_row` populates ``agent_id``.
+        """
         rows: list[Any] = self._conn.execute(
-            "SELECT id, content, timestamp, actors, tags, salience, emotional_valence, "
-            "summary_of, importance_score FROM episodes "
+            f"SELECT {_EPISODE_COLS} FROM episodes "
             "WHERE EXISTS (SELECT 1 FROM json_each(actors) WHERE value = ?)",
             (actor_name,),
         ).fetchall()
