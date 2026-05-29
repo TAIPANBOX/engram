@@ -1,8 +1,8 @@
 """Async wrapper around Engram for use in asyncio-based agents.
 
 All methods delegate to the synchronous :class:`~engram.core.Engram` instance
-via :func:`asyncio.get_event_loop().run_in_executor`, keeping the event loop
-unblocked during ONNX inference and SQLite I/O.
+via :func:`asyncio.to_thread`, keeping the event loop unblocked during ONNX
+inference and SQLite I/O.
 
 Example::
 
@@ -77,8 +77,7 @@ class AsyncEngram:
 
     async def close(self) -> None:
         """Flush and close the underlying store."""
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._engram.close)
+        await asyncio.to_thread(self._engram.close)
 
     # ------------------------------------------------------------------
     # Write
@@ -98,16 +97,13 @@ class AsyncEngram:
         Returns:
             Episode id (UUID string).
         """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self._engram.observe(
-                content,
-                actors=actors,
-                tags=tags,
-                salience=salience,
-                emotional_valence=emotional_valence,
-            ),
+        return await asyncio.to_thread(
+            self._engram.observe,
+            content,
+            actors=actors,
+            tags=tags,
+            salience=salience,
+            emotional_valence=emotional_valence,
         )
 
     async def observe_many(self, items: list[ObserveInput]) -> list[str]:
@@ -116,8 +112,7 @@ class AsyncEngram:
         Returns:
             Episode ids in the same order as *items*.
         """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: self._engram.observe_many(items))
+        return await asyncio.to_thread(self._engram.observe_many, items)
 
     # ------------------------------------------------------------------
     # Read
@@ -135,26 +130,27 @@ class AsyncEngram:
         fts_weight: float = 0.3,
         as_of: datetime | None = None,
         cross_agent: bool = False,
+        k_inner: int | None = None,
+        candidate_limit: int | None = None,
     ) -> list[SearchResult]:
         """Async version of :meth:`~engram.core.Engram.recall`.
 
         Returns:
             List of :class:`~engram.models.SearchResult` ordered by score descending.
         """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self._engram.recall(
-                query,
-                k,
-                mode=mode,
-                depth=depth,
-                decay=decay,
-                vector_weight=vector_weight,
-                fts_weight=fts_weight,
-                as_of=as_of,
-                cross_agent=cross_agent,
-            ),
+        return await asyncio.to_thread(
+            self._engram.recall,
+            query,
+            k,
+            mode=mode,
+            depth=depth,
+            decay=decay,
+            vector_weight=vector_weight,
+            fts_weight=fts_weight,
+            as_of=as_of,
+            cross_agent=cross_agent,
+            k_inner=k_inner,
+            candidate_limit=candidate_limit,
         )
 
     # ------------------------------------------------------------------
@@ -175,18 +171,20 @@ class AsyncEngram:
         Returns:
             Fact id (UUID string).
         """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self._engram.assert_fact(
-                subject, predicate, object, confidence=confidence, source=source
-            ),
+        return await asyncio.to_thread(
+            self._engram.assert_fact,
+            subject,
+            predicate,
+            object,
+            confidence=confidence,
+            source=source,
         )
 
-    async def timeline(self, entity: str) -> list[Fact]:
+    async def timeline(
+        self, entity: str, *, as_of: datetime | None = None
+    ) -> list[Fact]:
         """Async version of :meth:`~engram.core.Engram.timeline`."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: self._engram.timeline(entity))
+        return await asyncio.to_thread(self._engram.timeline, entity, as_of=as_of)
 
     # ------------------------------------------------------------------
     # Maintenance
@@ -198,23 +196,19 @@ class AsyncEngram:
         Returns:
             Number of episodes updated.
         """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._engram.decay)
+        return await asyncio.to_thread(self._engram.decay)
 
     async def backup(self, dest: str | Path) -> None:
         """Async version of :meth:`~engram.core.Engram.backup`."""
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: self._engram.backup(dest))
+        await asyncio.to_thread(self._engram.backup, dest)
 
     async def export_json(self, dest: str) -> dict[str, Any]:
         """Async version of :meth:`~engram.core.Engram.export_json`."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: self._engram.export_json(dest))
+        return await asyncio.to_thread(self._engram.export_json, dest)
 
     async def import_json(self, src: str, *, merge: bool = False) -> dict[str, int]:
         """Async version of :meth:`~engram.core.Engram.import_json`."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: self._engram.import_json(src, merge=merge))
+        return await asyncio.to_thread(self._engram.import_json, src, merge=merge)
 
     # ------------------------------------------------------------------
     # Forget
@@ -222,13 +216,11 @@ class AsyncEngram:
 
     async def forget(self, episode_id: str, *, reason: str | None = None) -> None:
         """Async version of :meth:`~engram.core.Engram.forget`."""
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: self._engram.forget(episode_id, reason=reason))
+        await asyncio.to_thread(self._engram.forget, episode_id, reason=reason)
 
     async def forget_entity(self, entity_name: str) -> ForgetResult:
         """Async version of :meth:`~engram.core.Engram.forget_entity`."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: self._engram.forget_entity(entity_name))
+        return await asyncio.to_thread(self._engram.forget_entity, entity_name)
 
     # ------------------------------------------------------------------
     # Pass-through properties

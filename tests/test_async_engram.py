@@ -107,3 +107,30 @@ async def test_async_k_parameter(tmp_path) -> None:
             await mem.observe(f"Event number {i}")
         results = await mem.recall("event", k=3)
     assert len(results) <= 3
+
+
+async def test_async_recall_accepts_k_inner_and_candidate_limit(tmp_path) -> None:
+    """API parity: AsyncEngram.recall must accept the same tunables as the sync API."""
+    path = str(tmp_path / "async_tune.engram")
+    async with AsyncEngram(path=path) as mem:
+        await mem.observe("Tunable search params smoke test")
+        # Both keywords forwarded without error to the sync recall().
+        results = await mem.recall("smoke", k=2, k_inner=20)
+        assert isinstance(results, list)
+        hybrid = await mem.recall("smoke", k=2, mode="hybrid", candidate_limit=8)
+        assert isinstance(hybrid, list)
+
+
+async def test_async_timeline_as_of_routes_to_facts_as_of(tmp_path) -> None:
+    """timeline(as_of=) must call get_facts_as_of, not get_all_facts."""
+    from datetime import UTC, datetime, timedelta
+
+    path = str(tmp_path / "async_timeline_asof.engram")
+    async with AsyncEngram(path=path) as mem:
+        now = datetime.now(tz=UTC)
+        await mem.assert_fact("Ada", "role", "Engineer")
+        # Querying before the fact's recorded validity returns nothing.
+        before = await mem.timeline("Ada", as_of=now - timedelta(days=365))
+        assert before == []
+        after = await mem.timeline("Ada", as_of=now + timedelta(days=365))
+        assert len(after) == 1
