@@ -355,17 +355,22 @@ class Engram:
             "model": model_used,
         }
 
-    def timeline(self, entity: str) -> list[Fact]:
-        """Return the full fact history for *entity* in chronological order.
-
-        Includes superseded facts so the caller can see how beliefs evolved.
+    def timeline(self, entity: str, *, as_of: datetime | None = None) -> list[Fact]:
+        """Return the fact history for *entity* in chronological order.
 
         Args:
             entity: Subject name (e.g. ``"Ivan"``).
+            as_of: If set, return only facts whose validity interval contains
+                ``as_of`` (``valid_from <= as_of`` and ``valid_to`` is ``None``
+                or ``> as_of``). If ``None`` (default), returns the full
+                timeline including superseded facts so callers can see how
+                beliefs evolved.
 
         Returns:
-            All facts where ``subject == entity``, sorted by ``valid_from`` ascending.
+            Facts where ``subject == entity``, sorted by ``valid_from`` ascending.
         """
+        if as_of is not None:
+            return self._store.get_facts_as_of(entity, as_of)
         return self._store.get_all_facts(entity)
 
     def contradictions(self) -> list[tuple[Fact, Fact]]:

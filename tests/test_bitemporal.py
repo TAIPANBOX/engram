@@ -226,6 +226,55 @@ def test_timeline_unknown_entity_returns_empty() -> None:
     assert mem.timeline("nobody") == []
 
 
+def test_timeline_as_of_returns_only_valid_facts() -> None:
+    """timeline(entity, as_of=T) routes through get_facts_as_of."""
+    from engram.core import Engram
+
+    mem = Engram()
+    # Two facts: Ivan@Acme until T1, then Ivan@Globex from T1.
+    mem._store.insert_fact(
+        Fact(
+            id="ft-a",
+            subject="Ivan",
+            predicate="works_at",
+            object="Acme",
+            valid_from=_T0,
+            valid_to=_T1,
+            recorded_at=_T0,
+            superseded_at=_T1,
+            superseded_by="ft-b",
+            confidence=0.9,
+            derived_from=[],
+        )
+    )
+    mem._store.insert_fact(
+        Fact(
+            id="ft-b",
+            subject="Ivan",
+            predicate="works_at",
+            object="Globex",
+            valid_from=_T1,
+            valid_to=None,
+            recorded_at=_T1,
+            superseded_at=None,
+            superseded_by=None,
+            confidence=0.9,
+            derived_from=[],
+        )
+    )
+
+    at_t0 = mem.timeline("Ivan", as_of=_T0 + timedelta(hours=1))
+    assert len(at_t0) == 1
+    assert at_t0[0].object == "Acme"
+
+    at_t2 = mem.timeline("Ivan", as_of=_T2)
+    assert len(at_t2) == 1
+    assert at_t2[0].object == "Globex"
+
+    # Full timeline (no as_of) returns both regardless of supersession.
+    assert {f.object for f in mem.timeline("Ivan")} == {"Acme", "Globex"}
+
+
 # ------------------------------------------------------------------
 # recall(as_of=T) via public Engram API
 # ------------------------------------------------------------------
