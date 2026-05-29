@@ -22,6 +22,20 @@ def _distance_to_score(distance: float) -> float:
     return float(1.0 / (1.0 + distance))
 
 
+def _escape_fts5_query(query: str) -> str:
+    """Make an arbitrary user string safe for ``fts5 MATCH``.
+
+    FTS5 treats bare ``*``, ``(``, ``OR``, ``NOT``, ``-``, ``"`` and others as
+    operators; raw user input therefore crashes the query parser with
+    ``OperationalError``. We split on whitespace, double-escape embedded quotes,
+    wrap each non-empty token in double quotes (making it a phrase), and join
+    with spaces (implicit AND). Empty input becomes an empty string that the
+    caller can short-circuit on.
+    """
+    tokens = [tok.replace('"', '""') for tok in query.split() if tok]
+    return " ".join(f'"{tok}"' for tok in tokens)
+
+
 _EPISODE_COLS = (
     "id, content, timestamp, actors, tags, salience, "
     "emotional_valence, summary_of, importance_score, agent_id"
@@ -811,6 +825,7 @@ class Store:
         fts_weight: float = 0.3,
         agent_id: str | None = None,
         candidate_limit: int | None = None,
+        as_of: datetime | None = None,
     ) -> list[tuple[Episode, float, float]]:
         """Return top-k episodes using BM25 + cosine blended score.
 
@@ -826,17 +841,27 @@ class Store:
             fts_weight: Weight applied to the normalised BM25 score.
             agent_id: If set, restrict to this agent's episodes.
             candidate_limit: Candidate search limit per source (defaults to k * 4).
+            as_of: If set, only episodes with ``timestamp <= as_of`` are
+                considered in both the vector and FTS candidate pools.
         """
         if candidate_limit is None:
             candidate_limit = k * 4
 
-        # --- Vector candidates ---
+        extra_clause = ""
+        extra_params: tuple[Any, ...] = ()
         if agent_id is not None:
-            agent_clause = "AND e.agent_id = ?"
-            vec_params: tuple[Any, ...] = (_serialize(query_embedding), candidate_limit, agent_id)
-        else:
-            agent_clause = ""
-            vec_params = (_serialize(query_embedding), candidate_limit)
+            extra_clause += " AND e.agent_id = ?"
+            extra_params = (*extra_params, agent_id)
+        if as_of is not None:
+            extra_clause += " AND e.timestamp <= ?"
+            extra_params = (*extra_params, as_of.isoformat())
+
+        # --- Vector candidates ---
+        vec_params: tuple[Any, ...] = (
+            _serialize(query_embedding),
+            candidate_limit,
+            *extra_params,
+        )
 
         vec_rows: list[Any] = self._conn.execute(
             f"""
@@ -847,7 +872,7 @@ class Store:
             JOIN episodes e ON e.rowid = v.rowid
             WHERE v.embedding MATCH ?
               AND k = ?
-              {agent_clause}
+              {extra_clause}
             ORDER BY v.distance ASC
             """,
             vec_params,
@@ -869,32 +894,19 @@ class Store:
         }
 
         # --- FTS candidates (BM25, lower is better — negate to make higher = better) ---
-        fts_query = query.replace('"', '""')  # escape FTS5 special chars
-        if agent_id is not None:
-            fts_rows: list[Any] = self._conn.execute(
-                """
-                SELECT e.id, -bm25(fts_episodes) AS bm25_score
-                FROM fts_episodes
-                JOIN episodes e ON e.rowid = fts_episodes.rowid
-                WHERE fts_episodes MATCH ?
-                  AND e.agent_id = ?
-                ORDER BY bm25_score DESC
-                LIMIT ?
-                """,
-                (fts_query, agent_id, candidate_limit),
-            ).fetchall()
-        else:
-            fts_rows = self._conn.execute(
-                """
-                SELECT e.id, -bm25(fts_episodes) AS bm25_score
-                FROM fts_episodes
-                JOIN episodes e ON e.rowid = fts_episodes.rowid
-                WHERE fts_episodes MATCH ?
-                ORDER BY bm25_score DESC
-                LIMIT ?
-                """,
-                (fts_query, candidate_limit),
-            ).fetchall()
+        fts_query = _escape_fts5_query(query)
+        fts_rows: list[Any] = self._conn.execute(
+            f"""
+            SELECT e.id, -bm25(fts_episodes) AS bm25_score
+            FROM fts_episodes
+            JOIN episodes e ON e.rowid = fts_episodes.rowid
+            WHERE fts_episodes MATCH ?
+              {extra_clause}
+            ORDER BY bm25_score DESC
+            LIMIT ?
+            """,
+            (fts_query, *extra_params, candidate_limit),
+        ).fetchall()
 
         fts_scores: dict[str, float] = {str(row[0]): float(row[1]) for row in fts_rows}
         max_fts = max(fts_scores.values(), default=1.0)

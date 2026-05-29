@@ -78,6 +78,7 @@ def recall(
             fts_weight=fts_weight,
             agent_id=agent_id,
             candidate_limit=candidate_limit,
+            as_of=as_of,
         )
     elif as_of is not None:
         hits = store.search_episodes_as_of(

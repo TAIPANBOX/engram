@@ -100,3 +100,46 @@ def test_hybrid_mode_string(mem: Engram) -> None:
     mem.recall("test", k=1, mode="cosine")
     mem.recall("test", k=1, mode="spreading")
     mem.recall("test", k=1, mode="hybrid")
+
+
+def test_hybrid_honors_as_of(tmp_path) -> None:
+    """Hybrid mode must respect as_of and exclude future episodes."""
+    from datetime import UTC, datetime, timedelta
+
+    path = str(tmp_path / "hybrid_asof.engram")
+    with Engram(path=path) as mem:
+        old_id = mem.observe("ancient marker zzzhybrid")
+        new_id = mem.observe("recent marker zzzhybrid")
+        # Backdate the first one so as_of can split them deterministically.
+        t_old = datetime(2026, 1, 1, tzinfo=UTC)
+        t_new = datetime(2026, 6, 1, tzinfo=UTC)
+        mem._store._conn.execute(
+            "UPDATE episodes SET timestamp = ? WHERE id = ?", (t_old.isoformat(), old_id)
+        )
+        mem._store._conn.execute(
+            "UPDATE episodes SET timestamp = ? WHERE id = ?", (t_new.isoformat(), new_id)
+        )
+        mem._store._conn.commit()
+
+        # Without as_of, both surface.
+        ids_all = {r.episode.id for r in mem.recall("zzzhybrid", k=5, mode="hybrid")}
+        assert {old_id, new_id}.issubset(ids_all)
+
+        # With as_of mid-window, only the old one.
+        ids_then = {
+            r.episode.id
+            for r in mem.recall(
+                "zzzhybrid", k=5, mode="hybrid", as_of=t_old + timedelta(days=1)
+            )
+        }
+        assert ids_then == {old_id}
+
+
+def test_hybrid_handles_fts5_special_chars(tmp_path) -> None:
+    """User query containing FTS5 operators must not crash."""
+    path = str(tmp_path / "fts_escape.engram")
+    with Engram(path=path) as mem:
+        mem.observe("nothing special here")
+        # These previously raised sqlite3.OperationalError via raw MATCH.
+        for q in ["a*b", "(quoted)", "x OR y", "foo - bar", 'q"uote']:
+            mem.recall(q, k=3, mode="hybrid")
