@@ -5,7 +5,7 @@
 [![PyPI version](https://badge.fury.io/py/engdbram.svg)](https://badge.fury.io/py/engdbram)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-340%20passed-green)](tests/)
+[![Tests](https://img.shields.io/badge/tests-344%20passed-green)](tests/)
 
 ---
 
@@ -534,13 +534,14 @@ print(f"Deleted {result.episodes_deleted} episodes, {result.facts_deleted} facts
 Engram ships a command-line interface for inspecting and operating stores without writing code:
 
 ```
-engram inspect     <path>
-engram recall      <path> <query> [--k K] [--mode cosine|hybrid|spreading] [--as-of DATE]
+engram inspect     <path> [--agent-id ID]
+engram recall      <path> <query> [--k K] [--mode cosine|spreading|hybrid] [--as-of DATE]
                                   [--agent-id ID] [--cross-agent]
 engram timeline    <path> <entity>
 engram observe     <path> <content> [--actors NAME...] [--tags TAG...]
                                     [--salience F] [--valence F] [--agent-id ID]
-engram reflect     <path> [--llm anthropic|openai] [--model MODEL] [--agent-id ID]
+engram reflect     <path> [--llm anthropic|openai] [--model MODEL]
+                          [--base-url URL] [--agent-id ID]
 engram forget      <path> (--episode ID | --entity NAME) [--agent-id ID]
 engram list-agents <path>
 ```
@@ -582,7 +583,7 @@ engram recall ./team.engram "migration" --agent-id coder
 
 ## Full API Reference
 
-### `Engram(path, *, embedder_model, decay_config, llm, agent_id)`
+### `Engram(path, *, embedder_model, decay_config, llm, agent_id, key)`
 
 ```python
 from engram import Engram, DecayConfig, AnthropicAdapter
@@ -598,12 +599,17 @@ mem = Engram(
     ),
     llm=AnthropicAdapter(),  # optional; used by reflect() and compress()
     agent_id="my-agent",     # optional; scopes writes and reads to this agent
+    key="passphrase",        # optional; enables SQLCipher encryption-at-rest
 )
 
 # Context-manager supported
 with Engram(path=":memory:") as mem:
     mem.observe("hello world")
 ```
+
+> **Encryption-at-rest:** pass `key="..."` to encrypt the database via
+> SQLCipher (`pip install 'engdbram[encryption]'`). Plain (no-key) stores
+> are unchanged. Use `mem.rekey(new_key)` to change or remove the key.
 
 ---
 
@@ -640,13 +646,13 @@ ids = mem.observe_many([
 
 ---
 
-### `recall(query, k, *, mode, depth, decay, vector_weight, fts_weight, as_of, cross_agent) → list[SearchResult]`
+### `recall(query, k, *, mode, depth, decay, vector_weight, fts_weight, as_of, cross_agent, k_inner, candidate_limit) → list[SearchResult]`
 
 ```python
 # Default: cosine similarity
 results = mem.recall("where does Ivan work?", k=5)
 
-# Hybrid: BM25 keyword + cosine vector, blended
+# Hybrid: BM25 keyword + cosine vector, blended (also honors as_of)
 results = mem.recall("Ivan Globex transfer", k=5, mode="hybrid")
 results = mem.recall("exact term", k=5, mode="hybrid",
                      vector_weight=0.3, fts_weight=0.7)
@@ -654,7 +660,7 @@ results = mem.recall("exact term", k=5, mode="hybrid",
 # Graph-based spreading-activation
 results = mem.recall("Ivan", k=5, mode="spreading", depth=2, decay=0.5)
 
-# Time travel: only episodes that existed at this point
+# Time travel: only episodes that existed at this point (works in all modes)
 results = mem.recall(
     "Ivan employer",
     k=5,
@@ -663,9 +669,19 @@ results = mem.recall(
 
 # Cross-agent: bypass agent_id scope
 results = mem.recall("migration", k=10, cross_agent=True)
+
+# Tune the candidate pool sizes for harder bitemporal / hybrid queries
+results = mem.recall("Ivan employer", k=5, as_of=t, k_inner=200)        # vector inner KNN size
+results = mem.recall("Q3 revenue", k=5, mode="hybrid", candidate_limit=64)  # per-source pool
 ```
 
-`SearchResult` fields: `episode`, `score` (0–1, higher is better), `distance` (raw L2), `importance`.
+`SearchResult` fields: `episode`, `score` (0–1, higher is better — derived
+from the L2 distance of unit-norm embeddings, so monotone in cosine),
+`distance` (raw L2 from sqlite-vec), `importance`.
+
+User-supplied query strings are safe to pass even when they contain FTS5
+operators (`*`, `(`, `OR`, `NOT`, `-`, `"`); tokens are escaped and wrapped
+as phrases before reaching SQLite.
 
 ---
 
@@ -695,14 +711,23 @@ print(f"Cost: {run.cost_tokens} tokens")
 
 ---
 
-### `timeline(entity) → list[Fact]`
+### `timeline(entity, *, as_of=None) → list[Fact]`
 
-Full fact history for an entity, including superseded facts, in chronological order.
+Fact history for an entity, in chronological order. By default returns
+everything (including superseded facts) so callers can see how beliefs
+evolved. Pass `as_of=...` to get only facts whose validity interval
+contains that timestamp — the public entry point to the bitemporal
+fact path.
 
 ```python
+# Full history, including superseded facts
 for f in mem.timeline("Ivan"):
     end = f.valid_to.date() if f.valid_to else "now"
     print(f"[{f.valid_from.date()} → {end}]  Ivan {f.predicate} {f.object}")
+
+# What did the agent believe about Ivan in March 2024?
+for f in mem.timeline("Ivan", as_of=datetime(2024, 3, 1, tzinfo=UTC)):
+    print(f"valid: Ivan {f.predicate} {f.object}")
 ```
 
 ---
@@ -782,6 +807,21 @@ mem.backup("./agent_backup.engram")  # str or Path
 
 ---
 
+### `rekey(new_key) → None`
+
+Change the SQLCipher passphrase of an encrypted store, or pass `None` to
+remove encryption entirely. Only valid on databases originally opened
+with `Engram(..., key=...)`. To encrypt a plain database, dump it with
+`export_json()` and re-import into a fresh `Engram(key=...)`.
+
+```python
+mem = Engram(path="./agent.engram", key="old-pass")
+mem.rekey("new-pass")     # rotate
+mem.rekey(None)           # drop encryption
+```
+
+---
+
 ### `export_json(dest) → dict`
 
 Export the full store (episodes, facts, entities, edges) to a JSON file. Returns the document dict.
@@ -852,16 +892,21 @@ wm.capacity     # int
 
 ---
 
-### `AsyncEngram(path, *, embedder_model, decay_config, llm, agent_id)`
+### `AsyncEngram(path, *, embedder_model, decay_config, llm, agent_id, key)`
 
-Async-compatible wrapper with the same interface as `Engram`. Every method is `async def` and dispatches to the synchronous implementation via `loop.run_in_executor` — the event loop is never blocked by ONNX inference or SQLite I/O.
+Async-compatible wrapper with the same interface as `Engram`. Every method
+is `async def` and dispatches to the synchronous implementation via
+`asyncio.to_thread` — the event loop is never blocked by ONNX inference or
+SQLite I/O. The surface is at parity with the sync API: `recall` accepts
+`k_inner`/`candidate_limit`, `timeline` accepts `as_of=`.
 
 ```python
 from engram import AsyncEngram
 
 async with AsyncEngram(path="./agent.engram") as mem:
     ep_id = await mem.observe("Hello world")
-    results = await mem.recall("hello", k=3, mode="hybrid")
+    results = await mem.recall("hello", k=3, mode="hybrid", candidate_limit=64)
+    bitemporal = await mem.timeline("Alice", as_of=datetime(2024, 3, 1, tzinfo=UTC))
     await mem.assert_fact("Alice", "role", "CTO")
     await mem.decay()
     await mem.backup("./backup.engram")
@@ -878,7 +923,15 @@ async with AsyncEngram(path="./agent.engram") as mem:
 Both `reflect()` and `compress()` use the LLM adapter:
 
 ```python
-from engram import AnthropicAdapter, OpenAIAdapter
+from engram import (
+    AnthropicAdapter,
+    OpenAIAdapter,
+    GeminiAdapter,
+    DeepSeekAdapter,
+    QwenAdapter,
+    KimiAdapter,
+    StubLLMAdapter,  # tests / offline development
+)
 
 # Claude (default: haiku — fast, cheap)
 llm = AnthropicAdapter(model="claude-haiku-4-5-20251001")
@@ -889,8 +942,25 @@ llm = OpenAIAdapter(model="gpt-4o-mini")
 # Ollama or any OpenAI-compatible local model
 llm = OpenAIAdapter(model="llama3.2", base_url="http://localhost:11434/v1")
 
+# Google Gemini (reads GOOGLE_API_KEY by default)
+llm = GeminiAdapter(model="gemini-2.0-flash")
+
+# OpenAI-compatible providers pre-wired with the right base URL
+llm = DeepSeekAdapter(model="deepseek-chat")     # DEEPSEEK_API_KEY
+llm = QwenAdapter(model="qwen-max")              # DASHSCOPE_API_KEY
+llm = KimiAdapter(model="moonshot-v1-8k")        # MOONSHOT_API_KEY
+
 mem = Engram(path="./agent.engram", llm=llm)
 ```
+
+**Prompt-injection hardening.** Episode bodies sent to an LLM during
+`reflect()` are wrapped in `<observation>` blocks and the system prompt
+instructs the model to ignore directives inside them. Every extraction
+runs at `temperature=0`, and any LLM-derived `confidence` is capped at
+`0.95` so a successful injection cannot persist a fabricated fact as
+absolute truth. Facts you assert directly via `mem.assert_fact(...,
+confidence=1.0)` are not capped — the cap is specifically for facts
+mined from user-controlled text.
 
 ---
 
@@ -1127,10 +1197,11 @@ Reflection is optional and async — you only pay when you need semantic fact ex
 ### Run benchmarks locally
 
 ```bash
+# Both spellings work
 python -m engram.benchmarks all
-python -m engram.benchmarks latency --n 500
-python -m engram.benchmarks locomo --data ./my_data.json
-python -m engram.benchmarks cost --n 1000 --model gpt-4o-mini
+engram-bench latency --n 500
+engram-bench locomo --data ./my_data.json
+engram-bench cost --n 1000 --model gpt-4o-mini
 ```
 
 ---
@@ -1166,7 +1237,7 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (290 tests)
+### Test coverage (344 tests)
 
 ```
 tests/
@@ -1211,6 +1282,8 @@ tests/
 - [x] v2.0 — Batch decay (21×), `observe_many()` (2×), embedding LRU cache
 - [x] v2.0.1 — WAL journal mode + 32 MB page cache (4× faster commits, concurrent reads/writes)
 - [x] v2.1 — Hybrid recall (FTS5 BM25 + cosine), `WorkingMemory`, `AsyncEngram`, `compress()`, `backup()`, `export_json` / `import_json`
+- [x] v2.1.1 — GitHub Actions CI, `DATA_FLOW.md`, tunable `k_inner` / `candidate_limit`, adapter history hydration, PyPI distribution renamed to `engdbram`
+- [x] v2.1.2 — Multi-agent isolation hardening (per-agent `prune`, FTS cleanup), hybrid `as_of`, FTS5 query safety, embedder normalization, prompt-injection hardening, async API parity (`timeline(as_of=)`, `recall(k_inner=, candidate_limit=)`), tag-triggered PyPI publishing via OIDC
 
 ---
 
@@ -1231,4 +1304,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
 
 MIT — see [LICENSE](LICENSE).
 
-Architecture rationale and design decisions: [DESIGN.md](DESIGN.md).
+- Architecture rationale and design decisions: [DESIGN.md](DESIGN.md)
+- Release notes by version: [CHANGELOG.md](CHANGELOG.md)
+- Read / write paths and on-disk guarantees: [DATA_FLOW.md](DATA_FLOW.md)

@@ -279,7 +279,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_recall.add_argument(
         "--mode",
         default="cosine",
-        choices=["cosine", "spreading"],
+        choices=["cosine", "spreading", "hybrid"],
         help="retrieval mode (default cosine)",
     )
     p_recall.add_argument(
