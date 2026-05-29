@@ -1,6 +1,6 @@
 """LlamaIndex adapter for Engram.
 
-Requires: pip install 'engram[llamaindex]'
+Requires: pip install 'engdbram[llamaindex]'
 
 Provides:
 - EngramMemory  — LlamaIndex BaseMemory backed by Engram episodic store
@@ -28,7 +28,7 @@ except ImportError:
 
 def _require_llamaindex() -> None:
     if not _LLAMAINDEX_AVAILABLE:
-        raise ImportError("llama-index-core not installed. Run: pip install 'engram[llamaindex]'")
+        raise ImportError("llama-index-core not installed. Run: pip install 'engdbram[llamaindex]'")
 
 
 if _LLAMAINDEX_AVAILABLE:

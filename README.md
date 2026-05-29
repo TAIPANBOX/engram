@@ -2,10 +2,10 @@
 
 > **The SQLite of agent memory.** Embeddable, local-first, cognitively grounded.
 
-[![PyPI version](https://badge.fury.io/py/engram.svg)](https://badge.fury.io/py/engram)
+[![PyPI version](https://badge.fury.io/py/engdbram.svg)](https://badge.fury.io/py/engdbram)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-290%20passed-green)](tests/)
+[![Tests](https://img.shields.io/badge/tests-340%20passed-green)](tests/)
 
 ---
 
@@ -271,20 +271,22 @@ Fixed-capacity LRU cache backed by `collections.OrderedDict`. Evicted items opti
 ## Install
 
 ```bash
-pip install engram
+pip install engdbram
 
 # LLM-powered reflection (optional, pick one):
-pip install 'engram[anthropic]'   # Claude
-pip install 'engram[openai]'      # OpenAI or any OpenAI-compatible
+pip install 'engdbram[anthropic]'   # Claude
+pip install 'engdbram[openai]'      # OpenAI or any OpenAI-compatible
 
 # Integrations:
-pip install 'engram[mcp]'         # MCP server (Claude Desktop, Cursor, etc.)
-pip install 'engram[langchain]'   # LangChain retriever + chat history
-pip install 'engram[llamaindex]'  # LlamaIndex memory buffer
+pip install 'engdbram[mcp]'         # MCP server (Claude Desktop, Cursor, etc.)
+pip install 'engdbram[langchain]'   # LangChain retriever + chat history
+pip install 'engdbram[llamaindex]'  # LlamaIndex memory buffer
 
 # Everything:
-pip install 'engram[anthropic,mcp,langchain,llamaindex]'
+pip install 'engdbram[anthropic,mcp,langchain,llamaindex]'
 ```
+
+> The distribution name on PyPI is **`engdbram`** (the `engram` name is squatted). The import name is still `engram`, so application code is unaffected: `from engram import Engram`.
 
 **Requirements:** Python 3.11+, no system dependencies. `fastembed` downloads the ONNX embedding model (~23 MB) on first use; all subsequent calls are local.
 

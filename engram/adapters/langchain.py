@@ -1,6 +1,6 @@
 """LangChain adapters for Engram.
 
-Requires: pip install 'engram[langchain]'
+Requires: pip install 'engdbram[langchain]'
 
 Provides:
 - EngramRetriever  — plugs Engram into LangChain retrieval pipelines
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 
 def _require_langchain() -> None:
     if not _LANGCHAIN_AVAILABLE:
-        raise ImportError("langchain-core not installed. Run: pip install 'engram[langchain]'")
+        raise ImportError("langchain-core not installed. Run: pip install 'engdbram[langchain]'")
 
 
 if _LANGCHAIN_AVAILABLE:

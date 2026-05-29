@@ -70,8 +70,8 @@ def _sqlite_module(key: str | None) -> Any:
     except ImportError as exc:
         raise ImportError(
             "Encryption requires the 'sqlcipher3' package and the SQLCipher C library.\n"
-            "  macOS:  brew install sqlcipher && pip install 'engram[encryption]'\n"
-            "  Linux:  apt install libsqlcipher-dev && pip install 'engram[encryption]'"
+            "  macOS:  brew install sqlcipher && pip install 'engdbram[encryption]'\n"
+            "  Linux:  apt install libsqlcipher-dev && pip install 'engdbram[encryption]'"
         ) from exc
 
 

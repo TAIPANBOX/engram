@@ -137,7 +137,7 @@ class AnthropicAdapter:
             import anthropic  # type: ignore[import-not-found]
         except ImportError as exc:
             raise ImportError(
-                "Anthropic SDK not installed. Run: pip install 'engram[anthropic]'"
+                "Anthropic SDK not installed. Run: pip install 'engdbram[anthropic]'"
             ) from exc
         if self._client is None:
             self._client = anthropic.Anthropic()
@@ -190,7 +190,7 @@ class OpenAIAdapter:
             import openai  # type: ignore[import-not-found]
         except ImportError as exc:
             raise ImportError(
-                "OpenAI SDK not installed. Run: pip install 'engram[openai]'"
+                "OpenAI SDK not installed. Run: pip install 'engdbram[openai]'"
             ) from exc
         if self._client is None:
             kwargs: dict[str, Any] = {}
@@ -249,7 +249,7 @@ class GeminiAdapter:
             from google import genai  # type: ignore[import-untyped]
         except ImportError as exc:
             raise ImportError(
-                "Google Gen AI SDK not installed. Run: pip install 'engram[gemini]'"
+                "Google Gen AI SDK not installed. Run: pip install 'engdbram[gemini]'"
             ) from exc
         if self._client is None:
             kwargs: dict[str, Any] = {}
@@ -322,7 +322,7 @@ class DeepSeekAdapter(OpenAIAdapter):
             import openai
         except ImportError as exc:
             raise ImportError(
-                "OpenAI SDK not installed. Run: pip install 'engram[openai]'"
+                "OpenAI SDK not installed. Run: pip install 'engdbram[openai]'"
             ) from exc
         if self._client is None:
             kwargs: dict[str, Any] = {"base_url": self._BASE_URL}
@@ -353,7 +353,7 @@ class QwenAdapter(OpenAIAdapter):
             import openai
         except ImportError as exc:
             raise ImportError(
-                "OpenAI SDK not installed. Run: pip install 'engram[openai]'"
+                "OpenAI SDK not installed. Run: pip install 'engdbram[openai]'"
             ) from exc
         if self._client is None:
             kwargs: dict[str, Any] = {"base_url": self._BASE_URL}
@@ -384,7 +384,7 @@ class KimiAdapter(OpenAIAdapter):
             import openai
         except ImportError as exc:
             raise ImportError(
-                "OpenAI SDK not installed. Run: pip install 'engram[openai]'"
+                "OpenAI SDK not installed. Run: pip install 'engdbram[openai]'"
             ) from exc
         if self._client is None:
             kwargs: dict[str, Any] = {"base_url": self._BASE_URL}

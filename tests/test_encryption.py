@@ -2,8 +2,8 @@
 
 Skipped automatically when sqlcipher3 is not installed.
 Install prerequisites:
-  macOS:  brew install sqlcipher && pip install 'engram[encryption]'
-  Linux:  apt install libsqlcipher-dev && pip install 'engram[encryption]'
+  macOS:  brew install sqlcipher && pip install 'engdbram[encryption]'
+  Linux:  apt install libsqlcipher-dev && pip install 'engdbram[encryption]'
 """
 
 from __future__ import annotations

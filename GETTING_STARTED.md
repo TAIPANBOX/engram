@@ -13,16 +13,16 @@ pip install engram
 For LLM-powered reflection (optional):
 
 ```bash
-pip install 'engram[anthropic]'   # Claude
-pip install 'engram[openai]'      # OpenAI / Ollama
+pip install 'engdbram[anthropic]'   # Claude
+pip install 'engdbram[openai]'      # OpenAI / Ollama
 ```
 
 For integrations:
 
 ```bash
-pip install 'engram[mcp]'         # MCP server
-pip install 'engram[langchain]'   # LangChain
-pip install 'engram[llamaindex]'  # LlamaIndex
+pip install 'engdbram[mcp]'         # MCP server
+pip install 'engdbram[langchain]'   # LangChain
+pip install 'engdbram[llamaindex]'  # LlamaIndex
 ```
 
 ---

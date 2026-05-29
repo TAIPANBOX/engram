@@ -66,7 +66,7 @@ def test_gemini_import_error_without_sdk() -> None:
     adapter = GeminiAdapter(api_key="fake")
     with (
         patch.dict("sys.modules", {"google": None, "google.genai": None}),
-        pytest.raises(ImportError, match="engram\\[gemini\\]"),
+        pytest.raises(ImportError, match=r"engdbram\[gemini\]"),
     ):
         adapter._get_client()
 
@@ -161,7 +161,7 @@ def test_deepseek_import_error_without_sdk() -> None:
     adapter = DeepSeekAdapter(api_key="fake")
     with (
         patch.dict("sys.modules", {"openai": None}),
-        pytest.raises(ImportError, match="engram\\[openai\\]"),
+        pytest.raises(ImportError, match=r"engdbram\[openai\]"),
     ):
         adapter._get_client()
 

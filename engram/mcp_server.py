@@ -20,7 +20,7 @@ def _build_server(mem: Any) -> Any:
     try:
         from mcp.server.fastmcp import FastMCP  # type: ignore[import-not-found]
     except ImportError as exc:
-        raise ImportError("MCP SDK not installed. Run: pip install 'engram[mcp]'") from exc
+        raise ImportError("MCP SDK not installed. Run: pip install 'engdbram[mcp]'") from exc
 
     mcp: Any = FastMCP("engram")
 

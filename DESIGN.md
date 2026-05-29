@@ -406,7 +406,7 @@ The novelty is in the **combination + DX**, not any single mechanism in isolatio
 - ✅ **Reflection trigger heuristics** — resolved: configurable N (episodes since last reflection) + optional idle-time threshold in `DecayConfig`.
 - ✅ **Decay λ** — resolved: default tuned from benchmark; user-configurable via `DecayConfig`.
 - ✅ **Multi-agent / shared memory** — resolved ahead of schedule: `agent_id` parameter added in v1. Each `Engram(agent_id=...)` instance scopes reads/writes; cross-agent recall available via `recall(cross_agent=True)`.
-- ✅ **Encryption-at-rest** — resolved: optional SQLCipher via `Engram(key="passphrase")` + `pip install 'engram[encryption]'`. Supports `rekey()` and encrypted `backup()`. Plain (no-key) databases unchanged.
+- ✅ **Encryption-at-rest** — resolved: optional SQLCipher via `Engram(key="passphrase")` + `pip install 'engdbram[encryption]'`. Supports `rekey()` and encrypted `backup()`. Plain (no-key) databases unchanged.
 
 ---
 
