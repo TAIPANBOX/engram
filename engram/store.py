@@ -310,8 +310,7 @@ class Store:
         """
         if self._agent_id is not None:
             rows: list[Any] = self._conn.execute(
-                "SELECT rowid, id FROM episodes "
-                "WHERE importance_score < ? AND agent_id = ?",
+                "SELECT rowid, id FROM episodes WHERE importance_score < ? AND agent_id = ?",
                 (threshold, self._agent_id),
             ).fetchall()
         else:

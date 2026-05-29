@@ -128,9 +128,7 @@ def test_hybrid_honors_as_of(tmp_path) -> None:
         # With as_of mid-window, only the old one.
         ids_then = {
             r.episode.id
-            for r in mem.recall(
-                "zzzhybrid", k=5, mode="hybrid", as_of=t_old + timedelta(days=1)
-            )
+            for r in mem.recall("zzzhybrid", k=5, mode="hybrid", as_of=t_old + timedelta(days=1))
         }
         assert ids_then == {old_id}
 

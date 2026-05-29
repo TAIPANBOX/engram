@@ -180,9 +180,7 @@ class AsyncEngram:
             source=source,
         )
 
-    async def timeline(
-        self, entity: str, *, as_of: datetime | None = None
-    ) -> list[Fact]:
+    async def timeline(self, entity: str, *, as_of: datetime | None = None) -> list[Fact]:
         """Async version of :meth:`~engram.core.Engram.timeline`."""
         return await asyncio.to_thread(self._engram.timeline, entity, as_of=as_of)
 

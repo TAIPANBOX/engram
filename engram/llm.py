@@ -52,7 +52,7 @@ def _wrap_observations(episodes: list[Episode]) -> str:
     for i, ep in enumerate(episodes, start=1):
         # The contents are not escaped; the model is instructed to treat
         # anything between the tags as data, including literal tag-like text.
-        parts.append(f"<observation idx=\"{i}\">{ep.content}</observation>")
+        parts.append(f'<observation idx="{i}">{ep.content}</observation>')
     return "\n".join(parts)
 
 
