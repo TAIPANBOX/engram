@@ -68,3 +68,20 @@ def test_cache_size_applied(tmp_path: object) -> None:
         row = mem._conn.execute("PRAGMA cache_size").fetchone()
         # SQLite may return negative (KB) or positive (pages); either -32000 or a large positive
         assert int(row[0]) != 0
+
+
+def test_migrate_same_dim_is_idempotent(conn: sqlite3.Connection) -> None:
+    """Re-running migrate with the same dimension must succeed silently."""
+    migrate(conn, dim=384)
+    migrate(conn, dim=384)  # no error
+
+
+def test_migrate_rejects_dimension_mismatch(conn: sqlite3.Connection) -> None:
+    """Re-opening a store with a different embedder dim must fail loudly.
+
+    The vec0 table bakes its dimension in at creation; a silent mismatch
+    would corrupt vector search, so migrate() raises ValueError instead.
+    """
+    migrate(conn, dim=384)
+    with pytest.raises(ValueError, match="dimension mismatch"):
+        migrate(conn, dim=768)

@@ -54,3 +54,23 @@ jobs:
 
       - name: Run Pytest
         run: pytest
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install package + pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev,langchain,llamaindex] pip-audit
+
+      - name: Audit dependencies (pip-audit)
+        # Checks the installed environment against known CVEs (PyPI advisory DB).
+        run: pip-audit --skip-editable

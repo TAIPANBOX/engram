@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import sqlite3
 
 import sqlite_vec  # type: ignore[import-untyped]
@@ -118,6 +119,20 @@ def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
     conn.execute(
         f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_episodes USING vec0(embedding float[{dim}])"
     )
+
+    # Guard against re-opening an existing store with a different embedder:
+    # the vec0 dimension is immutable, so a mismatch would silently corrupt
+    # search (inserts/queries with wrong-size vectors). Fail loudly instead.
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'vec_episodes'").fetchone()
+    if row is not None and row[0]:
+        match = re.search(r"float\[(\d+)\]", row[0])
+        if match is not None and int(match.group(1)) != dim:
+            raise ValueError(
+                f"embedding dimension mismatch: this store was created with "
+                f"dim={match.group(1)}, but the current embedder produces dim={dim}. "
+                f"Open the store with the original embedder model, or export and "
+                f"re-import to re-embed with the new model."
+            )
 
     # FTS5 full-text index over episode content (added in v2.1).
     conn.execute(
