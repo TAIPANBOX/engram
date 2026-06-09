@@ -52,3 +52,12 @@ See [Roadmap in README.md](README.md#roadmap) for planned features. Good first c
 - New mandatory dependencies
 - Features that require a running server
 - LLM calls at write time
+
+## Releasing (maintainers)
+
+Releases are fully automated via `release.yml` (OIDC trusted publishing — no PyPI tokens):
+
+1. Move the `[Unreleased]` notes in [CHANGELOG.md](CHANGELOG.md) under a new version heading.
+2. Bump `version` in `pyproject.toml` (SemVer).
+3. `git tag vX.Y.Z && git push --tags` — CI verifies the tag matches `pyproject.toml`
+   and publishes `engdbram` to PyPI.
