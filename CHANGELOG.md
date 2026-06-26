@@ -13,8 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   corrupting vector search (the vec0 dimension is immutable after creation).
 - CI: `security` job running `pip-audit` against the installed environment.
 - PEP 561 `py.typed` marker — downstream consumers now get Engram's type hints.
-- CI: Python 3.13 and macOS added to the test matrix; a dedicated `encryption`
-  job installs `libsqlcipher-dev` and exercises the SQLCipher path.
+- CI: Python 3.13 added to the test matrix; a dedicated `encryption` job
+  installs `libsqlcipher-dev` and exercises the SQLCipher path. (macOS is not
+  in the matrix: the hosted macOS Python lacks loadable SQLite extension
+  support that sqlite-vec requires.)
 - `release.yml` now lint/type-checks and runs the full test suite before
   publishing, so a tag on a broken commit cannot reach PyPI.
 

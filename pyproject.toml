@@ -89,6 +89,13 @@ ignore_errors = true
 module = ["sqlcipher3", "sqlcipher3.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# Optional Gemini SDK. Suppress the missing-import error when it isn't
+# installed (no inline ignore needed, so the check passes whether or not the
+# google-genai package — which ships py.typed — is present).
+module = ["google", "google.genai", "google.genai.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

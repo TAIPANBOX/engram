@@ -33,17 +33,16 @@ jobs:
         run: mypy engram
 
   test:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
         python-version: ["3.11", "3.12", "3.13"]
-        include:
-          # The selling point is single-file portability over native wheels
-          # (sqlite-vec, fastembed ONNX); smoke-test macOS too.
-          - os: macos-latest
-            python-version: "3.12"
+    # NOTE: macOS is intentionally not in the matrix. The GitHub-hosted macOS
+    # Python (actions/setup-python) is built without loadable SQLite extension
+    # support, so sqlite-vec cannot load (conn.enable_load_extension is absent).
+    # Engram runs fine on macOS with a Python that enables extensions
+    # (e.g. Homebrew's), which the hosted runner image does not provide.
     steps:
       - uses: actions/checkout@v4
 

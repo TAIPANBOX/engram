@@ -1286,7 +1286,7 @@ tests/
 - [x] v2.1 — Hybrid recall (FTS5 BM25 + cosine), `WorkingMemory`, `AsyncEngram`, `compress()`, `backup()`, `export_json` / `import_json`
 - [x] v2.1.1 — GitHub Actions CI, `DATA_FLOW.md`, tunable `k_inner` / `candidate_limit`, adapter history hydration, PyPI distribution renamed to `engdbram`
 - [x] v2.1.2 — Multi-agent isolation hardening (per-agent `prune`, FTS cleanup), hybrid `as_of`, FTS5 query safety, embedder normalization, prompt-injection hardening, async API parity (`timeline(as_of=)`, `recall(k_inner=, candidate_limit=)`), tag-triggered PyPI publishing via OIDC
-- [x] v2.2 (unreleased) — Correctness pass (bitemporal `as_of` UTC coercion, `contradictions()` identical-fact fix, `import_json` re-embed + FTS, reflection abort rollback, LLM response-parse guards), thread-safety (`Store` + embedder locks for `reflect_async` / `AsyncEngram`), per-agent edge & decay scoping, PEP 561 `py.typed`, CI matrix (3.13 + macOS + encryption job), release gated on tests, `migrate()` fails loudly on embedder-dimension mismatch, `pip-audit` CI job
+- [x] v2.2 (unreleased) — Correctness pass (bitemporal `as_of` UTC coercion, `contradictions()` identical-fact fix, `import_json` re-embed + FTS, reflection abort rollback, LLM response-parse guards), thread-safety (`Store` + embedder locks for `reflect_async` / `AsyncEngram`), per-agent edge & decay scoping, PEP 561 `py.typed`, CI matrix (Python 3.13 + encryption job), release gated on tests, `migrate()` fails loudly on embedder-dimension mismatch, `pip-audit` CI job
 
 ---
 

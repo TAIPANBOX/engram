@@ -270,7 +270,7 @@ class GeminiAdapter:
 
     def _get_client(self) -> Any:
         try:
-            from google import genai  # type: ignore[import-untyped]
+            from google import genai
         except ImportError as exc:
             raise ImportError(
                 "Google Gen AI SDK not installed. Run: pip install 'engdbram[gemini]'"
@@ -284,7 +284,7 @@ class GeminiAdapter:
 
     def extract_facts(self, episodes: list[Episode]) -> tuple[list[dict[str, Any]], int]:
         """Extract facts via Gemini. Returns ([], 0) if the response is unparseable."""
-        from google.genai import types  # type: ignore[import-untyped]
+        from google.genai import types
 
         client = self._get_client()
         response = client.models.generate_content(
