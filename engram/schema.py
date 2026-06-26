@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS edges (
     relation    TEXT NOT NULL,
     weight      REAL NOT NULL DEFAULT 1.0,
     created_at  DATETIME NOT NULL,
+    agent_id    TEXT DEFAULT NULL,
     PRIMARY KEY (src_id, dst_id, relation)
 );
 
@@ -112,8 +113,16 @@ def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
     with contextlib.suppress(*_OP_ERRORS):
         conn.execute("ALTER TABLE access_log ADD COLUMN agent_id TEXT DEFAULT NULL")
 
+    # Backfill the edge agent scope (added in v2.2): episode->entity edges are
+    # private to the agent that created them, so spreading activation stays
+    # within an agent while entities/facts remain shared.
+    with contextlib.suppress(*_OP_ERRORS):
+        conn.execute("ALTER TABLE edges ADD COLUMN agent_id TEXT DEFAULT NULL")
+
     with contextlib.suppress(*_OP_ERRORS):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_agent ON episodes(agent_id)")
+    with contextlib.suppress(*_OP_ERRORS):
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_agent ON edges(agent_id)")
 
     # vec0 virtual table dimension is baked in at creation; IF NOT EXISTS guards re-runs.
     conn.execute(

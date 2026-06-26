@@ -2,19 +2,82 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import sqlite3
+import threading
 import uuid
-from datetime import datetime
-from typing import Any
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any, TypeVar, cast
 
 import numpy as np
 
 from engram.models import EmbeddedVector, Entity, Episode, Fact, ForgetResult, ReflectionRun
 
+_F = TypeVar("_F", bound=Callable[..., Any])
+_C = TypeVar("_C", bound=type)
+
+
+def _locked(method: _F) -> _F:
+    """Wrap a Store method so its whole body runs under ``self._lock``."""
+
+    @functools.wraps(method)
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return cast(_F, wrapper)
+
+
+def _synchronized(cls: _C) -> _C:
+    """Class decorator: serialise every public method behind a re-entrant lock.
+
+    The single sqlite3 connection is shared across threads (reflect_async runs
+    on a background thread; AsyncEngram dispatches to a thread pool). The lock
+    makes each Store operation atomic so concurrent callers can't interleave a
+    half-written transaction. The slow part of reflection (the LLM call) lives
+    in reflection.py, *outside* any Store method, so it never holds the lock.
+    """
+    for name, attr in list(vars(cls).items()):
+        if callable(attr) and not name.startswith("_"):
+            setattr(cls, name, _locked(attr))
+    return cls
+
 
 def _serialize(vec: EmbeddedVector) -> bytes:
     return vec.astype(np.float32).tobytes()
+
+
+def _minmax_normalize(scores: dict[str, float]) -> dict[str, float]:
+    """Min-max scale a score map into [0, 1].
+
+    When every score is equal (including the single-candidate case), they are
+    all mapped to ``1.0`` rather than ``0.0`` — a lone top hit is the *best*
+    match, so collapsing it to zero would let noise outrank it after blending.
+    """
+    if not scores:
+        return {}
+    hi = max(scores.values())
+    lo = min(scores.values())
+    if hi == lo:
+        return dict.fromkeys(scores, 1.0)
+    span = hi - lo
+    return {k: (v - lo) / span for k, v in scores.items()}
+
+
+def _iso_utc(dt: datetime) -> str:
+    """Serialise a datetime to a canonical UTC isoformat for storage/comparison.
+
+    Timestamps are compared lexicographically as TEXT in SQLite. A naive
+    ``datetime`` serialises without the ``+00:00`` offset that aware (UTC)
+    timestamps carry, which breaks ``<=`` / ``>`` ordering at the boundary and
+    silently corrupts bitemporal ``as_of`` results. Coercing naive values to
+    UTC (and converting aware values to UTC) guarantees one comparable format.
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).isoformat()
 
 
 def _distance_to_score(distance: float) -> float:
@@ -45,13 +108,21 @@ _EPISODE_COLS = (
 _ACCESS_LOG_FLUSH_SIZE = 50  # flush buffer after this many entries
 
 
+@_synchronized
 class Store:
-    """Thin wrapper around a sqlite3 connection providing episode persistence."""
+    """Thin wrapper around a sqlite3 connection providing episode persistence.
+
+    All public methods are serialised behind ``self._lock`` (see
+    :func:`_synchronized`) so the shared connection is safe to use from the
+    reflection thread and the AsyncEngram thread pool concurrently.
+    """
 
     def __init__(self, conn: sqlite3.Connection, dim: int, agent_id: str | None = None) -> None:
         self._conn = conn
         self._dim = dim
         self._agent_id = agent_id
+        # Re-entrant: some public methods call sibling public methods.
+        self._lock = threading.RLock()
         # Access log entries are buffered and written in a single transaction
         # to avoid one commit per recall result. Flushed on close() or when
         # the buffer reaches _ACCESS_LOG_FLUSH_SIZE.
@@ -68,7 +139,7 @@ class Store:
             (
                 ep.id,
                 ep.content,
-                ep.timestamp.isoformat(),
+                _iso_utc(ep.timestamp),
                 json.dumps(ep.actors),
                 json.dumps(ep.tags),
                 ep.salience,
@@ -190,20 +261,43 @@ class Store:
         self._conn.commit()
 
     def get_episodes_for_decay(self) -> list[tuple[str, float, float, datetime]]:
-        """Return minimal episode data needed by the decay job (all agents)."""
-        rows: list[Any] = self._conn.execute(
-            "SELECT id, salience, emotional_valence, timestamp FROM episodes"
-        ).fetchall()
+        """Return minimal episode data needed by the decay job.
+
+        Scoped to this store's ``agent_id`` when set, so one agent's reflection
+        recomputes only its own importance scores with its own DecayConfig —
+        symmetric with the agent-scoped :meth:`prune_episodes`.
+        """
+        if self._agent_id is not None:
+            rows: list[Any] = self._conn.execute(
+                "SELECT id, salience, emotional_valence, timestamp FROM episodes "
+                "WHERE agent_id = ?",
+                (self._agent_id,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT id, salience, emotional_valence, timestamp FROM episodes"
+            ).fetchall()
         return [
             (row[0], float(row[1]), float(row[2]), datetime.fromisoformat(row[3])) for row in rows
         ]
 
     def get_all_access_stats(self) -> dict[str, tuple[int, datetime | None]]:
-        """Return access stats for every episode including buffered entries."""
-        rows: list[Any] = self._conn.execute(
-            "SELECT memory_id, COUNT(*) AS cnt, MAX(accessed_at) AS last "
-            "FROM access_log GROUP BY memory_id"
-        ).fetchall()
+        """Return access stats per episode (incl. buffered entries).
+
+        Scoped to this store's ``agent_id`` when set, to match
+        :meth:`get_episodes_for_decay`.
+        """
+        if self._agent_id is not None:
+            rows: list[Any] = self._conn.execute(
+                "SELECT memory_id, COUNT(*) AS cnt, MAX(accessed_at) AS last "
+                "FROM access_log WHERE agent_id = ? GROUP BY memory_id",
+                (self._agent_id,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT memory_id, COUNT(*) AS cnt, MAX(accessed_at) AS last "
+                "FROM access_log GROUP BY memory_id"
+            ).fetchall()
         result: dict[str, tuple[int, datetime | None]] = {}
         for row in rows:
             last: datetime | None = datetime.fromisoformat(row[2]) if row[2] else None
@@ -241,7 +335,7 @@ class Store:
                 (
                     ep.id,
                     ep.content,
-                    ep.timestamp.isoformat(),
+                    _iso_utc(ep.timestamp),
                     json.dumps(ep.actors),
                     json.dumps(ep.tags),
                     ep.salience,
@@ -294,7 +388,7 @@ class Store:
                 f"SELECT {_EPISODE_COLS} FROM episodes "
                 f"WHERE timestamp > ? {agent_clause} "
                 "ORDER BY timestamp ASC LIMIT ?",
-                (since.isoformat(), *agent_params, limit),
+                (_iso_utc(since), *agent_params, limit),
             ).fetchall()
         return [Episode.from_row(tuple(r)) for r in rows]
 
@@ -462,10 +556,10 @@ class Store:
                 fact.subject,
                 fact.predicate,
                 fact.object,
-                fact.valid_from.isoformat(),
-                fact.valid_to.isoformat() if fact.valid_to else None,
-                fact.recorded_at.isoformat(),
-                fact.superseded_at.isoformat() if fact.superseded_at else None,
+                _iso_utc(fact.valid_from),
+                _iso_utc(fact.valid_to) if fact.valid_to else None,
+                _iso_utc(fact.recorded_at),
+                _iso_utc(fact.superseded_at) if fact.superseded_at else None,
                 fact.superseded_by,
                 fact.confidence,
                 json.dumps(fact.derived_from),
@@ -510,7 +604,7 @@ class Store:
         """Mark a fact as superseded by setting its validity end."""
         self._conn.execute(
             "UPDATE facts SET valid_to = ?, superseded_by = ?, superseded_at = ? WHERE id = ?",
-            (valid_to.isoformat(), superseded_by, valid_to.isoformat(), fact_id),
+            (_iso_utc(valid_to), superseded_by, _iso_utc(valid_to), fact_id),
         )
         self._conn.commit()
 
@@ -587,6 +681,33 @@ class Store:
                 f"SELECT {self._REFLECTION_COLS} FROM reflections ORDER BY started_at DESC LIMIT 1"
             ).fetchone()
         return ReflectionRun.from_row(tuple(row)) if row else None
+
+    def get_last_finished_reflection(self) -> ReflectionRun | None:
+        """Return the most recently *completed* reflection run for this agent.
+
+        Unlike :meth:`get_last_reflection`, this ignores runs whose
+        ``finished_at`` is NULL. The incremental-reflection window keys off this
+        so a run that aborted (e.g. an LLM error) does not advance ``since`` and
+        silently skip the episodes it never processed.
+        """
+        if self._agent_id is not None:
+            row: Any = self._conn.execute(
+                f"SELECT {self._REFLECTION_COLS} FROM reflections "
+                "WHERE agent_id = ? AND finished_at IS NOT NULL "
+                "ORDER BY started_at DESC LIMIT 1",
+                (self._agent_id,),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                f"SELECT {self._REFLECTION_COLS} FROM reflections "
+                "WHERE finished_at IS NOT NULL ORDER BY started_at DESC LIMIT 1"
+            ).fetchone()
+        return ReflectionRun.from_row(tuple(row)) if row else None
+
+    def delete_reflection(self, run_id: str) -> None:
+        """Remove a reflection run record (used to roll back an aborted run)."""
+        self._conn.execute("DELETE FROM reflections WHERE id = ?", (run_id,))
+        self._conn.commit()
 
     def get_reflection_by_id(self, run_id: str) -> ReflectionRun | None:
         """Fetch a specific reflection run by id."""
@@ -710,28 +831,47 @@ class Store:
         weight: float,
         created_at: datetime,
     ) -> None:
-        """Insert or accumulate a graph edge (Hebbian weight reinforcement)."""
+        """Insert or accumulate a graph edge (Hebbian weight reinforcement).
+
+        The edge is stamped with this store's ``agent_id`` so spreading
+        activation can stay within an agent's own episode graph.
+        """
         self._conn.execute(
             """
-            INSERT INTO edges (src_id, dst_id, relation, weight, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO edges (src_id, dst_id, relation, weight, created_at, agent_id)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(src_id, dst_id, relation)
             DO UPDATE SET weight = weight + excluded.weight
             """,
-            (src_id, dst_id, relation, weight, created_at.isoformat()),
+            (src_id, dst_id, relation, weight, created_at.isoformat(), self._agent_id),
         )
         self._conn.commit()
 
     def get_neighbors(self, node_id: str) -> list[tuple[str, float]]:
-        """Return (neighbor_id, weight) from both directions of all edges."""
-        rows: list[Any] = self._conn.execute(
-            """
-            SELECT dst_id, weight FROM edges WHERE src_id = ?
-            UNION
-            SELECT src_id, weight FROM edges WHERE dst_id = ?
-            """,
-            (node_id, node_id),
-        ).fetchall()
+        """Return (neighbor_id, weight) from both directions of all edges.
+
+        When this store is scoped to an ``agent_id``, only that agent's edges
+        are traversed, so spreading activation can't hop through another
+        agent's episodes. An unscoped store sees every edge.
+        """
+        if self._agent_id is not None:
+            rows: list[Any] = self._conn.execute(
+                """
+                SELECT dst_id, weight FROM edges WHERE src_id = ? AND agent_id = ?
+                UNION
+                SELECT src_id, weight FROM edges WHERE dst_id = ? AND agent_id = ?
+                """,
+                (node_id, self._agent_id, node_id, self._agent_id),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """
+                SELECT dst_id, weight FROM edges WHERE src_id = ?
+                UNION
+                SELECT src_id, weight FROM edges WHERE dst_id = ?
+                """,
+                (node_id, node_id),
+            ).fetchall()
         return [(str(r[0]), float(r[1])) for r in rows]
 
     def get_episodes_by_ids(self, ids: list[str], agent_id: str | None = None) -> list[Episode]:
@@ -784,12 +924,12 @@ class Store:
             params: tuple[Any, ...] = (
                 _serialize(query_embedding),
                 k_inner,
-                as_of.isoformat(),
+                _iso_utc(as_of),
                 agent_id,
             )
         else:
             agent_clause = ""
-            params = (_serialize(query_embedding), k_inner, as_of.isoformat())
+            params = (_serialize(query_embedding), k_inner, _iso_utc(as_of))
 
         rows: list[Any] = self._conn.execute(
             f"""
@@ -853,7 +993,7 @@ class Store:
             extra_params = (*extra_params, agent_id)
         if as_of is not None:
             extra_clause += " AND e.timestamp <= ?"
-            extra_params = (*extra_params, as_of.isoformat())
+            extra_params = (*extra_params, _iso_utc(as_of))
 
         # --- Vector candidates ---
         vec_params: tuple[Any, ...] = (
@@ -885,12 +1025,7 @@ class Store:
             str(row[0]): Episode.from_row(tuple(row[:10])) for row in vec_rows
         }
 
-        max_vec = max(vec_scores.values(), default=1.0)
-        min_vec = min(vec_scores.values(), default=0.0)
-        range_vec = max_vec - min_vec or 1.0
-        norm_vec: dict[str, float] = {
-            eid: (s - min_vec) / range_vec for eid, s in vec_scores.items()
-        }
+        norm_vec = _minmax_normalize(vec_scores)
 
         # --- FTS candidates (BM25, lower is better — negate to make higher = better) ---
         fts_query = _escape_fts5_query(query)
@@ -908,12 +1043,7 @@ class Store:
         ).fetchall()
 
         fts_scores: dict[str, float] = {str(row[0]): float(row[1]) for row in fts_rows}
-        max_fts = max(fts_scores.values(), default=1.0)
-        min_fts = min(fts_scores.values(), default=0.0)
-        range_fts = max_fts - min_fts or 1.0
-        norm_fts: dict[str, float] = {
-            eid: (s - min_fts) / range_fts for eid, s in fts_scores.items()
-        }
+        norm_fts = _minmax_normalize(fts_scores)
 
         # --- Merge and rank ---
         all_ids = set(norm_vec) | set(norm_fts)
@@ -952,7 +1082,7 @@ class Store:
             "  AND valid_from <= ? "
             "  AND (valid_to IS NULL OR valid_to > ?)"
             " ORDER BY valid_from ASC",
-            (subject, as_of.isoformat(), as_of.isoformat()),
+            (subject, _iso_utc(as_of), _iso_utc(as_of)),
         ).fetchall()
         return [Fact.from_row(tuple(r)) for r in rows]
 

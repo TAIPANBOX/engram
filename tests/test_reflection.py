@@ -82,6 +82,49 @@ def test_reflect_second_run_processes_only_new_episodes() -> None:
         assert run2.episodes_processed == 1  # only the new episode
 
 
+class _FailingLLM:
+    """LLM stub whose extract_facts raises, simulating an API/structural error."""
+
+    model_name = "failing"
+
+    def extract_facts(self, episodes):  # type: ignore[no-untyped-def]
+        raise RuntimeError("simulated LLM failure")
+
+    def summarise(self, episodes):  # type: ignore[no-untyped-def]
+        raise RuntimeError("simulated LLM failure")
+
+
+def test_reflect_failure_does_not_leave_dangling_run() -> None:
+    """A reflection that aborts mid-extraction must roll its run record back."""
+    with Engram(path=":memory:", llm=_FailingLLM()) as mem:
+        mem.observe("Ivan works at Acme")
+        with pytest.raises(RuntimeError):
+            mem.reflect()
+        # No run record should survive — neither finished nor dangling.
+        assert mem._store.get_last_reflection() is None
+        assert mem._store.get_last_finished_reflection() is None
+
+
+def test_reflect_after_failure_reprocesses_skipped_episodes() -> None:
+    """Episodes observed before a failed reflection must still be processed by the
+    next successful run (the failed run must not advance the incremental window)."""
+    with Engram(path=":memory:", llm=_FailingLLM()) as mem:
+        mem.observe("Ivan moved to Globex")
+        with pytest.raises(RuntimeError):
+            mem.reflect()
+
+        # Swap in a working LLM and reflect again.
+        mem._llm = StubLLMAdapter(
+            facts=[
+                {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
+            ]
+        )
+        run = mem.reflect()
+        # The episode from before the failure is reprocessed, not skipped.
+        assert run.episodes_processed == 1
+        assert run.facts_extracted == 1
+
+
 def test_reflect_contradiction_detection() -> None:
     """When the LLM extracts a new (s,p) that already exists, close the old fact."""
     stub_acme = StubLLMAdapter(
@@ -205,6 +248,13 @@ def test_contradictions_detects_conflict(mem: Engram) -> None:
     assert len(pairs) == 1
     subjects = {pairs[0][0].object, pairs[0][1].object}
     assert subjects == {"Acme", "Globex"}
+
+
+def test_contradictions_ignores_identical_facts(mem: Engram) -> None:
+    """Two active facts with the same (subject, predicate, object) agree — not a conflict."""
+    mem.assert_fact("Ivan", "works_at", "Globex")
+    mem.assert_fact("Ivan", "works_at", "Globex")  # same object: agreement, not contradiction
+    assert mem.contradictions() == []
 
 
 def test_contradictions_resolved_after_reflect() -> None:

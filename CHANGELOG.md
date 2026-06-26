@@ -12,6 +12,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opened with an embedder of a different dimension, instead of silently
   corrupting vector search (the vec0 dimension is immutable after creation).
 - CI: `security` job running `pip-audit` against the installed environment.
+- PEP 561 `py.typed` marker — downstream consumers now get Engram's type hints.
+- CI: Python 3.13 added to the test matrix; a dedicated `encryption` job
+  installs `libsqlcipher-dev` and exercises the SQLCipher path. (macOS is not
+  in the matrix: the hosted macOS Python lacks loadable SQLite extension
+  support that sqlite-vec requires.)
+- `release.yml` now lint/type-checks and runs the full test suite before
+  publishing, so a tag on a broken commit cannot reach PyPI.
+
+### Fixed
+- Bitemporal `as_of` / `since` comparisons are now correct for naive (tz-less)
+  datetimes. Timestamps are compared as TEXT in SQLite; a naive `as_of`
+  serialised without the `+00:00` offset and flipped the boundary comparison,
+  silently returning the wrong point-in-time facts/episodes. All stored and
+  queried datetimes are now coerced to a canonical UTC isoformat.
+- `contradictions()` no longer reports two facts with identical
+  `(subject, predicate, object)` as a conflict — that is agreement, not a
+  contradiction.
+- `import_json()` now re-embeds episode content and repopulates the FTS index
+  instead of writing zero vectors, so imported episodes are actually findable
+  via vector and hybrid recall.
+- A reflection run that aborts mid-extraction (e.g. an LLM/API error) is now
+  rolled back instead of lingering unfinished; the incremental window keys off
+  the last *completed* run, so episodes are no longer silently skipped after a
+  failure.
+- Anthropic/OpenAI response parsing degrades to "no facts" on structurally
+  surprising responses (empty content, a leading `tool_use` block) instead of
+  raising `IndexError`/`AttributeError` mid-reflection.
+- The shared SQLite connection is now serialised behind a re-entrant lock
+  (`Store`) and the embedder cache behind its own lock, making `reflect_async`
+  and `AsyncEngram`'s thread-pool dispatch safe against interleaved writes.
+- Hybrid recall no longer collapses a lone candidate's normalised score to
+  `0.0`; an only/equal-scored hit now maps to `1.0`.
+- Importance decay clamps elapsed time at 0 so clock skew can't flip the
+  exponent positive and blow the score up.
+- Spreading-activation edges are now scoped per agent: in a shared store,
+  activation no longer hops through another agent's episodes (at `depth>=3`
+  this could perturb an agent's own ranking). Entities and facts stay shared,
+  so cross-agent semantic memory and global `forget_entity()` are unchanged.
+- Importance decay is now scoped to the calling agent, symmetric with the
+  agent-scoped prune: one agent's `reflect()`/`decay()` no longer recomputes
+  another agent's scores with the wrong `DecayConfig`.
+
+### Changed
+- New nullable `agent_id` column on the `edges` table (auto-migrated; existing
+  stores backfill to `NULL`). JSON export/import now round-trips it.
 
 ## [2.1.2] - 2026-05-29
 

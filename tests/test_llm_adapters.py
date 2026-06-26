@@ -365,6 +365,45 @@ def test_user_message_wraps_observations_in_tags() -> None:
     assert "<observation" in msg.split("ignore previous instructions")[0]
 
 
+def test_anthropic_text_handles_empty_and_non_text_blocks() -> None:
+    """A response with no content, or a leading non-text (tool_use) block, must
+    degrade to '' instead of raising IndexError/AttributeError mid-reflection."""
+    from engram.llm import _anthropic_text
+
+    assert _anthropic_text(SimpleNamespace(content=[])) == ""
+    assert _anthropic_text(SimpleNamespace(content=None)) == ""
+    tool_block = SimpleNamespace(type="tool_use", input={})  # no .text
+    text_block = SimpleNamespace(text="[]")
+    assert _anthropic_text(SimpleNamespace(content=[tool_block, text_block])) == "[]"
+
+
+def test_openai_text_handles_empty_choices_and_null_content() -> None:
+    from engram.llm import _openai_text
+
+    assert _openai_text(SimpleNamespace(choices=[])) == ""
+    assert _openai_text(SimpleNamespace(choices=None)) == ""
+    msg = SimpleNamespace(message=SimpleNamespace(content=None))
+    assert _openai_text(SimpleNamespace(choices=[msg])) == ""
+
+
+def test_anthropic_extract_facts_survives_tool_use_response() -> None:
+    """End-to-end: a structurally surprising Anthropic response yields no facts,
+    not an exception."""
+    from engram.llm import AnthropicAdapter
+
+    adapter = AnthropicAdapter()
+    mock_client = MagicMock()
+    response = SimpleNamespace(
+        content=[SimpleNamespace(type="tool_use", input={})],
+        usage=SimpleNamespace(input_tokens=3, output_tokens=0),
+    )
+    mock_client.messages.create.return_value = response
+    with patch.object(adapter, "_get_client", return_value=mock_client):
+        facts, tokens = adapter.extract_facts(EPISODES)
+    assert facts == []
+    assert tokens == 3
+
+
 def test_reflection_clamps_stub_confidence_above_max() -> None:
     """A test stub bypassing _parse_facts_json must still have confidence
     clamped before facts hit the store."""

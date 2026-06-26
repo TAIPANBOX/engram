@@ -64,6 +64,30 @@ def _build_user_message(episodes: list[Episode]) -> str:
     return "Extract facts from these observations:\n" + _wrap_observations(episodes)
 
 
+def _anthropic_text(response: Any) -> str:
+    """Pull the first text block out of an Anthropic Messages response.
+
+    Returns "" if the content list is empty or its first block has no text
+    (e.g. a tool_use block), so a structurally surprising response degrades to
+    "no facts" instead of raising IndexError/AttributeError mid-reflection.
+    """
+    content = getattr(response, "content", None) or []
+    for block in content:
+        text = getattr(block, "text", None)
+        if isinstance(text, str):
+            return text
+    return ""
+
+
+def _openai_text(response: Any) -> str:
+    """Pull the assistant message text out of an OpenAI chat response, or ""."""
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return ""
+    message = getattr(choices[0], "message", None)
+    return getattr(message, "content", None) or ""
+
+
 def _parse_facts_json(text: str) -> list[dict[str, Any]]:
     """Parse LLM JSON response. Returns [] on any parse or validation error.
 
@@ -154,7 +178,7 @@ class AnthropicAdapter:
             messages=[{"role": "user", "content": _build_user_message(episodes)}],
         )
         tokens = response.usage.input_tokens + response.usage.output_tokens
-        return _parse_facts_json(response.content[0].text), tokens
+        return _parse_facts_json(_anthropic_text(response)), tokens
 
     def summarise(self, episodes: list[Episode]) -> tuple[str, int]:
         """Summarise episodes into one paragraph via Claude."""
@@ -167,7 +191,7 @@ class AnthropicAdapter:
             messages=[{"role": "user", "content": _build_summary_message(episodes)}],
         )
         tokens = response.usage.input_tokens + response.usage.output_tokens
-        return response.content[0].text.strip(), tokens
+        return _anthropic_text(response).strip(), tokens
 
 
 class OpenAIAdapter:
@@ -211,7 +235,7 @@ class OpenAIAdapter:
             ],
         )
         tokens = response.usage.total_tokens if response.usage else 0
-        return _parse_facts_json(response.choices[0].message.content or ""), tokens
+        return _parse_facts_json(_openai_text(response)), tokens
 
     def summarise(self, episodes: list[Episode]) -> tuple[str, int]:
         """Summarise episodes into one paragraph via OpenAI."""
@@ -225,7 +249,7 @@ class OpenAIAdapter:
             ],
         )
         tokens = response.usage.total_tokens if response.usage else 0
-        return (response.choices[0].message.content or "").strip(), tokens
+        return _openai_text(response).strip(), tokens
 
 
 class GeminiAdapter:
@@ -246,7 +270,7 @@ class GeminiAdapter:
 
     def _get_client(self) -> Any:
         try:
-            from google import genai  # type: ignore[import-untyped]
+            from google import genai
         except ImportError as exc:
             raise ImportError(
                 "Google Gen AI SDK not installed. Run: pip install 'engdbram[gemini]'"
@@ -260,7 +284,7 @@ class GeminiAdapter:
 
     def extract_facts(self, episodes: list[Episode]) -> tuple[list[dict[str, Any]], int]:
         """Extract facts via Gemini. Returns ([], 0) if the response is unparseable."""
-        from google.genai import types  # type: ignore[import-untyped]
+        from google.genai import types
 
         client = self._get_client()
         response = client.models.generate_content(

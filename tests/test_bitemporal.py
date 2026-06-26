@@ -171,6 +171,32 @@ def test_get_facts_as_of_unknown_subject_returns_empty() -> None:
     assert store.get_facts_as_of("nobody", _T1) == []
 
 
+def test_get_facts_as_of_naive_datetime_at_boundary() -> None:
+    """A naive (tz-less) as_of must compare correctly against aware-UTC storage.
+
+    Regression: timestamps are compared as TEXT, and a naive datetime serialises
+    without the '+00:00' offset that stored aware timestamps carry, which flipped
+    the boundary comparison and silently dropped facts valid exactly at as_of.
+    """
+    store = _make_store()
+    _make_fact(
+        store, "f1", "Ivan", "works_at", "Acme", valid_from=_T0, valid_to=_T2, superseded_by="f2"
+    )
+    naive_t1 = _T1.replace(tzinfo=None)  # valid_from < naive_t1 < valid_to
+    facts = store.get_facts_as_of("Ivan", naive_t1)
+    assert len(facts) == 1
+    assert facts[0].object == "Acme"
+
+
+def test_search_as_of_naive_datetime_inclusive_boundary() -> None:
+    """An episode at exactly a naive as_of is included (boundary correctness)."""
+    store = _make_store()
+    _insert_ep(store, "e1", _T1, content="boundary episode")
+    vec = np.zeros(384, dtype=np.float32)
+    results = store.search_episodes_as_of(vec, k=5, as_of=_T1.replace(tzinfo=None))
+    assert any(ep.id == "e1" for ep, _, _ in results)
+
+
 # ------------------------------------------------------------------
 # timeline via public Engram API
 # ------------------------------------------------------------------
