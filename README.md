@@ -5,7 +5,7 @@
 [![PyPI version](https://badge.fury.io/py/engdbram.svg)](https://badge.fury.io/py/engdbram)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-357%20passed-green)](tests/)
+[![Tests](https://img.shields.io/badge/tests-359%20passed-green)](tests/)
 
 ---
 
@@ -846,7 +846,7 @@ counts = mem.import_json("./agent_dump.json", merge=True)  # skip duplicates sil
 
 ### `decay() → int`
 
-Recompute importance scores for all episodes using the Ebbinghaus formula. Called automatically by `reflect()`. Returns the number of episodes updated.
+Recompute importance scores using the Ebbinghaus formula. Scoped to this instance's `agent_id` when set (all episodes when unscoped). Called automatically by `reflect()`. Returns the number of episodes updated.
 
 Uses a single SQL `GROUP BY` fetch and a single `executemany` update — O(1) SQL round-trips regardless of episode count.
 
@@ -1237,7 +1237,7 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (357 tests)
+### Test coverage (359 tests)
 
 ```
 tests/
@@ -1286,6 +1286,7 @@ tests/
 - [x] v2.1 — Hybrid recall (FTS5 BM25 + cosine), `WorkingMemory`, `AsyncEngram`, `compress()`, `backup()`, `export_json` / `import_json`
 - [x] v2.1.1 — GitHub Actions CI, `DATA_FLOW.md`, tunable `k_inner` / `candidate_limit`, adapter history hydration, PyPI distribution renamed to `engdbram`
 - [x] v2.1.2 — Multi-agent isolation hardening (per-agent `prune`, FTS cleanup), hybrid `as_of`, FTS5 query safety, embedder normalization, prompt-injection hardening, async API parity (`timeline(as_of=)`, `recall(k_inner=, candidate_limit=)`), tag-triggered PyPI publishing via OIDC
+- [x] v2.2 (unreleased) — Correctness pass (bitemporal `as_of` UTC coercion, `contradictions()` identical-fact fix, `import_json` re-embed + FTS, reflection abort rollback, LLM response-parse guards), thread-safety (`Store` + embedder locks for `reflect_async` / `AsyncEngram`), per-agent edge & decay scoping, PEP 561 `py.typed`, CI matrix (3.13 + macOS + encryption job), release gated on tests, `migrate()` fails loudly on embedder-dimension mismatch, `pip-audit` CI job
 
 ---
 
