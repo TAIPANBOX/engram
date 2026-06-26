@@ -141,3 +141,17 @@ def test_hybrid_handles_fts5_special_chars(tmp_path) -> None:
         # These previously raised sqlite3.OperationalError via raw MATCH.
         for q in ["a*b", "(quoted)", "x OR y", "foo - bar", 'q"uote']:
             mem.recall(q, k=3, mode="hybrid")
+
+
+def test_hybrid_single_candidate_not_collapsed_to_zero(tmp_path) -> None:
+    """A lone matching episode must not normalise to score 0 (regression).
+
+    With one vector candidate and no FTS hit, min-max normalisation used to map
+    the sole hit to 0.0, sinking the only relevant result.
+    """
+    path = str(tmp_path / "single.engram")
+    with Engram(path=path) as mem:
+        mem.observe("a uniquely worded statement about quasars")
+        results = mem.recall("quasars", k=3, mode="hybrid")
+        assert results
+        assert results[0].score > 0.0

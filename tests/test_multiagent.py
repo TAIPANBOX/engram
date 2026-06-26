@@ -172,6 +172,65 @@ def test_reflect_incremental_per_agent(shared_path):
 
 
 # ------------------------------------------------------------------
+# Graph edges are private per agent; entities stay shared
+# ------------------------------------------------------------------
+
+
+def test_entities_shared_but_edges_scoped_per_agent(shared_path):
+    """Two agents share entity rows (semantic memory) but not episode edges, so
+    spreading activation can't hop through another agent's episodes."""
+    from datetime import UTC, datetime
+
+    a = Engram(path=shared_path, agent_id="agent-a")
+    b = Engram(path=shared_path, agent_id="agent-b")
+    now = datetime.now(tz=UTC)
+
+    ent_a = a._store.find_or_create_entity("Ivan", "person", now)
+    ent_b = b._store.find_or_create_entity("Ivan", "person", now)
+    assert ent_a.id == ent_b.id  # entity is shared across agents
+
+    a._store.insert_edge("ep-a", ent_a.id, "mentions", weight=1.0, created_at=now)
+    b._store.insert_edge("ep-b", ent_b.id, "mentions", weight=1.0, created_at=now)
+
+    # Neighbors of the shared entity are scoped to the querying agent's edges.
+    neighbors_a = {n for n, _ in a._store.get_neighbors(ent_a.id)}
+    neighbors_b = {n for n, _ in b._store.get_neighbors(ent_b.id)}
+    assert neighbors_a == {"ep-a"}
+    assert neighbors_b == {"ep-b"}
+
+    # An unscoped store still sees every edge.
+    with Engram(path=shared_path) as global_mem:
+        assert {n for n, _ in global_mem._store.get_neighbors(ent_a.id)} == {"ep-a", "ep-b"}
+
+    a.close()
+    b.close()
+
+
+# ------------------------------------------------------------------
+# Decay is scoped to the calling agent
+# ------------------------------------------------------------------
+
+
+def test_decay_does_not_touch_other_agents_scores(shared_path):
+    """One agent's decay must not recompute another agent's importance scores."""
+    with (
+        Engram(path=shared_path, agent_id="agent-a") as a,
+        Engram(path=shared_path, agent_id="agent-b") as b,
+    ):
+        a.observe("agent-a event")
+        b.observe("agent-b event")
+        b_ep_id = b._store.get_episodes_since(None)[0].id
+        b._store.update_importance(b_ep_id, 0.42)  # sentinel value
+
+        updated = a.decay()
+        assert updated == 1  # only agent-a's single episode
+
+        refreshed = b._store.get_episode(b_ep_id)
+        assert refreshed is not None
+        assert refreshed.importance_score == 0.42  # untouched by agent-a's decay
+
+
+# ------------------------------------------------------------------
 # list_agents()
 # ------------------------------------------------------------------
 

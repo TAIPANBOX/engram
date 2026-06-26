@@ -45,7 +45,9 @@ def compute_importance(
         Importance score (float, lower-bounded only by the formula; can be negative
         if emotional_valence is strongly negative and salience/access are low).
     """
-    elapsed_days = (now - last_access).total_seconds() / 86400.0
+    # Clamp to 0 so clock skew or a last_access recorded slightly ahead of `now`
+    # cannot flip the exponent positive and blow the decay term up.
+    elapsed_days = max(0.0, (now - last_access).total_seconds() / 86400.0)
     decay_term = salience * math.exp(-cfg.lambda_ * elapsed_days)
     access_term = cfg.alpha * math.log1p(access_count)
     emotion_term = cfg.beta * emotional_valence

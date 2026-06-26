@@ -50,6 +50,17 @@ jobs:
             exit 1
           fi
 
+      - name: Install package + dev tooling
+        run: pip install -e .[dev,langchain,llamaindex]
+
+      - name: Lint, type-check, and test before publishing
+        # A tag pushed on a broken commit must not publish to PyPI.
+        run: |
+          ruff check .
+          ruff format --check .
+          mypy engram
+          pytest
+
       - name: Build distributions
         run: python -m build
 

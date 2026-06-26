@@ -5,7 +5,7 @@
 [![PyPI version](https://badge.fury.io/py/engdbram.svg)](https://badge.fury.io/py/engdbram)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-344%20passed-green)](tests/)
+[![Tests](https://img.shields.io/badge/tests-357%20passed-green)](tests/)
 
 ---
 
@@ -1237,7 +1237,7 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (344 tests)
+### Test coverage (357 tests)
 
 ```
 tests/
@@ -1251,7 +1251,7 @@ tests/
   test_store_facts.py    fact CRUD + assert_fact()
   test_reflection.py     reflection loop (stub LLM), cost_tokens, reflect_async
   test_graph.py          entity/edge CRUD + spreading recall
-  test_bitemporal.py     as_of + timeline
+  test_bitemporal.py     as_of + timeline (incl. naive-datetime boundaries)
   test_forget.py         forget(), forget_entity(), GDPR cascade
   test_cli.py            all CLI subcommands + --agent-id + --cross-agent
   test_multiagent.py     agent_id scoping, shared facts, cross-agent recall
@@ -1259,8 +1259,10 @@ tests/
   test_export.py         export_json / import_json round-trip + merge mode
   test_backup.py         backup() — hot copy, openable as Engram
   test_working_memory.py WorkingMemory LRU, eviction, flush, spillover
-  test_async_engram.py   AsyncEngram — all async methods
+  test_async_engram.py   AsyncEngram — all async methods + concurrency safety
   test_compress.py       compress() — LLM summarisation, batching, no-op paths
+  test_encryption.py     SQLCipher encryption-at-rest + rekey()
+  test_llm_adapters.py   all LLM adapters + response-parsing edge cases
   test_integrations.py   MCP, LangChain, LlamaIndex
   test_benchmarks.py     benchmark infrastructure
 ```

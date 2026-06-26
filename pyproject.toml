@@ -17,7 +17,9 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
 ]
 dependencies = [
     "sqlite-vec>=0.1.0",
@@ -40,6 +42,7 @@ dev = [
     "mcp>=1.0",
     "langchain-core>=0.1",
     "llama-index-core>=0.10",
+    "google-genai>=1.0.0",
 ]
 
 [project.scripts]
@@ -50,9 +53,13 @@ engram-bench = "engram.benchmarks.cli:main"
 Homepage = "https://github.com/TAIPANBOX/engram"
 Repository = "https://github.com/TAIPANBOX/engram"
 Documentation = "https://github.com/TAIPANBOX/engram#readme"
+Changelog = "https://github.com/TAIPANBOX/engram/blob/main/CHANGELOG.md"
+Issues = "https://github.com/TAIPANBOX/engram/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["engram"]
+# Ship the PEP 561 marker so downstream consumers get our type hints.
+force-include = { "engram/py.typed" = "engram/py.typed" }
 
 [tool.ruff]
 line-length = 100

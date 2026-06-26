@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
@@ -52,6 +53,10 @@ class Embedder:
         self._cache: OrderedDict[str, np.ndarray] = OrderedDict()
         self._cache_size = cache_size
         self._dim: int | None = _KNOWN_DIMS.get(model_name)
+        # Guards the LRU cache and lazy model init: AsyncEngram embeds from a
+        # thread pool, so concurrent embed() calls would otherwise corrupt the
+        # OrderedDict or double-initialise the ONNX model.
+        self._lock = threading.Lock()
 
     def _get_model(self) -> _TextEmbedding:
         if self._model is None:
@@ -66,19 +71,20 @@ class Embedder:
         The result is served from the LRU cache when the same text has been
         embedded before, avoiding ONNX inference overhead on repeated queries.
         """
-        cached = self._cache.get(text)
-        if cached is not None:
+        with self._lock:
+            cached = self._cache.get(text)
+            if cached is not None:
+                self._cache.move_to_end(text)
+                return cached
+            result = next(iter(self._get_model().embed([text])))
+            vec = _l2_normalize(np.array(result, dtype=np.float32))
+            if self._dim is None:
+                self._dim = int(vec.shape[0])
+            self._cache[text] = vec
             self._cache.move_to_end(text)
-            return cached
-        result = next(iter(self._get_model().embed([text])))
-        vec = _l2_normalize(np.array(result, dtype=np.float32))
-        if self._dim is None:
-            self._dim = int(vec.shape[0])
-        self._cache[text] = vec
-        self._cache.move_to_end(text)
-        if len(self._cache) > self._cache_size:
-            self._cache.popitem(last=False)
-        return vec
+            if len(self._cache) > self._cache_size:
+                self._cache.popitem(last=False)
+            return vec
 
     def embed_batch(self, texts: list[str]) -> list[np.ndarray]:
         """Embed multiple strings using a single ONNX inference pass.
@@ -90,35 +96,36 @@ class Embedder:
         if not texts:
             return []
 
-        # Collect results in order, run inference only for cache misses.
-        result: list[np.ndarray | None] = [None] * len(texts)
-        missing_indices: list[int] = []
-        missing_texts: list[str] = []
+        with self._lock:
+            # Collect results in order, run inference only for cache misses.
+            result: list[np.ndarray | None] = [None] * len(texts)
+            missing_indices: list[int] = []
+            missing_texts: list[str] = []
 
-        for i, t in enumerate(texts):
-            cached = self._cache.get(t)
-            if cached is not None:
-                self._cache.move_to_end(t)
-                result[i] = cached
-            else:
-                missing_indices.append(i)
-                missing_texts.append(t)
+            for i, t in enumerate(texts):
+                cached = self._cache.get(t)
+                if cached is not None:
+                    self._cache.move_to_end(t)
+                    result[i] = cached
+                else:
+                    missing_indices.append(i)
+                    missing_texts.append(t)
 
-        if missing_texts:
-            new_vecs = [
-                _l2_normalize(np.array(v, dtype=np.float32))
-                for v in self._get_model().embed(missing_texts)
-            ]
-            for i, text, vec in zip(missing_indices, missing_texts, new_vecs, strict=True):
-                if self._dim is None:
-                    self._dim = int(vec.shape[0])
-                result[i] = vec
-                self._cache[text] = vec
-                self._cache.move_to_end(text)
-                if len(self._cache) > self._cache_size:
-                    self._cache.popitem(last=False)
+            if missing_texts:
+                new_vecs = [
+                    _l2_normalize(np.array(v, dtype=np.float32))
+                    for v in self._get_model().embed(missing_texts)
+                ]
+                for i, text, vec in zip(missing_indices, missing_texts, new_vecs, strict=True):
+                    if self._dim is None:
+                        self._dim = int(vec.shape[0])
+                    result[i] = vec
+                    self._cache[text] = vec
+                    self._cache.move_to_end(text)
+                    if len(self._cache) > self._cache_size:
+                        self._cache.popitem(last=False)
 
-        return result  # type: ignore[return-value]  # all slots filled above
+            return result  # type: ignore[return-value]  # all slots filled above
 
     @property
     def dim(self) -> int:

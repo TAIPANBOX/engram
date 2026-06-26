@@ -101,9 +101,25 @@ def test_import_episodes_are_recalled(populated, tmp_path):
         mem.export_json(dest)
     with Engram(path=target) as mem:
         mem.import_json(dest)
-        # re-embed so vector search works (import uses zero vectors)
         ep_count = mem._store.episode_count()
+        # Episodes are re-embedded on import, so vector recall must actually
+        # surface the right one (regression: import used to write zero vectors).
+        results = mem.recall("who became CTO at Globex?", k=1)
     assert ep_count == 3
+    assert results
+    assert "Globex" in results[0].episode.content
+
+
+def test_import_episodes_are_recalled_via_hybrid(populated, tmp_path):
+    """Imported episodes must also be visible to the FTS/BM25 half of recall."""
+    dest = str(tmp_path / "dump.json")
+    target = str(tmp_path / "target.engram")
+    with Engram(path=populated) as mem:
+        mem.export_json(dest)
+    with Engram(path=target) as mem:
+        mem.import_json(dest)
+        results = mem.recall("budget", k=3, mode="hybrid")
+    assert any("budget" in r.episode.content.lower() for r in results)
 
 
 def test_import_facts_available(populated, tmp_path):

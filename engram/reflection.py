@@ -44,8 +44,9 @@ def reflect(
     if now is None:
         now = datetime.now(tz=UTC)
 
-    # Capture the previous run's timestamp before creating the new run record.
-    previous_run = store.get_last_reflection()
+    # Window off the last *completed* run: an aborted run must not advance
+    # `since` and skip the episodes it never managed to process.
+    previous_run = store.get_last_finished_reflection()
     since: datetime | None = previous_run.started_at if previous_run else None
 
     run_id = str(uuid.uuid4())
@@ -59,7 +60,13 @@ def reflect(
 
     cost_tokens = 0
     if llm and episodes:
-        raw_facts, call_tokens = llm.extract_facts(episodes)
+        try:
+            raw_facts, call_tokens = llm.extract_facts(episodes)
+        except Exception:
+            # Roll the run record back so it doesn't linger unfinished and
+            # poison the incremental window on the next reflection.
+            store.delete_reflection(run_id)
+            raise
         cost_tokens += call_tokens
         episode_ids = [ep.id for ep in episodes]
 

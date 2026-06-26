@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 if TYPE_CHECKING:
     from engram.core import Engram
 
@@ -56,7 +58,8 @@ def export_json(mem: Engram, dest: str | Path) -> dict[str, Any]:
     edges = [
         dict(row)
         for row in conn.execute(
-            "SELECT src_id, dst_id, relation, weight, created_at FROM edges ORDER BY created_at ASC"
+            "SELECT src_id, dst_id, relation, weight, created_at, agent_id "
+            "FROM edges ORDER BY created_at ASC"
         ).fetchall()
     ]
 
@@ -113,18 +116,20 @@ def import_json(mem: Engram, src: str | Path, *, merge: bool = False) -> dict[st
             ep,
         )
         if conn.execute("SELECT changes()").fetchone()[0]:
-            # Insert matching vector row (zero vector — embedding lost in export).
-            # Caller should re-embed if vector search is needed after import.
-            dim = mem._store._dim
-            import numpy as np
-
-            zero = np.zeros(dim, dtype=np.float32).tobytes()
+            # Embeddings aren't carried in the export, so re-embed the content
+            # here. Both the vec0 index and the FTS index must be populated or
+            # the imported episode is invisible to vector / hybrid recall.
+            embedding = mem._embedder.embed(ep["content"]).astype(np.float32).tobytes()
             rowid = conn.execute("SELECT rowid FROM episodes WHERE id = ?", (ep["id"],)).fetchone()[
                 0
             ]
             conn.execute(
                 "INSERT OR IGNORE INTO vec_episodes(rowid, embedding) VALUES (?, ?)",
-                (rowid, zero),
+                (rowid, embedding),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO fts_episodes(rowid, content) VALUES (?, ?)",
+                (rowid, ep["content"]),
             )
             counts["episodes"] += 1
 
@@ -152,10 +157,12 @@ def import_json(mem: Engram, src: str | Path, *, merge: bool = False) -> dict[st
             counts["entities"] += 1
 
     for edge in doc.get("edges", []):
+        # Older exports (v1, pre-edge-scoping) have no agent_id; default it.
+        edge.setdefault("agent_id", None)
         conn.execute(
             f"INSERT {on_conflict} INTO edges "
-            "(src_id, dst_id, relation, weight, created_at) "
-            "VALUES (:src_id, :dst_id, :relation, :weight, :created_at)",
+            "(src_id, dst_id, relation, weight, created_at, agent_id) "
+            "VALUES (:src_id, :dst_id, :relation, :weight, :created_at, :agent_id)",
             edge,
         )
         if conn.execute("SELECT changes()").fetchone()[0]:

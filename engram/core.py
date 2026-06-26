@@ -134,8 +134,10 @@ class Engram:
         self._key = key
 
         _mod: Any = _sqlite_module(key)
-        # check_same_thread=False: reflect_async() runs on a background thread
-        # but SQLite serialises writes, so this is safe for our single-writer model.
+        # check_same_thread=False: the connection is shared across threads
+        # (reflect_async's background thread, AsyncEngram's pool). Concurrent
+        # access is serialised by the Store's re-entrant lock, which makes each
+        # DB operation atomic; see engram.store._synchronized.
         raw_conn = _mod.connect(self._path, check_same_thread=False)
         if key is not None:
             _apply_key(cast(sqlite3.Connection, raw_conn), key)
@@ -388,7 +390,10 @@ class Engram:
             if len(facts) > 1:
                 for i in range(len(facts)):
                     for j in range(i + 1, len(facts)):
-                        pairs.append((facts[i], facts[j]))
+                        # Same (subject, predicate, object) is agreement, not a
+                        # contradiction (e.g. a fact asserted/extracted twice).
+                        if facts[i].object != facts[j].object:
+                            pairs.append((facts[i], facts[j]))
         return pairs
 
     # ------------------------------------------------------------------

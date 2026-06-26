@@ -121,6 +121,22 @@ async def test_async_recall_accepts_k_inner_and_candidate_limit(tmp_path) -> Non
         assert isinstance(hybrid, list)
 
 
+async def test_async_concurrent_writes_and_reads_are_safe(tmp_path) -> None:
+    """Hammer the shared connection concurrently: the Store lock must keep every
+    operation atomic (regression for the unguarded shared sqlite3.Connection)."""
+    import asyncio
+
+    path = str(tmp_path / "async_concurrent.engram")
+    async with AsyncEngram(path=path) as mem:
+        # Interleave many concurrent observes and recalls on the same connection.
+        writes = [mem.observe(f"Concurrent event {i}") for i in range(40)]
+        reads = [mem.recall("event", k=3) for _ in range(20)]
+        results = await asyncio.gather(*writes, *reads)
+        ids = list(results[:40])
+        assert len(set(ids)) == 40  # every write committed a distinct episode
+        assert mem._store.episode_count() == 40
+
+
 async def test_async_timeline_as_of_routes_to_facts_as_of(tmp_path) -> None:
     """timeline(as_of=) must call get_facts_as_of, not get_all_facts."""
     from datetime import UTC, datetime, timedelta

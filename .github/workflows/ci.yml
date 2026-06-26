@@ -33,11 +33,17 @@ jobs:
         run: mypy engram
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        os: [ubuntu-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+        include:
+          # The selling point is single-file portability over native wheels
+          # (sqlite-vec, fastembed ONNX); smoke-test macOS too.
+          - os: macos-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v4
 
@@ -54,6 +60,32 @@ jobs:
 
       - name: Run Pytest
         run: pytest
+
+  encryption:
+    # SQLCipher needs a system library, so it gets its own job that installs it
+    # and exercises the encryption-at-rest path that the main matrix skips.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install SQLCipher system library
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlcipher-dev
+
+      - name: Install package + encryption extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev,encryption]
+
+      - name: Run encryption tests
+        run: pytest tests/test_encryption.py -v
 
   security:
     runs-on: ubuntu-latest
