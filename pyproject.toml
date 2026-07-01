@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "engdbram"
-version = "2.1.2"
+version = "2.2.0"
 description = "Embeddable cognitive memory layer for AI agents"
 readme = "README.md"
 requires-python = ">=3.11"
