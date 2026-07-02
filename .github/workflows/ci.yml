@@ -104,4 +104,8 @@ jobs:
 
       - name: Audit dependencies (pip-audit)
         # Checks the installed environment against known CVEs (PyPI advisory DB).
-        run: pip-audit --skip-editable
+        # PYSEC-2026-597: nltk, pulled transitively by the optional llamaindex
+        # extra (llama-index-core), not by core Engram. No fixed version is
+        # published upstream yet; revisit and drop this ignore once nltk ships a
+        # patched release.
+        run: pip-audit --skip-editable --ignore-vuln PYSEC-2026-597

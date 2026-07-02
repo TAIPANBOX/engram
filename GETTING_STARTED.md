@@ -7,7 +7,7 @@ This guide walks you from zero to a working Engram integration in under 5 minute
 ## 1. Install
 
 ```bash
-pip install engram
+pip install engdbram
 ```
 
 For LLM-powered reflection (optional):
