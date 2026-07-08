@@ -68,6 +68,47 @@ def test_forget_other_episodes_unaffected(mem: Engram) -> None:
 
 
 # ------------------------------------------------------------------
+# forget_fact() — single semantic fact
+# ------------------------------------------------------------------
+
+
+def test_forget_fact_removes_fact(mem: Engram) -> None:
+    fact_id = mem.assert_fact("Ivan", "works_at", "Globex")
+    mem.forget_fact(fact_id)
+    with pytest.raises(KeyError):
+        mem.why(fact_id)
+
+
+def test_forget_fact_raises_for_unknown_id(mem: Engram) -> None:
+    with pytest.raises(KeyError):
+        mem.forget_fact("nonexistent-uuid")
+
+
+def test_forget_fact_raises_if_already_forgotten(mem: Engram) -> None:
+    fact_id = mem.assert_fact("Ivan", "works_at", "Globex")
+    mem.forget_fact(fact_id)
+    with pytest.raises(KeyError):
+        mem.forget_fact(fact_id)
+
+
+def test_forget_fact_removes_from_timeline(mem: Engram) -> None:
+    fact_id = mem.assert_fact("Ivan", "works_at", "Globex")
+    mem.forget_fact(fact_id)
+    facts = mem.timeline("Ivan")
+    assert all(f.id != fact_id for f in facts)
+
+
+def test_forget_fact_other_facts_unaffected(mem: Engram) -> None:
+    keep_id = mem.assert_fact("Ivan", "works_at", "Globex")
+    drop_id = mem.assert_fact("Ivan", "lives_in", "Berlin")
+    mem.forget_fact(drop_id)
+    facts = mem.timeline("Ivan")
+    ids = [f.id for f in facts]
+    assert keep_id in ids
+    assert drop_id not in ids
+
+
+# ------------------------------------------------------------------
 # forget_entity() — GDPR erasure
 # ------------------------------------------------------------------
 

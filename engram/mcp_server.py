@@ -21,10 +21,10 @@ Design notes
   requires it to be installed.
 * **Thin wrapper**: every tool below delegates to the existing public
   :class:`engram.core.Engram` API (``observe``, ``assert_fact``, ``recall``,
-  ``why``, ``forget``). No retrieval, decay, or extraction logic is
-  reimplemented here — see the module-level ``_remember``/``_recall``/
-  ``_why``/``_forget``/``_stats`` functions, which are plain, independently
-  testable functions that the FastMCP tool wrappers merely call.
+  ``why``, ``forget``, ``forget_fact``). No retrieval, decay, or extraction
+  logic is reimplemented here — see the module-level ``_remember``/
+  ``_recall``/``_why``/``_forget``/``_stats`` functions, which are plain,
+  independently testable functions that the FastMCP tool wrappers merely call.
 * ``reflect()`` is intentionally **not** exposed as a tool. It may call an
   external LLM to extract facts from episodes, which is out of scope for a
   zero-config memory server and would violate Engram's "no network calls at
@@ -252,8 +252,11 @@ def _forget(pool: _EngramPool, memory_id: str) -> dict[str, Any]:
     else:
         return {"id": memory_id, "kind": "episodic", "deleted": True}
 
-    store = mem._store  # Engram has no public single-fact delete (see report)
-    if store.delete_fact(memory_id):
+    try:
+        mem.forget_fact(memory_id)
+    except KeyError:
+        pass
+    else:
         return {"id": memory_id, "kind": "semantic", "deleted": True}
 
     raise KeyError(f"memory not found: {memory_id!r}")

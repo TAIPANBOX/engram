@@ -216,6 +216,10 @@ class AsyncEngram:
         """Async version of :meth:`~engram.core.Engram.forget`."""
         await asyncio.to_thread(self._engram.forget, episode_id, reason=reason)
 
+    async def forget_fact(self, fact_id: str) -> None:
+        """Async version of :meth:`~engram.core.Engram.forget_fact`."""
+        await asyncio.to_thread(self._engram.forget_fact, fact_id)
+
     async def forget_entity(self, entity_name: str) -> ForgetResult:
         """Async version of :meth:`~engram.core.Engram.forget_entity`."""
         return await asyncio.to_thread(self._engram.forget_entity, entity_name)

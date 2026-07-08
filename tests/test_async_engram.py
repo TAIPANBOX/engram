@@ -94,6 +94,22 @@ async def test_async_forget(tmp_path) -> None:
     assert len(results) == 0
 
 
+async def test_async_forget_fact(tmp_path) -> None:
+    path = str(tmp_path / "async_forget_fact.engram")
+    async with AsyncEngram(path=path) as mem:
+        fact_id = await mem.assert_fact("Ivan", "works_at", "Globex")
+        await mem.forget_fact(fact_id)
+        facts = await mem.timeline("Ivan")
+    assert all(f.id != fact_id for f in facts)
+
+
+async def test_async_forget_fact_raises_for_unknown_id(tmp_path) -> None:
+    path = str(tmp_path / "async_forget_fact_unknown.engram")
+    async with AsyncEngram(path=path) as mem:
+        with pytest.raises(KeyError):
+            await mem.forget_fact("nonexistent-uuid")
+
+
 async def test_async_context_manager(tmp_path) -> None:
     path = str(tmp_path / "async_ctx.engram")
     async with AsyncEngram(path=path) as mem:

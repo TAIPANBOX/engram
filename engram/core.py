@@ -441,6 +441,21 @@ class Engram:
         if not self._store.delete_episode(episode_id):
             raise KeyError(f"Episode not found: {episode_id!r}")
 
+    def forget_fact(self, fact_id: str) -> None:
+        """Permanently erase a single semantic fact.
+
+        Removes the fact row from the store. This operation is irreversible.
+
+        Args:
+            fact_id: Id of the fact to erase (returned by :meth:`assert_fact`
+                or produced by :meth:`reflect`).
+
+        Raises:
+            KeyError: If no fact with this id exists.
+        """
+        if not self._store.delete_fact(fact_id):
+            raise KeyError(f"Fact not found: {fact_id!r}")
+
     def forget_entity(self, entity_name: str) -> ForgetResult:
         """Erase all stored data about an entity (GDPR right-to-be-forgotten).
 
