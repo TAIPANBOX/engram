@@ -1,133 +1,461 @@
-"""MCP server exposing Engram memory operations as tools.
+"""Expose Engram as an MCP (Model Context Protocol) server.
 
-Run with:
-    python -m engram.mcp_server [--path PATH]
-    ENGRAM_PATH=./agent.engram python -m engram.mcp_server
+This module lets any MCP-capable agent (Claude Desktop, Claude Code, or any
+other MCP client) get persistent, provenance-tracked memory with zero
+integration code: point the client at ``engram-mcp --db agent.engram`` and
+five tools become available: ``remember``, ``recall``, ``why``, ``forget``,
+and ``stats``.
+
+Run with::
+
+    engram-mcp --db ./agent.engram --agent-id my-agent
+    ENGRAM_MCP_DB=./agent.engram python -m engram.mcp_server
+
+Design notes
+------------
+* **Transport**: stdio only — the MCP default for local/subprocess agent
+  integrations. No network listener is opened.
+* **Optional dependency**: the ``mcp`` SDK (``pip install 'engdbram[mcp]'``)
+  is imported lazily inside :func:`_build_server`, never at module import
+  time, so ``import engram`` (and even ``import engram.mcp_server``) never
+  requires it to be installed.
+* **Thin wrapper**: every tool below delegates to the existing public
+  :class:`engram.core.Engram` API (``observe``, ``assert_fact``, ``recall``,
+  ``why``, ``forget``). No retrieval, decay, or extraction logic is
+  reimplemented here — see the module-level ``_remember``/``_recall``/
+  ``_why``/``_forget``/``_stats`` functions, which are plain, independently
+  testable functions that the FastMCP tool wrappers merely call.
+* ``reflect()`` is intentionally **not** exposed as a tool. It may call an
+  external LLM to extract facts from episodes, which is out of scope for a
+  zero-config memory server and would violate Engram's "no network calls at
+  write time" invariant for every other operation here.
+* **Prompt-injection posture**: every tool description below is a static
+  string literal, fixed at import time. None of them are ever built from
+  memory content, query text, or any other request/response data, so stored
+  memories cannot smuggle instructions into the tool metadata an MCP client
+  reads.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import sys
+from pathlib import Path
 from typing import Any
 
+from engram.core import Engram
 
-def _build_server(mem: Any) -> Any:
-    """Create and return a FastMCP server wired to *mem*.
+# ----------------------------------------------------------------------
+# Multi-agent instance pool
+# ----------------------------------------------------------------------
 
-    Separated from main() so the server object can be introspected in tests.
+
+class _EngramPool:
+    """Lazily-constructed, per-agent :class:`Engram` instances over one db file.
+
+    :class:`Engram` scopes ``agent_id`` at *construction* time (see
+    ``Engram.__init__``): writes and default-scoped reads are fixed to
+    whatever ``agent_id`` the instance was built with. There is no per-call
+    way to redirect a write to a different agent. Supporting the
+    ``agent_id`` override on ``remember``/``recall``/``stats`` therefore
+    means keeping one :class:`Engram` instance per distinct agent actually
+    requested, all pointed at the same database file — the same pattern
+    used across multiple ``Engram(path=..., agent_id=...)`` instances
+    sharing a file elsewhere in this codebase (see ``tests/test_multiagent.py``).
+
+    Instances are cached so the embedding model is loaded at most once per
+    distinct agent_id seen by this process, and closed together in
+    :meth:`close`.
+
+    Not a global: an instance of this class is created once in :func:`main`
+    and threaded through via closures, never stored at module scope.
+
+    Caveat: with ``db_path == ":memory:"``, each additional agent_id would
+    open its own *disconnected* in-memory database rather than sharing
+    state, since SQLite's ``:memory:`` databases are private per connection.
+    Single-agent use of ``:memory:`` (the default when no ``--db`` is given)
+    is fine; deliberately mixing ``:memory:`` with multiple agent ids is not
+    supported and is left to the caller to avoid.
+    """
+
+    def __init__(self, db_path: str, default_agent_id: str | None) -> None:
+        self.db_path = db_path
+        self.default_agent_id = default_agent_id
+        self._instances: dict[str | None, Engram] = {}
+
+    def get(self, agent_id: str | None = None) -> Engram:
+        """Return the Engram instance for *agent_id*, creating it if needed.
+
+        ``None`` means "use the server's default agent scope".
+        """
+        key = agent_id if agent_id is not None else self.default_agent_id
+        mem = self._instances.get(key)
+        if mem is None:
+            mem = Engram(path=self.db_path, agent_id=key)
+            self._instances[key] = mem
+        return mem
+
+    def close(self) -> None:
+        """Close every pooled Engram instance."""
+        for mem in self._instances.values():
+            mem.close()
+        self._instances.clear()
+
+
+# ----------------------------------------------------------------------
+# Tool implementations (plain functions — independently unit-testable,
+# no FastMCP dependency at all)
+# ----------------------------------------------------------------------
+
+_VALID_KINDS = ("episodic", "semantic", "procedural")
+
+
+def _remember(
+    pool: _EngramPool,
+    content: str | None = None,
+    kind: str = "episodic",
+    agent_id: str | None = None,
+    subject: str | None = None,
+    predicate: str | None = None,
+    object: str | None = None,  # noqa: A002
+) -> dict[str, Any]:
+    """Store a new memory. See ``_REMEMBER_DESCRIPTION`` for the contract."""
+    mem = pool.get(agent_id)
+
+    if kind == "episodic":
+        if subject is not None or predicate is not None or object is not None:
+            raise ValueError(
+                "kind='episodic' takes only content; subject/predicate/object "
+                "must not be provided (use kind='semantic' for a structured fact)"
+            )
+        if not content:
+            raise ValueError("kind='episodic' requires non-empty content")
+        memory_id = mem.observe(content)
+    elif kind == "semantic":
+        if content is not None:
+            raise ValueError(
+                "kind='semantic' takes subject/predicate/object; content must "
+                "not be provided (use kind='episodic' for free-form text)"
+            )
+        if not subject or not predicate or not object:
+            raise ValueError(
+                "kind='semantic' requires all three of subject, predicate, "
+                "and object to be non-empty strings"
+            )
+        memory_id = mem.assert_fact(subject, predicate, object)
+    elif kind == "procedural":
+        raise ValueError(
+            "kind='procedural' is not supported: Engram's store currently "
+            "implements only 'episodic' (observe) and 'semantic' (assert_fact) "
+            "memory. This is a known gap in the underlying engine, not a bug "
+            "in this tool — see the MCP phase report."
+        )
+    else:
+        raise ValueError(f"unknown kind {kind!r}; expected one of {_VALID_KINDS}")
+
+    return {
+        "id": memory_id,
+        "kind": kind,
+        "agent_id": agent_id if agent_id is not None else pool.default_agent_id,
+    }
+
+
+def _recall(
+    pool: _EngramPool,
+    query: str,
+    limit: int = 5,
+    agent_id: str | None = None,
+    mode: str = "cosine",
+) -> list[dict[str, Any]]:
+    """Retrieve memories relevant to *query*. See ``_RECALL_DESCRIPTION``."""
+    mem = pool.get(agent_id)
+    results = mem.recall(query, k=limit, mode=mode)
+    return [
+        {
+            "id": r.episode.id,
+            "content": r.episode.content,
+            "score": r.score,
+            "importance": r.importance,
+            "timestamp": r.episode.timestamp.isoformat(),
+            "actors": r.episode.actors,
+            "tags": r.episode.tags,
+        }
+        for r in results
+    ]
+
+
+def _why(pool: _EngramPool, memory_id: str) -> dict[str, Any]:
+    """Explain the provenance of a memory. See ``_WHY_DESCRIPTION``.
+
+    Looks the id up as a fact first (facts are cheap point lookups and are
+    not agent-scoped), then as an episode. Uses the default-agent instance's
+    store for both lookups: neither ``get_fact`` nor ``get_episode`` filters
+    by agent, so any pooled instance sees the same rows.
+    """
+    mem = pool.get(pool.default_agent_id)
+    store = mem._store  # read-only introspection, same pattern as engram.cli
+
+    fact = store.get_fact(memory_id)
+    if fact is not None:
+        provenance = mem.why(memory_id)
+        return {
+            "kind": "semantic",
+            "id": fact.id,
+            "subject": fact.subject,
+            "predicate": fact.predicate,
+            "object": fact.object,
+            "confidence": fact.confidence,
+            "valid_from": fact.valid_from.isoformat(),
+            "valid_to": fact.valid_to.isoformat() if fact.valid_to else None,
+            "recorded_at": fact.recorded_at.isoformat(),
+            "extracted_from": provenance["extracted_from"],
+            "extracted_by_reflection_run": provenance["extracted_by"],
+            "extraction_model": provenance["model"],
+        }
+
+    episode = store.get_episode(memory_id)
+    if episode is not None:
+        access_count, last_accessed = store.get_access_stats(memory_id)
+        return {
+            "kind": "episodic",
+            "id": episode.id,
+            "content": episode.content,
+            "timestamp": episode.timestamp.isoformat(),
+            "actors": episode.actors,
+            "tags": episode.tags,
+            "salience": episode.salience,
+            "emotional_valence": episode.emotional_valence,
+            "importance_score": episode.importance_score,
+            "summary_of": episode.summary_of,
+            "agent_id": episode.agent_id,
+            "access_count": access_count,
+            "last_accessed": last_accessed.isoformat() if last_accessed else None,
+            "note": (
+                "Episodic memories are raw observations, not LLM-derived facts, "
+                "so they have no extraction chain -- this is encoding and "
+                "access metadata instead."
+            ),
+        }
+
+    raise KeyError(f"memory not found: {memory_id!r}")
+
+
+def _forget(pool: _EngramPool, memory_id: str) -> dict[str, Any]:
+    """Permanently delete a memory by id. See ``_FORGET_DESCRIPTION``."""
+    mem = pool.get(pool.default_agent_id)
+
+    try:
+        mem.forget(memory_id)
+    except KeyError:
+        pass
+    else:
+        return {"id": memory_id, "kind": "episodic", "deleted": True}
+
+    store = mem._store  # Engram has no public single-fact delete (see report)
+    if store.delete_fact(memory_id):
+        return {"id": memory_id, "kind": "semantic", "deleted": True}
+
+    raise KeyError(f"memory not found: {memory_id!r}")
+
+
+def _stats(pool: _EngramPool, agent_id: str | None = None) -> dict[str, Any]:
+    """Return store statistics. See ``_STATS_DESCRIPTION``."""
+    mem = pool.get(agent_id)
+    store = mem._store  # same read-only introspection as engram.cli's inspect
+    effective_agent = agent_id if agent_id is not None else pool.default_agent_id
+
+    episodes = store.episode_count()
+    facts_total = store.fact_count()
+    facts_active = store.active_fact_count()
+
+    db_size_bytes: int | None = None
+    if pool.db_path != ":memory:":
+        p = Path(pool.db_path)
+        if p.exists():
+            db_size_bytes = p.stat().st_size
+
+    return {
+        "agent_id": effective_agent,
+        "counts": {
+            "episodic": episodes,
+            "semantic": facts_active,
+            # procedural memory does not exist in this Engram version; see
+            # the module docstring and the MCP phase report.
+            "procedural": 0,
+        },
+        "vector_index_size": store.vec_count(),
+        "facts_total": facts_total,
+        "facts_active": facts_active,
+        "facts_superseded": facts_total - facts_active,
+        "entities": store.entity_count(),
+        "reflections": store.reflection_count(),
+        "db_path": pool.db_path,
+        "db_size_bytes": db_size_bytes,
+    }
+
+
+# ----------------------------------------------------------------------
+# Static tool descriptions (fixed string literals -- never interpolated
+# from memory content or other request data; see module docstring)
+# ----------------------------------------------------------------------
+
+_REMEMBER_DESCRIPTION = (
+    "Store a new memory in Engram. kind='episodic' (default) stores "
+    "free-form text describing an event or observation: pass content "
+    "(stored verbatim) and do NOT pass subject/predicate/object. "
+    "kind='semantic' stores a structured fact triple: pass subject, "
+    "predicate, and object (all three required) and do NOT pass content. "
+    "Providing the wrong parameters for a kind is an error. "
+    "kind='procedural' is not supported by this Engram version and raises "
+    "an error. agent_id optionally scopes the write to a specific agent; "
+    "omit it to use the server's default agent."
+)
+
+_RECALL_DESCRIPTION = (
+    "Retrieve memories relevant to a natural-language query, ranked by "
+    "relevance. mode='cosine' (default) ranks by embedding similarity; "
+    "mode='spreading' additionally follows graph edges between related "
+    "memories (spreading activation) to surface indirectly relevant "
+    "context; mode='hybrid' blends embedding similarity with keyword "
+    "(BM25) search. Returns a list of memories, each with its id, content, "
+    "and relevance score, most relevant first."
+)
+
+_WHY_DESCRIPTION = (
+    "Explain the provenance of a memory by id. For a semantic fact: "
+    "returns the full subject/predicate/object triple, its confidence, "
+    "validity window, the source material it was extracted from, and the "
+    "reflection run and model that extracted it. For an episodic memory: "
+    "returns its content, encoding metadata (actors, tags, salience), and "
+    "access history -- episodic memories are raw observations rather than "
+    "LLM-derived facts, so they have no extraction chain."
+)
+
+_FORGET_DESCRIPTION = (
+    "Permanently delete a single memory (episodic or semantic) by id. This is irreversible."
+)
+
+_STATS_DESCRIPTION = (
+    "Return store statistics: memory counts per kind (episodic, semantic, "
+    "procedural), fact validity breakdown (active vs superseded), entity "
+    "and reflection-run counts, and the database file size in bytes."
+)
+
+
+# ----------------------------------------------------------------------
+# FastMCP wiring
+# ----------------------------------------------------------------------
+
+
+def _build_server(pool: _EngramPool) -> Any:
+    """Create and return a FastMCP server with Engram's tools registered.
+
+    Separated from :func:`main` so the server object can be built and
+    introspected in tests without going through stdio. The ``mcp`` SDK is
+    imported here, not at module scope, so this is the only code path in
+    the module that requires it to be installed.
     """
     try:
-        from mcp.server.fastmcp import FastMCP  # type: ignore[import-not-found]
+        from mcp.server.fastmcp import FastMCP
     except ImportError as exc:
-        raise ImportError("MCP SDK not installed. Run: pip install 'engdbram[mcp]'") from exc
+        raise ImportError("The MCP SDK is not installed. Run: pip install 'engdbram[mcp]'") from exc
 
-    mcp: Any = FastMCP("engram")
+    mcp: FastMCP[None] = FastMCP(
+        "engram",
+        instructions=(
+            "Persistent cognitive memory for AI agents. Use 'remember' to store "
+            "episodic events or semantic facts, 'recall' to retrieve relevant "
+            "memories, 'why' to inspect a memory's provenance, 'forget' to "
+            "erase one, and 'stats' for store-wide counts."
+        ),
+    )
 
-    @mcp.tool()
-    def observe(
-        content: str,
-        actors: list[str] | None = None,
-        tags: list[str] | None = None,
-        salience: float = 0.5,
-        emotional_valence: float = 0.0,
-    ) -> dict[str, str]:
-        """Record a new episodic memory."""
-        episode_id: str = mem.observe(
-            content,
-            actors=actors,
-            tags=tags,
-            salience=salience,
-            emotional_valence=emotional_valence,
-        )
-        return {"id": episode_id}
+    @mcp.tool(description=_REMEMBER_DESCRIPTION)
+    def remember(
+        content: str | None = None,
+        kind: str = "episodic",
+        agent_id: str | None = None,
+        subject: str | None = None,
+        predicate: str | None = None,
+        object: str | None = None,  # noqa: A002
+    ) -> dict[str, Any]:
+        return _remember(pool, content, kind, agent_id, subject, predicate, object)
 
-    @mcp.tool()
+    @mcp.tool(description=_RECALL_DESCRIPTION)
     def recall(
         query: str,
-        k: int = 5,
+        limit: int = 5,
+        agent_id: str | None = None,
         mode: str = "cosine",
     ) -> list[dict[str, Any]]:
-        """Retrieve the top-k episodes most similar to the query."""
-        results = mem.recall(query, k=k, mode=mode)
-        return [
-            {
-                "id": r.episode.id,
-                "content": r.episode.content,
-                "score": r.score,
-                "timestamp": r.episode.timestamp.isoformat(),
-            }
-            for r in results
-        ]
+        return _recall(pool, query, limit, agent_id, mode)
 
-    @mcp.tool()
-    def assert_fact(
-        subject: str,
-        predicate: str,
-        object: str,  # noqa: A002
-        confidence: float = 1.0,
-        source: str | None = None,
-    ) -> dict[str, str]:
-        """Record a semantic fact triple (subject, predicate, object)."""
-        fact_id: str = mem.assert_fact(
-            subject,
-            predicate,
-            object,
-            confidence=confidence,
-            source=source,
-        )
-        return {"id": fact_id}
+    @mcp.tool(description=_WHY_DESCRIPTION)
+    def why(memory_id: str) -> dict[str, Any]:
+        return _why(pool, memory_id)
 
-    @mcp.tool()
-    def timeline(entity: str) -> list[dict[str, Any]]:
-        """Return the full fact history for an entity in chronological order."""
-        facts = mem.timeline(entity)
-        return [
-            {
-                "id": f.id,
-                "subject": f.subject,
-                "predicate": f.predicate,
-                "object": f.object,
-                "valid_from": f.valid_from.isoformat(),
-                "valid_to": f.valid_to.isoformat() if f.valid_to else None,
-                "confidence": f.confidence,
-            }
-            for f in facts
-        ]
+    @mcp.tool(description=_FORGET_DESCRIPTION)
+    def forget(memory_id: str) -> dict[str, Any]:
+        return _forget(pool, memory_id)
 
-    @mcp.tool()
-    def why(fact_id: str) -> dict[str, Any]:
-        """Return provenance information for a fact."""
-        result: dict[str, Any] = mem.why(fact_id)
-        return result
-
-    @mcp.tool()
-    def reflect() -> dict[str, int]:
-        """Run the reflection loop: extract facts, decay importance, prune."""
-        run = mem.reflect()
-        return {
-            "episodes_processed": run.episodes_processed,
-            "facts_extracted": run.facts_extracted,
-            "contradictions_resolved": run.contradictions_resolved,
-        }
+    @mcp.tool(description=_STATS_DESCRIPTION)
+    def stats(agent_id: str | None = None) -> dict[str, Any]:
+        return _stats(pool, agent_id)
 
     return mcp
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Engram MCP server")
-    parser.add_argument(
-        "--path",
-        default=os.environ.get("ENGRAM_PATH", ":memory:"),
-        help="Path to .engram file (default: :memory: or $ENGRAM_PATH)",
+# ----------------------------------------------------------------------
+# Entry point
+# ----------------------------------------------------------------------
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="engram-mcp",
+        description="Run Engram as an MCP server over stdio.",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--db",
+        default=os.environ.get("ENGRAM_MCP_DB"),
+        metavar="PATH",
+        help="path to the Engram database file (env: ENGRAM_MCP_DB; default: in-memory)",
+    )
+    parser.add_argument(
+        "--agent-id",
+        default=os.environ.get("ENGRAM_MCP_AGENT_ID"),
+        metavar="AGENT_ID",
+        dest="agent_id",
+        help=(
+            "default agent scope for this server. Any string is accepted, "
+            "including Agent Passport 'agent://...' URIs, which are treated "
+            "as opaque identifiers (env: ENGRAM_MCP_AGENT_ID)"
+        ),
+    )
+    return parser
 
-    from engram.core import Engram
 
-    mem = Engram(path=args.path)
-    server = _build_server(mem)
-    server.run(transport="stdio")
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point registered as the ``engram-mcp`` console script."""
+    parser = _build_arg_parser()
+    args = parser.parse_args(argv)
+
+    db_path = args.db or ":memory:"
+    if not args.db:
+        # stdout is the stdio transport channel -- diagnostics must go to stderr.
+        print(
+            "warning: no --db/ENGRAM_MCP_DB given; using an in-memory store "
+            "that is discarded when this process exits.",
+            file=sys.stderr,
+        )
+
+    pool = _EngramPool(db_path, args.agent_id)
+    try:
+        server = _build_server(pool)
+        server.run(transport="stdio")
+    finally:
+        pool.close()
 
 
 if __name__ == "__main__":

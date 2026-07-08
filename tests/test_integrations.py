@@ -1,110 +1,16 @@
-"""Tests for v0.6 integrations: MCP server, LangChain, LlamaIndex adapters."""
+"""Tests for v0.6 integrations: LangChain, LlamaIndex adapters.
+
+MCP server tests moved to tests/test_mcp_server.py as part of the
+feature/mcp-server phase: the old ``observe``/``assert_fact``/``timeline``/
+``reflect``/``why`` tool surface tested here previously did not match the
+architect's spec for the shipped server (``remember``/``recall``/``why``/
+``forget``/``stats``, with ``reflect`` deliberately excluded) and was never
+wired to a console entry point. See engram/mcp_server.py's module docstring.
+"""
 
 from __future__ import annotations
 
 import pytest
-
-# ------------------------------------------------------------------
-# MCP server
-# ------------------------------------------------------------------
-
-
-def test_mcp_server_build_registers_six_tools() -> None:
-    """_build_server returns a FastMCP instance with 6 registered tools."""
-    mcp_mod = pytest.importorskip("mcp")  # noqa: F841
-    from engram.core import Engram
-    from engram.mcp_server import _build_server
-
-    mem = Engram()
-    server = _build_server(mem)
-    # FastMCP exposes registered tools via _tool_manager
-    tools = server._tool_manager.list_tools()
-    names = {t.name for t in tools}
-    assert names == {"observe", "recall", "assert_fact", "timeline", "why", "reflect"}
-
-
-def test_mcp_observe_tool_returns_id() -> None:
-    pytest.importorskip("mcp")
-    from engram.core import Engram
-    from engram.mcp_server import _build_server
-
-    mem = Engram()
-    server = _build_server(mem)
-    tool_fn = server._tool_manager._tools["observe"].fn
-    result = tool_fn("Alice moved to Berlin")
-    assert "id" in result
-    assert isinstance(result["id"], str)
-
-
-def test_mcp_recall_tool_returns_list() -> None:
-    pytest.importorskip("mcp")
-    from engram.core import Engram
-    from engram.mcp_server import _build_server
-
-    mem = Engram()
-    mem.observe("Ivan works at Globex")
-    server = _build_server(mem)
-    tool_fn = server._tool_manager._tools["recall"].fn
-    results = tool_fn("Ivan", k=3)
-    assert isinstance(results, list)
-    assert len(results) >= 1
-    assert "content" in results[0]
-    assert "score" in results[0]
-
-
-def test_mcp_assert_fact_tool() -> None:
-    pytest.importorskip("mcp")
-    from engram.core import Engram
-    from engram.mcp_server import _build_server
-
-    mem = Engram()
-    server = _build_server(mem)
-    tool_fn = server._tool_manager._tools["assert_fact"].fn
-    result = tool_fn("Ivan", "works_at", "Globex", confidence=0.9)
-    assert "id" in result
-
-
-def test_mcp_timeline_tool() -> None:
-    pytest.importorskip("mcp")
-    from engram.core import Engram
-    from engram.mcp_server import _build_server
-
-    mem = Engram()
-    mem.assert_fact("Ivan", "works_at", "Acme")
-    server = _build_server(mem)
-    tool_fn = server._tool_manager._tools["timeline"].fn
-    result = tool_fn("Ivan")
-    assert isinstance(result, list)
-    assert len(result) == 1
-    assert result[0]["predicate"] == "works_at"
-
-
-def test_mcp_reflect_tool() -> None:
-    pytest.importorskip("mcp")
-    from engram.core import Engram
-    from engram.mcp_server import _build_server
-
-    mem = Engram()
-    mem.observe("some event")
-    server = _build_server(mem)
-    tool_fn = server._tool_manager._tools["reflect"].fn
-    result = tool_fn()
-    assert "episodes_processed" in result
-    assert "facts_extracted" in result
-    assert "contradictions_resolved" in result
-
-
-def test_mcp_why_tool_raises_on_missing_fact() -> None:
-    pytest.importorskip("mcp")
-    from engram.core import Engram
-    from engram.mcp_server import _build_server
-
-    mem = Engram()
-    server = _build_server(mem)
-    tool_fn = server._tool_manager._tools["why"].fn
-    with pytest.raises(KeyError):
-        tool_fn("nonexistent-id")
-
 
 # ------------------------------------------------------------------
 # LangChain adapter

@@ -30,7 +30,7 @@ dependencies = [
 anthropic = ["anthropic>=0.40.0"]
 openai = ["openai>=1.50.0"]
 gemini = ["google-genai>=1.0.0"]
-mcp = ["mcp>=1.0"]
+mcp = ["mcp>=1.27.0,<2.0.0"]
 langchain = ["langchain-core>=0.1"]
 llamaindex = ["llama-index-core>=0.10"]
 encryption = ["sqlcipher3>=0.4.9"]
@@ -39,15 +39,16 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.6",
     "mypy>=1.11",
-    "mcp>=1.0",
+    "mcp>=1.27.0,<2.0.0",
     "langchain-core>=0.1",
     "llama-index-core>=0.10",
     "google-genai>=1.0.0",
 ]
 
 [project.scripts]
-engram      = "engram.cli:main"
+engram       = "engram.cli:main"
 engram-bench = "engram.benchmarks.cli:main"
+engram-mcp   = "engram.mcp_server:main"
 
 [project.urls]
 Homepage = "https://github.com/TAIPANBOX/engram"
@@ -81,7 +82,9 @@ disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
 # Integration files depend on optional packages; exempt from strict checking.
-module = ["engram.adapters.*", "engram.mcp_server", "engram.benchmarks.*", "engram.cli"]
+# engram.mcp_server is intentionally NOT exempted: it must pass --strict
+# (the mcp SDK ships a py.typed marker and is a pinned dev dependency).
+module = ["engram.adapters.*", "engram.benchmarks.*", "engram.cli"]
 ignore_errors = true
 
 [[tool.mypy.overrides]]
