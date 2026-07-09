@@ -587,7 +587,7 @@ engram recall ./team.engram "migration" --agent-id coder
 
 ## Full API Reference
 
-### `Engram(path, *, embedder_model, decay_config, llm, agent_id, key)`
+### `Engram(path, *, embedder_model, decay_config, llm, agent_id, key, events_path)`
 
 ```python
 from engram import Engram, DecayConfig, AnthropicAdapter
@@ -604,6 +604,7 @@ mem = Engram(
     llm=AnthropicAdapter(),  # optional; used by reflect() and compress()
     agent_id="my-agent",     # optional; scopes writes and reads to this agent
     key="passphrase",        # optional; enables SQLCipher encryption-at-rest
+    events_path="./agent.events.ndjson",  # optional; see Agent Passport events below
 )
 
 # Context-manager supported
@@ -614,6 +615,19 @@ with Engram(path=":memory:") as mem:
 > **Encryption-at-rest:** pass `key="..."` to encrypt the database via
 > SQLCipher (`pip install 'engdbram[encryption]'`). Plain (no-key) stores
 > are unchanged. Use `mem.rekey(new_key)` to change or remove the key.
+
+> **Agent Passport events:** pass `events_path="..."` (or set
+> `ENGRAM_EVENTS_PATH`) to opt in to an NDJSON event log conforming to the
+> [Agent Passport](https://github.com/TAIPANBOX/agent-passport) `agent-event`
+> envelope (SPEC.md §6). Off by default — no file is written unless
+> configured. `observe()`, `assert_fact()`, `forget()`, and `forget_fact()`
+> each emit a `memory_written`/`memory_forgotten` event (`info`); `reflect()`
+> emits one `reflection_run` event (`info`) plus one `contradiction_found`
+> event (`medium`) per fact it supersedes. Events with no `agent_id` set on
+> the instance are skipped, never fabricated. A local file append is not a
+> network call, so this does not violate Engram's write-time invariant — see
+> `engram/events.py` for the full reasoning. Failures to write an event are
+> logged as a warning and never raised into the memory operation.
 
 ---
 
@@ -991,9 +1005,10 @@ any other MCP host:
 ```bash
 engram-mcp --db ./agent.engram
 engram-mcp --db ./agent.engram --agent-id my-agent   # scope the default agent
+engram-mcp --db ./agent.engram --events ./agent.events.ndjson  # opt in to Agent Passport events
 
 # equivalently, via environment variables
-ENGRAM_MCP_DB=./agent.engram ENGRAM_MCP_AGENT_ID=my-agent engram-mcp
+ENGRAM_MCP_DB=./agent.engram ENGRAM_MCP_AGENT_ID=my-agent ENGRAM_MCP_EVENTS=./agent.events.ndjson engram-mcp
 ```
 
 If `--db`/`ENGRAM_MCP_DB` is omitted, the server falls back to an in-memory
@@ -1284,7 +1299,7 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (392 tests)
+### Test coverage (408 tests)
 
 ```
 tests/
@@ -1313,6 +1328,8 @@ tests/
   test_integrations.py   LangChain, LlamaIndex
   test_mcp_server.py     MCP server (engram-mcp): remember/recall/why/forget/stats,
                           agent pooling, procedural rejection, reflect() not exposed
+  test_events.py         Agent Passport NDJSON event exporter: schema validation,
+                          fail-open on I/O error, skip-on-empty agent_id, off-by-default
   test_benchmarks.py     benchmark infrastructure
 ```
 
@@ -1336,7 +1353,7 @@ tests/
 - [x] v2.1.1 — GitHub Actions CI, `DATA_FLOW.md`, tunable `k_inner` / `candidate_limit`, adapter history hydration, PyPI distribution renamed to `engdbram`
 - [x] v2.1.2 — Multi-agent isolation hardening (per-agent `prune`, FTS cleanup), hybrid `as_of`, FTS5 query safety, embedder normalization, prompt-injection hardening, async API parity (`timeline(as_of=)`, `recall(k_inner=, candidate_limit=)`), tag-triggered PyPI publishing via OIDC
 - [x] v2.2.0 — Correctness pass (bitemporal `as_of` UTC coercion, `contradictions()` identical-fact fix, `import_json` re-embed + FTS, reflection abort rollback, LLM response-parse guards), thread-safety (`Store` + embedder locks for `reflect_async` / `AsyncEngram`), per-agent edge & decay scoping, PEP 561 `py.typed`, CI matrix (Python 3.13 + encryption job), release gated on tests, `migrate()` fails loudly on embedder-dimension mismatch, `pip-audit` CI job
-- [x] Since v2.2.0 (on `main`, not yet tagged) — MCP server tool surface (`engram-mcp`): stdio transport, optional `[mcp]` extra, `remember`/`recall`/`why`/`forget`/`stats` tools with structured semantic params and per-call `agent_id`, `reflect()` deliberately not exposed; public `forget_fact()` API (sync + async) for erasing a single semantic fact
+- [x] Since v2.2.0 (on `main`, not yet tagged) — MCP server tool surface (`engram-mcp`): stdio transport, optional `[mcp]` extra, `remember`/`recall`/`why`/`forget`/`stats` tools with structured semantic params and per-call `agent_id`, `reflect()` deliberately not exposed; public `forget_fact()` API (sync + async) for erasing a single semantic fact; opt-in [Agent Passport](https://github.com/TAIPANBOX/agent-passport) NDJSON event exporter (`events_path` / `ENGRAM_EVENTS_PATH`, `engram-mcp --events` / `ENGRAM_MCP_EVENTS`) emitting `memory_written`, `memory_forgotten`, `reflection_run`, `contradiction_found`
 
 ---
 

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from engram.decay import run_decay
 from engram.embedder import DEFAULT_MODEL, Embedder
+from engram.events import EventLog, resolve_events_path
 from engram.importance import DecayConfig
 from engram.models import (
     CompressionRun,
@@ -118,6 +119,10 @@ class Engram:
             tagged with this id and reads are filtered to it by default. Pass
             ``cross_agent=True`` to :meth:`recall` to search across all agents.
             Leave as ``None`` for single-agent or unscoped use (backward-compatible).
+        events_path: Opt-in destination for an Agent Passport NDJSON event
+            log (see :mod:`engram.events`). ``None`` (the default) disables
+            event emission entirely -- zero overhead. Falls back to the
+            ``ENGRAM_EVENTS_PATH`` environment variable when not given.
     """
 
     def __init__(
@@ -128,10 +133,16 @@ class Engram:
         llm: LLMAdapter | None = None,
         agent_id: str | None = None,
         key: str | None = None,
+        events_path: str | Path | None = None,
     ) -> None:
         self._path = str(path)
         self._agent_id = agent_id
         self._key = key
+
+        resolved_events_path = resolve_events_path(events_path)
+        self._events: EventLog | None = (
+            EventLog(resolved_events_path) if resolved_events_path is not None else None
+        )
 
         _mod: Any = _sqlite_module(key)
         # check_same_thread=False: the connection is shared across threads
@@ -190,6 +201,10 @@ class Engram:
         )
         embedding = self._embedder.embed(content)
         self._store.insert_episode(ep, embedding)
+        if self._events is not None:
+            self._events.emit(
+                "memory_written", self._agent_id, {"memory_id": episode_id, "kind": "episodic"}
+            )
         return episode_id
 
     def observe_many(self, items: list[ObserveInput]) -> list[str]:
@@ -326,6 +341,10 @@ class Engram:
             extracted_by=None,
         )
         self._store.insert_fact(fact)
+        if self._events is not None:
+            self._events.emit(
+                "memory_written", self._agent_id, {"memory_id": fact_id, "kind": "semantic"}
+            )
         return fact_id
 
     def why(self, fact_id: str) -> dict[str, Any]:
@@ -408,7 +427,26 @@ class Engram:
         """
         from engram.reflection import reflect as _reflect
 
-        return _reflect(self._store, self._llm, self._decay_cfg)
+        run = _reflect(
+            self._store,
+            self._llm,
+            self._decay_cfg,
+            events=self._events,
+            agent_id=self._agent_id,
+        )
+        if self._events is not None:
+            self._events.emit(
+                "reflection_run",
+                self._agent_id,
+                {
+                    "reflection_run_id": run.id,
+                    "episodes_processed": run.episodes_processed,
+                    "facts_extracted": run.facts_extracted,
+                    "contradictions_resolved": run.contradictions_resolved,
+                },
+                run_id=run.id,
+            )
+        return run
 
     def reflect_async(self) -> ReflectionThread:
         """Run the reflection loop in a background thread.
@@ -440,6 +478,10 @@ class Engram:
         """
         if not self._store.delete_episode(episode_id):
             raise KeyError(f"Episode not found: {episode_id!r}")
+        if self._events is not None:
+            self._events.emit(
+                "memory_forgotten", self._agent_id, {"memory_id": episode_id, "kind": "episodic"}
+            )
 
     def forget_fact(self, fact_id: str) -> None:
         """Permanently erase a single semantic fact.
@@ -455,6 +497,10 @@ class Engram:
         """
         if not self._store.delete_fact(fact_id):
             raise KeyError(f"Fact not found: {fact_id!r}")
+        if self._events is not None:
+            self._events.emit(
+                "memory_forgotten", self._agent_id, {"memory_id": fact_id, "kind": "semantic"}
+            )
 
     def forget_entity(self, entity_name: str) -> ForgetResult:
         """Erase all stored data about an entity (GDPR right-to-be-forgotten).

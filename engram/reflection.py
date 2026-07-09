@@ -13,6 +13,7 @@ from engram.models import Fact, ReflectionRun
 from engram.store import Store
 
 if TYPE_CHECKING:
+    from engram.events import EventLog
     from engram.llm import LLMAdapter
 
 
@@ -21,6 +22,8 @@ def reflect(
     llm: LLMAdapter | None,
     cfg: DecayConfig,
     now: datetime | None = None,
+    events: EventLog | None = None,
+    agent_id: str | None = None,
 ) -> ReflectionRun:
     """Run one reflection pass.
 
@@ -37,6 +40,12 @@ def reflect(
         llm: LLM adapter for fact extraction, or None to skip extraction.
         cfg: Decay and pruning configuration.
         now: Reference time (defaults to current UTC time).
+        events: Optional Agent Passport event log. When given, a
+            ``contradiction_found`` event is emitted at the point a
+            newly-extracted fact actually supersedes an older one (see
+            :mod:`engram.events`). ``None`` (the default) emits nothing.
+        agent_id: Agent scope to attach to emitted events. Ignored when
+            *events* is ``None``.
 
     Returns:
         The completed :class:`ReflectionRun`.
@@ -100,6 +109,13 @@ def reflect(
                 if old.id != fact.id:
                     store.close_fact(old.id, valid_to=now, superseded_by=fact.id)
                     contradictions_resolved += 1
+                    if events is not None:
+                        events.emit(
+                            "contradiction_found",
+                            agent_id,
+                            {"memory_id": fact.id, "conflicting_memory_id": old.id},
+                            run_id=run_id,
+                        )
 
             # Entity extraction and episode→entity edges (Hebbian reinforcement).
             for name in (fact.subject, fact.object):

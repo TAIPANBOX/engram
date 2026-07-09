@@ -11,6 +11,10 @@ Run with::
     engram-mcp --db ./agent.engram --agent-id my-agent
     ENGRAM_MCP_DB=./agent.engram python -m engram.mcp_server
 
+Pass ``--events ./events.ndjson`` (or set ``ENGRAM_MCP_EVENTS``) to opt in to
+an Agent Passport NDJSON event log alongside the store -- see
+:mod:`engram.events`. Omit it and nothing is written; this is off by default.
+
 Design notes
 ------------
 * **Transport**: stdio only — the MCP default for local/subprocess agent
@@ -79,9 +83,15 @@ class _EngramPool:
     supported and is left to the caller to avoid.
     """
 
-    def __init__(self, db_path: str, default_agent_id: str | None) -> None:
+    def __init__(
+        self,
+        db_path: str,
+        default_agent_id: str | None,
+        events_path: str | None = None,
+    ) -> None:
         self.db_path = db_path
         self.default_agent_id = default_agent_id
+        self.events_path = events_path
         self._instances: dict[str | None, Engram] = {}
 
     def get(self, agent_id: str | None = None) -> Engram:
@@ -92,7 +102,7 @@ class _EngramPool:
         key = agent_id if agent_id is not None else self.default_agent_id
         mem = self._instances.get(key)
         if mem is None:
-            mem = Engram(path=self.db_path, agent_id=key)
+            mem = Engram(path=self.db_path, agent_id=key, events_path=self.events_path)
             self._instances[key] = mem
         return mem
 
@@ -436,6 +446,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "as opaque identifiers (env: ENGRAM_MCP_AGENT_ID)"
         ),
     )
+    parser.add_argument(
+        "--events",
+        default=os.environ.get("ENGRAM_MCP_EVENTS"),
+        metavar="PATH",
+        dest="events",
+        help=(
+            "opt-in path to an Agent Passport NDJSON event log (see "
+            "engram.events); omit to disable event emission entirely "
+            "(env: ENGRAM_MCP_EVENTS)"
+        ),
+    )
     return parser
 
 
@@ -453,7 +474,7 @@ def main(argv: list[str] | None = None) -> None:
             file=sys.stderr,
         )
 
-    pool = _EngramPool(db_path, args.agent_id)
+    pool = _EngramPool(db_path, args.agent_id, events_path=args.events)
     try:
         server = _build_server(pool)
         server.run(transport="stdio")
