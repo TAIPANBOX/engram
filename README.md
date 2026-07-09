@@ -55,6 +55,42 @@ Here is what Engram gives you that a plain vector database does not:
 
 ---
 
+## Where this fits in the stack
+
+Engram is the memory plane of the TAIPANBOX agent-governance stack: it gives agents persistent, provenance-tracked memory, and its own reflection can route through TokenFuse.
+
+```mermaid
+flowchart TB
+  Agent["AI agent (any framework)"] -->|"LLM call (base-URL swap)"| TF["TokenFuse proxy: spend + enforcement"]
+  TF -->|"POST /v1/decide (PEP)"| WX["Wardryx: policy PDP"]
+  WX -.->|"allow / deny / hold"| TF
+  TF -->|"cheapest model, budget OK"| LLM[("LLM provider")]
+  TF -->|"CallRecords"| CL["TokenFuse Cloud: control plane, incidents, replay, evidence, kill-switch"]
+  TF ==>|"agent-event NDJSON"| BUS{{"agent-event bus + Agent Passport"}}
+  WX ==> BUS
+  ENG["Engram: memory"] -->|"reflect via base_url"| TF
+  ENG ==> BUS
+  BUS ==> IDX["Idryx: identity graph, detectors, Agent-BOM"]
+  BUS ==> QX["Qryx: crypto / PQC, passport + hash-chain scan"]
+  BUS ==> VX["Verdryx: quality / drift"]
+  TF -->|"outcome-tagged traces"| VX
+  MX["Mockryx: pre-prod safety rehearsal"] -->|"hostile scenarios"| TF
+  TFP["terraform-provider-taipan"] -->|"budgets + passports as code"| CL
+  ASG[["agent-stack-go: shared Go contract"]] -.->|imported by| IDX
+  ASG -.->|imported by| WX
+  ASG -.->|imported by| MX
+  ASG -.->|imported by| TFP
+  SPEC[["agent-passport: the spec"]] -.->|governs| BUS
+```
+
+- **Consumes**: agent observations (`observe()`).
+- **Produces**: `source: engram` events and `why()` provenance, opt-in via the Agent Passport `agent-event` envelope.
+- **Talks to**: **TokenFuse** (reflection's LLM adapter can point `base_url` at TokenFuse); governed by the **agent-passport** `agent://` scope.
+
+The full stack is TokenFuse (spend), Wardryx (policy), Engram (memory), Idryx (access), Qryx (crypto), Verdryx (quality), Mockryx (pre-prod), on the shared Agent Passport + agent-event contract (agent-stack-go / agent-passport), configured via terraform-provider-taipan.
+
+---
+
 ## What is Engram, technically?
 
 Engram is a **cognitive memory layer** for AI agents — a single local file (`agent.engram`) built on SQLite. It models three kinds of memory that mirror how human memory works:
