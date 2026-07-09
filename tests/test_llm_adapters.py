@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from engram import (
+    AnthropicAdapter,
     DeepSeekAdapter,
     GeminiAdapter,
     KimiAdapter,
@@ -127,6 +128,92 @@ def test_gemini_no_usage_metadata() -> None:
         ):
             _, tokens = adapter.extract_facts(EPISODES)
     assert tokens == 0
+
+
+# ------------------------------------------------------------------
+# AnthropicAdapter
+# ------------------------------------------------------------------
+
+
+def test_anthropic_default_model() -> None:
+    adapter = AnthropicAdapter()
+    assert adapter.model_name == "claude-haiku-4-5-20251001"
+
+
+def test_anthropic_custom_model() -> None:
+    adapter = AnthropicAdapter(model="claude-opus-4-1")
+    assert adapter.model_name == "claude-opus-4-1"
+
+
+def test_anthropic_satisfies_protocol() -> None:
+    assert isinstance(AnthropicAdapter(), LLMAdapter)
+
+
+def test_anthropic_import_error_without_sdk() -> None:
+    adapter = AnthropicAdapter(api_key="fake")
+    with (
+        patch.dict("sys.modules", {"anthropic": None}),
+        pytest.raises(ImportError, match=r"engdbram\[anthropic\]"),
+    ):
+        adapter._get_client()
+
+
+def test_anthropic_base_url_and_api_key_omitted_by_default() -> None:
+    """No base_url/api_key given -> the client is built with no kwargs, so the
+    Anthropic SDK's own env-var fallback (ANTHROPIC_API_KEY, etc.) decides,
+    same as calling anthropic.Anthropic() bare."""
+    mock_anthropic_mod = MagicMock()
+    mock_anthropic_class = MagicMock(return_value=MagicMock())
+    mock_anthropic_mod.Anthropic = mock_anthropic_class
+    adapter = AnthropicAdapter()
+    with patch.dict("sys.modules", {"anthropic": mock_anthropic_mod}):
+        adapter._client = None  # reset cached client
+        adapter._get_client()
+    call_kwargs = mock_anthropic_class.call_args.kwargs
+    assert call_kwargs == {}
+
+
+def test_anthropic_base_url_passed_to_client() -> None:
+    """base_url routes Anthropic calls through a proxy (e.g. TokenFuse)
+    instead of hitting the API directly, mirroring OpenAIAdapter."""
+    mock_anthropic_mod = MagicMock()
+    mock_anthropic_class = MagicMock(return_value=MagicMock())
+    mock_anthropic_mod.Anthropic = mock_anthropic_class
+    adapter = AnthropicAdapter(base_url="https://tokenfuse.internal/anthropic")
+    with patch.dict("sys.modules", {"anthropic": mock_anthropic_mod}):
+        adapter._client = None  # reset cached client
+        adapter._get_client()
+    call_kwargs = mock_anthropic_class.call_args.kwargs
+    assert call_kwargs.get("base_url") == "https://tokenfuse.internal/anthropic"
+
+
+def test_anthropic_api_key_passed_to_client() -> None:
+    mock_anthropic_mod = MagicMock()
+    mock_anthropic_class = MagicMock(return_value=MagicMock())
+    mock_anthropic_mod.Anthropic = mock_anthropic_class
+    adapter = AnthropicAdapter(api_key="sk-ant-test-123")
+    with patch.dict("sys.modules", {"anthropic": mock_anthropic_mod}):
+        adapter._client = None  # reset cached client
+        adapter._get_client()
+    call_kwargs = mock_anthropic_class.call_args.kwargs
+    assert call_kwargs.get("api_key") == "sk-ant-test-123"
+
+
+def test_anthropic_base_url_and_api_key_both_passed_to_client() -> None:
+    mock_anthropic_mod = MagicMock()
+    mock_anthropic_class = MagicMock(return_value=MagicMock())
+    mock_anthropic_mod.Anthropic = mock_anthropic_class
+    adapter = AnthropicAdapter(
+        base_url="https://tokenfuse.internal/anthropic", api_key="sk-ant-test-123"
+    )
+    with patch.dict("sys.modules", {"anthropic": mock_anthropic_mod}):
+        adapter._client = None  # reset cached client
+        adapter._get_client()
+    call_kwargs = mock_anthropic_class.call_args.kwargs
+    assert call_kwargs == {
+        "base_url": "https://tokenfuse.internal/anthropic",
+        "api_key": "sk-ant-test-123",
+    }
 
 
 # ------------------------------------------------------------------
@@ -389,8 +476,6 @@ def test_openai_text_handles_empty_choices_and_null_content() -> None:
 def test_anthropic_extract_facts_survives_tool_use_response() -> None:
     """End-to-end: a structurally surprising Anthropic response yields no facts,
     not an exception."""
-    from engram.llm import AnthropicAdapter
-
     adapter = AnthropicAdapter()
     mock_client = MagicMock()
     response = SimpleNamespace(

@@ -150,10 +150,23 @@ class AnthropicAdapter:
 
     Args:
         model: Claude model id to use.
+        base_url: Optional custom endpoint. Lets callers route Anthropic
+            calls through a proxy (e.g. TokenFuse) instead of hitting the
+            API directly, mirroring how :class:`OpenAIAdapter` accepts
+            ``base_url``.
+        api_key: Explicit API key. When unset, the Anthropic SDK falls back
+            to the ``ANTHROPIC_API_KEY`` environment variable itself.
     """
 
-    def __init__(self, model: str = "claude-haiku-4-5-20251001") -> None:
+    def __init__(
+        self,
+        model: str = "claude-haiku-4-5-20251001",
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
         self.model_name = model
+        self._base_url = base_url
+        self._api_key = api_key
         self._client: Any = None
 
     def _get_client(self) -> Any:
@@ -164,7 +177,12 @@ class AnthropicAdapter:
                 "Anthropic SDK not installed. Run: pip install 'engdbram[anthropic]'"
             ) from exc
         if self._client is None:
-            self._client = anthropic.Anthropic()
+            kwargs: dict[str, Any] = {}
+            if self._base_url:
+                kwargs["base_url"] = self._base_url
+            if self._api_key:
+                kwargs["api_key"] = self._api_key
+            self._client = anthropic.Anthropic(**kwargs)
         return self._client
 
     def extract_facts(self, episodes: list[Episode]) -> tuple[list[dict[str, Any]], int]:
