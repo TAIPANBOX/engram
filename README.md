@@ -5,7 +5,7 @@
 [![PyPI version](https://badge.fury.io/py/engdbram.svg)](https://badge.fury.io/py/engdbram)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-359%20passed-green)](tests/)
+[![Tests](https://img.shields.io/badge/tests-392%20passed-green)](tests/)
 
 ---
 
@@ -71,6 +71,7 @@ Engram is a **cognitive memory layer** for AI agents — a single local file (`a
 - **Erase a person**: `forget_entity("Ivan")` permanently removes all episodes, facts, and graph edges connected to Ivan — a proper GDPR right-to-be-forgotten.
 - **Query the past**: `mem.recall("Ivan employer", as_of=datetime(2024, 3, 1))` returns what the agent knew at that exact point in time, not what it knows now.
 - **Run multiple agents**: a planner and a coder can share one file — each sees its own episodes, both benefit from shared extracted facts.
+- **Plug into any MCP client**: run `engram-mcp --db ./agent.engram` and Claude Desktop, Claude Code, or Cursor can `remember`, `recall`, `why`, and `forget` against the same store with zero integration code — see [MCP Server](#mcp-server).
 
 ---
 
@@ -522,6 +523,9 @@ with Engram(path="./new_store.engram") as dst:
 # Permanently erase a single episode
 mem.forget(episode_id)
 
+# Permanently erase a single semantic fact
+mem.forget_fact(fact_id)
+
 # Erase everything about a person: episodes, facts, graph edges
 result = mem.forget_entity("Ivan")
 print(f"Deleted {result.episodes_deleted} episodes, {result.facts_deleted} facts")
@@ -770,6 +774,16 @@ mem.forget(ep_id)
 
 ---
 
+### `forget_fact(fact_id) → None`
+
+Permanently erase a single semantic fact (a triple returned by `assert_fact()` or produced by `reflect()`). Raises `KeyError` if the fact does not exist.
+
+```python
+mem.forget_fact(fact_id)
+```
+
+---
+
 ### `forget_entity(entity_name) → ForgetResult`
 
 GDPR right-to-be-forgotten: permanently delete all data about a named entity across all agents. Removes episodes where the entity appears in `actors`, all facts where it is subject or object, and all graph edges connected to it.
@@ -907,12 +921,13 @@ async with AsyncEngram(path="./agent.engram") as mem:
     ep_id = await mem.observe("Hello world")
     results = await mem.recall("hello", k=3, mode="hybrid", candidate_limit=64)
     bitemporal = await mem.timeline("Alice", as_of=datetime(2024, 3, 1, tzinfo=UTC))
-    await mem.assert_fact("Alice", "role", "CTO")
+    fact_id = await mem.assert_fact("Alice", "role", "CTO")
     await mem.decay()
     await mem.backup("./backup.engram")
     doc = await mem.export_json("./dump.json")
     counts = await mem.import_json("./dump.json", merge=True)
     await mem.forget(ep_id)
+    await mem.forget_fact(fact_id)
     result = await mem.forget_entity("Bob")
 ```
 
@@ -968,23 +983,54 @@ mined from user-controlled text.
 
 ### MCP Server
 
-Expose Engram as an MCP tool server — compatible with Claude Desktop, Cursor, and any MCP host:
+`pip install 'engdbram[mcp]'` adds an `engram-mcp` console command that exposes
+a store as an [MCP](https://modelcontextprotocol.io) tool server over stdio —
+no network listener, compatible with Claude Desktop, Claude Code, Cursor, and
+any other MCP host:
 
 ```bash
-python -m engram.mcp_server --path ./agent.engram
-# or: ENGRAM_PATH=./agent.engram python -m engram.mcp_server
+engram-mcp --db ./agent.engram
+engram-mcp --db ./agent.engram --agent-id my-agent   # scope the default agent
+
+# equivalently, via environment variables
+ENGRAM_MCP_DB=./agent.engram ENGRAM_MCP_AGENT_ID=my-agent engram-mcp
 ```
 
-Available MCP tools: `observe`, `recall`, `assert_fact`, `timeline`, `why`, `reflect`.
+If `--db`/`ENGRAM_MCP_DB` is omitted, the server falls back to an in-memory
+store that is discarded on exit — fine for a quick trial, not for anything
+you want to keep.
 
-Add to `~/.claude/claude_desktop_config.json`:
+Five tools are registered:
+
+| Tool | Purpose |
+|---|---|
+| `remember` | Store a memory. `kind="episodic"` (default) takes `content`; `kind="semantic"` takes `subject`/`predicate`/`object` instead — the structured triple, not free text. Both accept an optional per-call `agent_id` to override the server's default agent scope. |
+| `recall` | Retrieve memories relevant to a natural-language `query`, with `mode="cosine"` (default), `"hybrid"`, or `"spreading"`, and an optional `limit` and `agent_id`. |
+| `why` | Explain a memory's provenance by id — extraction chain and confidence for a fact, encoding/access metadata for an episode. |
+| `forget` | Permanently delete one memory (episodic or semantic) by id. Irreversible. |
+| `stats` | Store-wide counts (episodic, semantic, procedural — the last is always 0, see below), fact validity breakdown, entity/reflection counts, db file size. |
+
+A few things worth calling out:
+
+- **`kind="procedural"` is deliberately rejected.** Engram's store implements
+  episodic and semantic memory only; there is no procedural memory layer to
+  write to, so `remember(kind="procedural", ...)` raises a clear error instead
+  of silently doing nothing.
+- **`reflect()` is not exposed as a tool.** It can call an external LLM to
+  extract facts from episodes, which is out of scope for a zero-config memory
+  server and would break the "no network calls at write time" guarantee every
+  other tool here upholds. Run reflection out-of-band — `engram reflect` (CLI)
+  or `mem.reflect_async()` (library) — against the same `.engram` file.
+- **`agent_id` is an opaque string.** Agent Passport `agent://...` URIs are accepted as-is and used verbatim as the scoping key — Engram does not parse, resolve, or validate them.
+
+Add to your MCP client's config (e.g. `claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "engram": {
-      "command": "python",
-      "args": ["-m", "engram.mcp_server", "--path", "/path/to/agent.engram"]
+      "command": "engram-mcp",
+      "args": ["--db", "/path/to/agent.engram"]
     }
   }
 }
@@ -1061,6 +1107,7 @@ Engram
 ├── why(fact_id)       → provenance: derived_from + extracted_by
 ├── contradictions()   → active facts with same (subject, predicate)
 ├── forget()           → hard-delete one episode (all structures)
+├── forget_fact()      → hard-delete one semantic fact
 ├── forget_entity()    → GDPR: hard-delete all data about a named entity
 ├── backup(dest)       → SQLite online backup API (safe while open)
 ├── export_json(dest)  → portable JSON dump (episodes, facts, entities, edges)
@@ -1237,7 +1284,7 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (359 tests)
+### Test coverage (392 tests)
 
 ```
 tests/
@@ -1263,7 +1310,9 @@ tests/
   test_compress.py       compress() — LLM summarisation, batching, no-op paths
   test_encryption.py     SQLCipher encryption-at-rest + rekey()
   test_llm_adapters.py   all LLM adapters + response-parsing edge cases
-  test_integrations.py   MCP, LangChain, LlamaIndex
+  test_integrations.py   LangChain, LlamaIndex
+  test_mcp_server.py     MCP server (engram-mcp): remember/recall/why/forget/stats,
+                          agent pooling, procedural rejection, reflect() not exposed
   test_benchmarks.py     benchmark infrastructure
 ```
 
@@ -1287,6 +1336,7 @@ tests/
 - [x] v2.1.1 — GitHub Actions CI, `DATA_FLOW.md`, tunable `k_inner` / `candidate_limit`, adapter history hydration, PyPI distribution renamed to `engdbram`
 - [x] v2.1.2 — Multi-agent isolation hardening (per-agent `prune`, FTS cleanup), hybrid `as_of`, FTS5 query safety, embedder normalization, prompt-injection hardening, async API parity (`timeline(as_of=)`, `recall(k_inner=, candidate_limit=)`), tag-triggered PyPI publishing via OIDC
 - [x] v2.2.0 — Correctness pass (bitemporal `as_of` UTC coercion, `contradictions()` identical-fact fix, `import_json` re-embed + FTS, reflection abort rollback, LLM response-parse guards), thread-safety (`Store` + embedder locks for `reflect_async` / `AsyncEngram`), per-agent edge & decay scoping, PEP 561 `py.typed`, CI matrix (Python 3.13 + encryption job), release gated on tests, `migrate()` fails loudly on embedder-dimension mismatch, `pip-audit` CI job
+- [x] Since v2.2.0 (on `main`, not yet tagged) — MCP server tool surface (`engram-mcp`): stdio transport, optional `[mcp]` extra, `remember`/`recall`/`why`/`forget`/`stats` tools with structured semantic params and per-call `agent_id`, `reflect()` deliberately not exposed; public `forget_fact()` API (sync + async) for erasing a single semantic fact
 
 ---
 
