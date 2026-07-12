@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/TAIPANBOX/engram/actions/workflows/ci.yml/badge.svg)](https://github.com/TAIPANBOX/engram/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11+-3776AB.svg)
-![License](https://img.shields.io/badge/license-MIT-yellow.svg)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 ![Status](https://img.shields.io/badge/status-v2.2.0-success.svg)
 
 <img src="docs/architecture.png" alt="Engram architecture: observations flow into the memory core, which holds episodic memory, bitemporal semantic facts, and an entity graph, with optional LLM reflection and compression, and recall flowing back out to the agent" width="960">
@@ -742,7 +742,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
 
 ## License
 
-MIT - see [LICENSE](LICENSE).
+Apache-2.0 - see [LICENSE](LICENSE).
 
 - Architecture rationale and design decisions: [DESIGN.md](DESIGN.md)
 - Release notes by version: [CHANGELOG.md](CHANGELOG.md)
