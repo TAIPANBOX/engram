@@ -386,6 +386,10 @@ from engram import (
 # Claude (default: haiku - fast, cheap)
 llm = AnthropicAdapter(model="claude-haiku-4-5-20251001")
 
+# Claude routed through a proxy (e.g. TokenFuse) instead of the API directly
+llm = AnthropicAdapter(model="claude-haiku-4-5-20251001",
+                        base_url="http://localhost:8080", api_key="proxy-key")
+
 # OpenAI
 llm = OpenAIAdapter(model="gpt-4o-mini")
 
