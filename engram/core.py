@@ -162,6 +162,23 @@ class Engram:
         migrate(self._conn, dim=self._embedder.dim)
         self._store = Store(self._conn, dim=self._embedder.dim, agent_id=agent_id)
 
+        # Serializes reflect(): only one reflection pass runs at a time on
+        # this instance, even when reflect_async() is fired twice (or
+        # reflect() and reflect_async() race) from different threads. A
+        # plain Lock, not RLock: reflect() never calls itself recursively.
+        # Per-instance (not a module global) to respect the no-global-state
+        # invariant -- each Engram gets its own lock.
+        #
+        # Lock ordering: this lock is always acquired BEFORE any Store
+        # method is called (Store methods take self._store's own lock
+        # internally -- see engram.store._synchronized). Nothing in this
+        # codebase ever acquires the Store lock first and then tries to
+        # acquire this reflect lock, so the ordering is a fixed one-way
+        # chain (reflect lock -> store lock), never the reverse. A deadlock
+        # would require a cycle in that wait-for relationship; a fixed
+        # ordering that's never inverted anywhere cannot produce one.
+        self._reflect_lock = threading.Lock()
+
     # ------------------------------------------------------------------
     # Write
     # ------------------------------------------------------------------
@@ -422,31 +439,40 @@ class Engram:
     def reflect(self) -> ReflectionRun:
         """Run the reflection loop synchronously.
 
+        Serialized per instance via ``self._reflect_lock``: if another
+        thread is already inside this method on the same Engram (e.g. a
+        concurrent :meth:`reflect_async`), this call blocks until that pass
+        finishes. Without this, two racing calls could both read the same
+        "since" watermark, both reprocess the same episode window, and both
+        insert -- producing duplicate facts and a self-inflicted
+        contradiction between the two runs.
+
         Returns:
             The completed :class:`ReflectionRun`.
         """
         from engram.reflection import reflect as _reflect
 
-        run = _reflect(
-            self._store,
-            self._llm,
-            self._decay_cfg,
-            events=self._events,
-            agent_id=self._agent_id,
-        )
-        if self._events is not None:
-            self._events.emit(
-                "reflection_run",
-                self._agent_id,
-                {
-                    "reflection_run_id": run.id,
-                    "episodes_processed": run.episodes_processed,
-                    "facts_extracted": run.facts_extracted,
-                    "contradictions_resolved": run.contradictions_resolved,
-                },
-                run_id=run.id,
+        with self._reflect_lock:
+            run = _reflect(
+                self._store,
+                self._llm,
+                self._decay_cfg,
+                events=self._events,
+                agent_id=self._agent_id,
             )
-        return run
+            if self._events is not None:
+                self._events.emit(
+                    "reflection_run",
+                    self._agent_id,
+                    {
+                        "reflection_run_id": run.id,
+                        "episodes_processed": run.episodes_processed,
+                        "facts_extracted": run.facts_extracted,
+                        "contradictions_resolved": run.contradictions_resolved,
+                    },
+                    run_id=run.id,
+                )
+            return run
 
     def reflect_async(self) -> ReflectionThread:
         """Run the reflection loop in a background thread.

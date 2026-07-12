@@ -1,6 +1,7 @@
 """Tests for the reflection loop and related public API."""
 
 import threading
+import time
 
 import pytest
 
@@ -229,6 +230,76 @@ def test_reflect_async_completes_successfully(mem: Engram) -> None:
     t = mem.reflect_async()
     t.join(timeout=60)
     assert mem._store.get_last_reflection() is not None
+
+
+# ------------------------------------------------------------------
+# Concurrent reflect() calls (per-instance serialization)
+# ------------------------------------------------------------------
+
+
+class _SlowStubLLM:
+    """Like StubLLMAdapter, but extract_facts() sleeps briefly.
+
+    The reflect()-level lock must serialize two racing reflect() calls, so
+    this sleep only needs to be long enough to make the two threads'
+    start-up jitter irrelevant; it does not need to be long enough to force
+    the race by itself (see test_concurrent_reflect_calls_are_serialized).
+    """
+
+    model_name = "slow-stub"
+
+    def __init__(self, facts: list[dict[str, object]], delay: float = 0.05) -> None:
+        self._facts = facts
+        self._delay = delay
+
+    def extract_facts(self, episodes):  # type: ignore[no-untyped-def]
+        time.sleep(self._delay)
+        return list(self._facts), 0
+
+    def summarise(self, episodes):  # type: ignore[no-untyped-def]
+        raise NotImplementedError("not used in this test")
+
+
+def test_concurrent_reflect_calls_are_serialized() -> None:
+    """Two threads racing reflect() over one episode window must not both
+    process it: exactly one run sees the episode, the other sees nothing new
+    (its `since` has already advanced past it), and no duplicate facts or
+    self-contradiction result. Simulates reflect_async() fired twice, or
+    reflect() + reflect_async() racing, from two threads on one instance."""
+    stub = _SlowStubLLM(
+        facts=[
+            {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
+        ]
+    )
+    with Engram(path=":memory:", llm=stub) as mem:
+        mem.observe("Ivan moved to Globex")
+
+        results: list[ReflectionRun] = []
+        errors: list[BaseException] = []
+        barrier = threading.Barrier(2)
+
+        def run_reflect() -> None:
+            try:
+                barrier.wait(timeout=5)
+                results.append(mem.reflect())
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=run_reflect) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert not errors
+        assert len(results) == 2
+        # Exactly one run actually processed the episode; the other must find
+        # its incremental window already advanced past it.
+        assert sorted(r.episodes_processed for r in results) == [0, 1]
+
+        facts = mem._store.get_all_facts("Ivan")
+        assert len(facts) == 1  # no duplicate
+        assert mem.contradictions() == []  # no self-inflicted contradiction
 
 
 # ------------------------------------------------------------------
