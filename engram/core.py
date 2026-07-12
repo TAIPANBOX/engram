@@ -467,16 +467,22 @@ class Engram:
         """Permanently erase a single episode from all memory structures.
 
         Removes the episode from the vector index, access log, and graph edges.
-        This operation is irreversible.
+        This operation is irreversible. Scoped to this instance's agent_id:
+        when this instance is agent-scoped, an episode_id belonging to a
+        different agent (or with no agent_id at all) is treated exactly like
+        an unknown id -- an agent can only forget its OWN episodes, even in
+        a DB file shared with other agents. Unscoped instances (no agent_id)
+        keep today's behaviour and can forget any episode.
 
         Args:
             episode_id: Id of the episode to erase (returned by :meth:`observe`).
             reason: Optional note for caller's audit trail (not persisted).
 
         Raises:
-            KeyError: If no episode with this id exists.
+            KeyError: If no episode with this id exists, or it belongs to a
+                different agent than this instance's agent_id.
         """
-        if not self._store.delete_episode(episode_id):
+        if not self._store.delete_episode(episode_id, agent_id=self._agent_id):
             raise KeyError(f"Episode not found: {episode_id!r}")
         if self._events is not None:
             self._events.emit(

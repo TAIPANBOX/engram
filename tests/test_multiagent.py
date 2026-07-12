@@ -307,6 +307,57 @@ def test_forget_entity_erases_across_all_agents(two_agents):
     assert result.episodes_deleted == 2  # both agents' episodes gone
 
 
+def test_forget_cannot_delete_another_agents_episode(two_agents):
+    """Regression test for the cross-agent forget() bug: delete_episode()
+    had no agent_id filter, so agent-a could permanently erase an episode
+    that belongs to agent-b just by knowing/guessing its id. agent-a's
+    forget() must now treat agent-b's episode_id as not found, and agent-b's
+    episode must survive untouched.
+    """
+    a, b = two_agents
+    b_ep_id = b.observe("agent-b private episode")
+
+    with pytest.raises(KeyError):
+        a.forget(b_ep_id)
+
+    assert b._store.episode_count() == 1  # agent-b's episode still exists
+    assert b._store.get_episode(b_ep_id) is not None
+
+
+def test_delete_episode_scoped_to_agent_returns_false_for_other_agent(two_agents):
+    """Store-level contract behind the test above: a scoped delete attempt
+    against another agent's episode id reports "not found" (False) rather
+    than deleting it or raising.
+    """
+    a, b = two_agents
+    b_ep_id = b.observe("agent-b private episode")
+
+    assert a._store.delete_episode(b_ep_id, agent_id="agent-a") is False
+    assert b._store.get_episode(b_ep_id) is not None
+
+
+def test_forget_own_episode_still_succeeds(two_agents):
+    """Companion to the two tests above: scoping forget() to the caller's
+    own agent must not prevent an agent from forgetting its OWN episodes."""
+    _, b = two_agents
+    b_ep_id = b.observe("agent-b episode to erase")
+
+    b.forget(b_ep_id)  # must not raise
+
+    assert b._store.episode_count() == 0
+    assert b._store.get_episode(b_ep_id) is None
+
+
+def test_get_episode_scoped_to_agent_returns_none_for_other_agent(two_agents):
+    """Read-path counterpart: a scoped get_episode() must not return another
+    agent's episode either (backs the MCP why() tool's agent scoping)."""
+    a, b = two_agents
+    b_ep_id = b.observe("agent-b private episode")
+
+    assert a._store.get_episode(b_ep_id, agent_id="agent-a") is None
+    assert b._store.get_episode(b_ep_id, agent_id="agent-b") is not None
+
+
 # ------------------------------------------------------------------
 # Backward compatibility — no agent_id
 # ------------------------------------------------------------------

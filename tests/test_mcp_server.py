@@ -220,6 +220,33 @@ def test_why_raises_keyerror_for_unknown_id(pool):
         _why(pool, "no-such-id")
 
 
+def test_why_cannot_read_another_agents_episode(db_path):
+    """Read-path counterpart to the forget() agent-scoping fix: a why() call
+    bound to one agent must not read another agent's episode content, even
+    though both agents share the same underlying db file."""
+    pool_a = _EngramPool(db_path, default_agent_id="agent-a")
+    b_mem = pool_a.get("agent-b")
+    b_ep_id = b_mem.observe("agent-b private episode")
+
+    with pytest.raises(KeyError):
+        _why(pool_a, b_ep_id)
+
+    pool_a.close()
+
+
+def test_why_still_reads_own_agents_episode_when_pool_is_agent_scoped(db_path):
+    """Sanity check that the fix above does not also break the normal case
+    of an agent-scoped server reading its own episode."""
+    pool_a = _EngramPool(db_path, default_agent_id="agent-a")
+    remembered = _remember(pool_a, "agent-a's own episode", kind="episodic")
+
+    result = _why(pool_a, remembered["id"])
+    assert result["kind"] == "episodic"
+    assert result["content"] == "agent-a's own episode"
+
+    pool_a.close()
+
+
 # ------------------------------------------------------------------
 # forget
 # ------------------------------------------------------------------

@@ -199,9 +199,15 @@ def _why(pool: _EngramPool, memory_id: str) -> dict[str, Any]:
     """Explain the provenance of a memory. See ``_WHY_DESCRIPTION``.
 
     Looks the id up as a fact first (facts are cheap point lookups and are
-    not agent-scoped), then as an episode. Uses the default-agent instance's
-    store for both lookups: neither ``get_fact`` nor ``get_episode`` filters
-    by agent, so any pooled instance sees the same rows.
+    not agent-scoped -- shared across agents by design, see DESIGN.md 11),
+    then as an episode. The fact lookup always uses the default-agent
+    instance's store unscoped: ``get_fact`` never filters by agent, so any
+    pooled instance sees the same fact rows. Episodes are private per agent,
+    though, so the episode lookup passes ``pool.default_agent_id`` to
+    ``get_episode``: this stops a ``why()`` call from reading another
+    agent's episode content. When the server has no default agent id
+    configured (``pool.default_agent_id is None``), the episode lookup
+    stays unscoped too, matching this server's single-tenant default.
     """
     mem = pool.get(pool.default_agent_id)
     store = mem._store  # read-only introspection, same pattern as engram.cli
@@ -224,7 +230,7 @@ def _why(pool: _EngramPool, memory_id: str) -> dict[str, Any]:
             "extraction_model": provenance["model"],
         }
 
-    episode = store.get_episode(memory_id)
+    episode = store.get_episode(memory_id, agent_id=pool.default_agent_id)
     if episode is not None:
         access_count, last_accessed = store.get_access_stats(memory_id)
         return {

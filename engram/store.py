@@ -159,12 +159,25 @@ class Store:
         )
         self._conn.commit()
 
-    def get_episode(self, episode_id: str) -> Episode | None:
-        """Fetch a single episode by id."""
-        row: Any = self._conn.execute(
-            f"SELECT {_EPISODE_COLS} FROM episodes WHERE id = ?",
-            (episode_id,),
-        ).fetchone()
+    def get_episode(self, episode_id: str, agent_id: str | None = None) -> Episode | None:
+        """Fetch a single episode by id.
+
+        Args:
+            agent_id: If set, only return the episode when it is owned by
+                this agent; an episode owned by a different agent (or with
+                a NULL agent_id) is treated as not found. If None (default),
+                matches by id alone regardless of owner.
+        """
+        if agent_id is not None:
+            row: Any = self._conn.execute(
+                f"SELECT {_EPISODE_COLS} FROM episodes WHERE id = ? AND agent_id = ?",
+                (episode_id, agent_id),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                f"SELECT {_EPISODE_COLS} FROM episodes WHERE id = ?",
+                (episode_id,),
+            ).fetchone()
         return Episode.from_row(tuple(row)) if row else None
 
     def search_episodes(
@@ -432,22 +445,38 @@ class Store:
     # Forget / erasure
     # ------------------------------------------------------------------
 
-    def _get_episode_rowid(self, episode_id: str) -> int | None:
-        row: Any = self._conn.execute(
-            "SELECT rowid FROM episodes WHERE id = ?", (episode_id,)
-        ).fetchone()
+    def _get_episode_rowid(self, episode_id: str, agent_id: str | None = None) -> int | None:
+        if agent_id is not None:
+            row: Any = self._conn.execute(
+                "SELECT rowid FROM episodes WHERE id = ? AND agent_id = ?",
+                (episode_id, agent_id),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT rowid FROM episodes WHERE id = ?", (episode_id,)
+            ).fetchone()
         return int(row[0]) if row else None
 
-    def delete_episode(self, episode_id: str) -> bool:
+    def delete_episode(self, episode_id: str, agent_id: str | None = None) -> bool:
         """Hard-delete an episode and all associated data.
 
         Removes the row from episodes, vec_episodes (ANN index), access_log,
         and any graph edges sourced from this episode.
 
+        Args:
+            agent_id: If set, only delete the episode when it is owned by
+                this agent; an episode owned by a different agent (or with
+                a NULL agent_id) is left untouched and reported as not
+                found. If None (default), matches by id alone regardless
+                of owner -- used internally by :meth:`forget_entity`, whose
+                cross-agent erasure must reach every agent's episodes in a
+                shared store.
+
         Returns:
-            True if the episode existed and was deleted; False if not found.
+            True if the episode existed (and was owned by *agent_id*, when
+            given) and was deleted; False if not found.
         """
-        rowid = self._get_episode_rowid(episode_id)
+        rowid = self._get_episode_rowid(episode_id, agent_id)
         if rowid is None:
             return False
         self._conn.execute("DELETE FROM vec_episodes WHERE rowid = ?", (rowid,))
