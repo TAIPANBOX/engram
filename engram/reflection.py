@@ -69,65 +69,82 @@ def reflect(
 
     cost_tokens = 0
     if llm and episodes:
+        # The whole extract -> build-facts -> insert -> contradiction -> edges
+        # sequence is protected as one unit: a mid-way raise anywhere in here
+        # (a malformed fact dict, a Store error, anything) must not leave
+        # partial output behind, or it gets duplicated when the next
+        # reflection reprocesses this same episode window.
         try:
             raw_facts, call_tokens = llm.extract_facts(episodes)
+            cost_tokens += call_tokens
+            episode_ids = [ep.id for ep in episodes]
+
+            # store.transaction() wraps only the DB-mutating part below, not
+            # the LLM call above: the lock it holds must never span a slow
+            # external call (see _synchronized's docstring in store.py). A
+            # raise inside this block rolls back every fact/edge/
+            # contradiction write it made, in one shot -- including partial
+            # Hebbian edge-weight upserts that a manual delete could not
+            # safely reverse (see Store.transaction()).
+            with store.transaction():
+                for rf in raw_facts:
+                    # Belt-and-braces: cap confidence again in case the adapter
+                    # bypasses _parse_facts_json (e.g. test stubs feeding raw dicts).
+                    confidence = min(
+                        max(float(rf.get("confidence", 0.5)), 0.0),
+                        MAX_EXTRACTED_CONFIDENCE,
+                    )
+                    fact = Fact(
+                        id=str(uuid.uuid4()),
+                        subject=str(rf["subject"]),
+                        predicate=str(rf["predicate"]),
+                        object=str(rf["object"]),
+                        valid_from=now,
+                        valid_to=None,
+                        recorded_at=now,
+                        superseded_at=None,
+                        superseded_by=None,
+                        confidence=confidence,
+                        derived_from=episode_ids,
+                        extracted_by=run_id,
+                    )
+                    store.insert_fact(fact)
+                    facts_extracted += 1
+
+                    # Contradiction detection: close any older active facts with same (s, p).
+                    conflicts = store.get_active_facts(fact.subject, fact.predicate)
+                    for old in conflicts:
+                        if old.id != fact.id:
+                            store.close_fact(old.id, valid_to=now, superseded_by=fact.id)
+                            contradictions_resolved += 1
+                            if events is not None:
+                                events.emit(
+                                    "contradiction_found",
+                                    agent_id,
+                                    {"memory_id": fact.id, "conflicting_memory_id": old.id},
+                                    run_id=run_id,
+                                )
+
+                    # Entity extraction and episode→entity edges (Hebbian reinforcement).
+                    for name in (fact.subject, fact.object):
+                        entity = store.find_or_create_entity(name, "unknown", now)
+                        for ep_id in episode_ids:
+                            store.insert_edge(
+                                ep_id,
+                                entity.id,
+                                "mentions",
+                                weight=fact.confidence,
+                                created_at=now,
+                            )
         except Exception:
-            # Roll the run record back so it doesn't linger unfinished and
+            # By this point store.transaction() (if it was entered at all)
+            # has already rolled back every fact/edge/contradiction write
+            # from this run. Only the ReflectionRun row itself -- inserted,
+            # and committed, before this block started -- still needs its
+            # own explicit cleanup so it doesn't linger unfinished and
             # poison the incremental window on the next reflection.
             store.delete_reflection(run_id)
             raise
-        cost_tokens += call_tokens
-        episode_ids = [ep.id for ep in episodes]
-
-        for rf in raw_facts:
-            # Belt-and-braces: cap confidence again in case the adapter
-            # bypasses _parse_facts_json (e.g. test stubs feeding raw dicts).
-            confidence = min(
-                max(float(rf.get("confidence", 0.5)), 0.0),
-                MAX_EXTRACTED_CONFIDENCE,
-            )
-            fact = Fact(
-                id=str(uuid.uuid4()),
-                subject=str(rf["subject"]),
-                predicate=str(rf["predicate"]),
-                object=str(rf["object"]),
-                valid_from=now,
-                valid_to=None,
-                recorded_at=now,
-                superseded_at=None,
-                superseded_by=None,
-                confidence=confidence,
-                derived_from=episode_ids,
-                extracted_by=run_id,
-            )
-            store.insert_fact(fact)
-            facts_extracted += 1
-
-            # Contradiction detection: close any older active facts with same (s, p).
-            conflicts = store.get_active_facts(fact.subject, fact.predicate)
-            for old in conflicts:
-                if old.id != fact.id:
-                    store.close_fact(old.id, valid_to=now, superseded_by=fact.id)
-                    contradictions_resolved += 1
-                    if events is not None:
-                        events.emit(
-                            "contradiction_found",
-                            agent_id,
-                            {"memory_id": fact.id, "conflicting_memory_id": old.id},
-                            run_id=run_id,
-                        )
-
-            # Entity extraction and episode→entity edges (Hebbian reinforcement).
-            for name in (fact.subject, fact.object):
-                entity = store.find_or_create_entity(name, "unknown", now)
-                for ep_id in episode_ids:
-                    store.insert_edge(
-                        ep_id,
-                        entity.id,
-                        "mentions",
-                        weight=fact.confidence,
-                        created_at=now,
-                    )
 
     # Decay + prune.
     run_decay(store, cfg, now)

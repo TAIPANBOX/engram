@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import json
 import sqlite3
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import Any, TypeVar, cast
 
@@ -127,6 +128,58 @@ class Store:
         # to avoid one commit per recall result. Flushed on close() or when
         # the buffer reaches _ACCESS_LOG_FLUSH_SIZE.
         self._access_buffer: list[tuple[str, str, str | None, int, str | None]] = []
+        # >0 while an outer transaction() block is open; see _commit().
+        self._tx_depth = 0
+
+    def _commit(self) -> None:
+        """Commit now, unless an outer :meth:`transaction` block is active.
+
+        Write methods call this instead of ``self._conn.commit()`` directly
+        so they behave exactly as before when called on their own, but
+        become no-op-commit steps when called from inside an outer
+        :meth:`transaction` block, which commits (or rolls back) everything
+        as one unit when it exits.
+        """
+        if self._tx_depth == 0:
+            self._conn.commit()
+
+    @contextlib.contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Group a sequence of writes into one all-or-nothing SQL transaction.
+
+        Methods called inside this block (``insert_fact``, ``close_fact``,
+        ``find_or_create_entity``, ``insert_edge``, ...) still take
+        ``self._lock`` as usual -- it is re-entrant -- but skip their normal
+        per-call commit via :meth:`_commit`; nothing is durably written
+        until the block exits. On success, a single commit makes every
+        write visible at once. On any exception, a single rollback undoes
+        every write the block made, including partial Hebbian edge-weight
+        upserts from :meth:`insert_edge` (``weight = weight + excluded.weight``)
+        that a manual per-row DELETE could not safely reverse: once a
+        pre-existing weight and this block's delta are merged into one
+        number, they cannot be told apart again.
+
+        The lock is held for the block's entire duration (unlike the
+        momentary hold a single method call takes), so a concurrent write
+        from another thread cannot interleave into this uncommitted
+        transaction and get rolled back (or silently committed) with it.
+
+        Reentrant: a nested ``with store.transaction():`` only commits (or
+        rolls back) once, at the outermost exit.
+        """
+        with self._lock:
+            self._tx_depth += 1
+            try:
+                yield
+            except BaseException:
+                self._tx_depth -= 1
+                if self._tx_depth == 0:
+                    self._conn.rollback()
+                raise
+            else:
+                self._tx_depth -= 1
+                if self._tx_depth == 0:
+                    self._conn.commit()
 
     def insert_episode(self, ep: Episode, embedding: EmbeddedVector) -> None:
         """Persist an episode and its embedding vector."""
@@ -595,7 +648,7 @@ class Store:
                 fact.extracted_by,
             ),
         )
-        self._conn.commit()
+        self._commit()
 
     def get_fact(self, fact_id: str) -> Fact | None:
         """Fetch a single fact by id."""
@@ -635,7 +688,7 @@ class Store:
             "UPDATE facts SET valid_to = ?, superseded_by = ?, superseded_at = ? WHERE id = ?",
             (_iso_utc(valid_to), superseded_by, _iso_utc(valid_to), fact_id),
         )
-        self._conn.commit()
+        self._commit()
 
     # ------------------------------------------------------------------
     # Reflections
@@ -818,7 +871,7 @@ class Store:
                 "UPDATE entities SET last_seen = ? WHERE id = ?",
                 (now.isoformat(), existing.id),
             )
-            self._conn.commit()
+            self._commit()
             existing.last_seen = now
             return existing
         entity_id = str(uuid.uuid4())
@@ -826,7 +879,7 @@ class Store:
             f"INSERT INTO entities ({self._ENTITY_COLS}) VALUES (?, ?, ?, ?, ?, ?)",
             (entity_id, name, entity_type, "[]", now.isoformat(), now.isoformat()),
         )
-        self._conn.commit()
+        self._commit()
         return Entity(
             id=entity_id,
             name=name,
@@ -874,7 +927,7 @@ class Store:
             """,
             (src_id, dst_id, relation, weight, created_at.isoformat(), self._agent_id),
         )
-        self._conn.commit()
+        self._commit()
 
     def get_neighbors(self, node_id: str) -> list[tuple[str, float]]:
         """Return (neighbor_id, weight) from both directions of all edges.

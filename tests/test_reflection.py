@@ -125,6 +125,49 @@ def test_reflect_after_failure_reprocesses_skipped_episodes() -> None:
         assert run.facts_extracted == 1
 
 
+def test_reflect_downstream_failure_rolls_back_partial_writes() -> None:
+    """A failure AFTER extract_facts() succeeds (e.g. a malformed fact dict
+    later in the list) must roll back everything the run wrote so far -
+    not just the ReflectionRun row - or the already-inserted fact survives
+    and gets duplicated when the next reflection reprocesses the same
+    episode window.
+
+    This is distinct from test_reflect_failure_does_not_leave_dangling_run
+    and test_reflect_after_failure_reprocesses_skipped_episodes above, which
+    only cover extract_facts() itself raising. Here extract_facts() returns
+    successfully; the crash happens while building the second Fact object.
+    """
+    stub = StubLLMAdapter(
+        facts=[
+            {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
+            {"subject": "Maria", "predicate": "role"},  # missing "object" -> KeyError downstream
+        ]
+    )
+    with Engram(path=":memory:", llm=stub) as mem:
+        mem.observe("Ivan moved to Globex; Maria's role is unclear")
+        with pytest.raises(KeyError):
+            mem.reflect()
+
+        # No dangling run: neither the raw row nor the finished-only view sees it.
+        assert mem._store.get_last_reflection() is None
+        assert mem._store.get_last_finished_reflection() is None
+        # The fact from the good dict processed before the crash must not survive.
+        assert mem._store.get_all_facts("Ivan") == []
+
+        # A second, successful reflect() over the SAME episode window (the
+        # failed run must not have advanced the incremental window) must not
+        # produce a duplicate of the "Ivan works_at Globex" fact.
+        mem._llm = StubLLMAdapter(
+            facts=[
+                {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
+            ]
+        )
+        run = mem.reflect()
+        assert run.episodes_processed == 1
+        facts = mem._store.get_all_facts("Ivan")
+        assert len(facts) == 1
+
+
 def test_reflect_contradiction_detection() -> None:
     """When the LLM extracts a new (s,p) that already exists, close the old fact."""
     stub_acme = StubLLMAdapter(
