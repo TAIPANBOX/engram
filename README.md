@@ -102,6 +102,16 @@ flowchart TB
 
 The full stack is TokenFuse (spend), Wardryx (policy), Engram (memory), Idryx (access), Qryx (crypto), Verdryx (quality), Mockryx (pre-prod), on the shared Agent Passport + agent-event contract (agent-stack-go / agent-passport), configured via terraform-provider-taipan.
 
+## Live infrastructure validation
+
+Before any public launch, Engram's Anthropic adapter was run against a real Claude model on real Linux
+infrastructure: three independent runs, zero bugs, zero contradictions, every extracted fact carrying
+full `why()` provenance back to the observations it came from.
+
+![Engram reflection pipeline: 8 episodes in, 17 semantic facts out, 0 contradictions, full why() provenance on one belief](assets/07-engram.png)
+
+Full write-up and all numbers: [`VALIDATION.md`](VALIDATION.md).
+
 ---
 
 ## What is Engram, technically?
