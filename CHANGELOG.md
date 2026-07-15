@@ -5,6 +5,26 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-07-15
+
+### Security
+- `forget()`, `delete_episode()`, and `get_episode()` are now scoped by
+  `agent_id`: in a pooled multi-agent database one agent can no longer read or
+  delete another agent's episodes by id. Facts and entities stay shared by
+  design.
+
+### Fixed
+- A malformed fact mid-`reflect()` no longer leaves a dangling reflection run
+  or duplicated facts: the whole run is wrapped in a store transaction and
+  rolls back atomically on failure.
+- Concurrent `reflect()` calls on one instance are serialized, eliminating
+  double-processing of the same episodes (the LLM call stays outside the lock).
+
+### Changed
+- License switched from MIT to Apache-2.0 (LICENSE file and packaging
+  metadata; this is the first PyPI release whose metadata carries Apache-2.0).
+- LICENSE copyright holder unified to TAIPANBOX.
+
 ## [2.2.0] - 2026-07-01
 
 ### Added
