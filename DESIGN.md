@@ -123,7 +123,7 @@ Steps:
 1. **Cluster** recent episodes by entity / topic
 2. **Extract facts** — LLM call to produce semantic triples (s, p, o)
 3. **Detect contradictions** — same (s, p), different o
-4. **Update validity** — close older fact's `valid_to`
+4. **Update validity** — close each older same-(s, p) fact's `valid_to` (newest wins; a same-object re-extraction closes silently, as agreement)
 5. **Decay** — recompute importance scores
 6. **Prune** — drop memories below threshold
 7. **Compress** — old episode clusters → summary episodes (lossy, like the brain)
@@ -140,6 +140,29 @@ Fact #891: Ivan works_at "Globex" [valid: 2024-06 → now]
 ```
 
 `recall()` returns current by default. With `as_of=date`, returns whatever was valid then.
+
+Settled semantics (2026-07-21):
+
+- The conflict unit is the (subject, predicate) pair, not the entity. Facts
+  about one entity under different predicates never interact.
+- Reflection auto-adjudicates by recency: inserting an extracted fact closes
+  every older active fact with the same (s, p), leaving one active value per
+  pair. Only a differing object counts as a contradiction (increments
+  `contradictions_resolved`, emits `contradiction_found`); re-extracting the
+  same object is agreement and supersedes silently, refreshing provenance and
+  confidence through the `superseded_by` chain. Mirrors `contradictions()`,
+  which skips same-object pairs.
+- Validity stays segmented per row: each supersession closes the old interval
+  at `now` and opens a new one, so any `as_of` instant matches exactly one
+  row. Walk the `superseded_by` chain to recover how long a value has been
+  continuously true.
+- Object comparison is exact string equality. Normalizing spellings ("Globex"
+  vs "Globex Corp") is the extractor's job; two spellings of one truth under
+  the same predicate are deliberately a real contradiction, resolved by
+  recency.
+- `assert_fact()` (the manual path) never closes anything: coexisting active
+  values per (s, p) are allowed there, and `contradictions()` is the surface
+  that lets the caller resolve them.
 
 ### 3.6. Provenance tracking
 

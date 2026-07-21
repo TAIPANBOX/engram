@@ -44,7 +44,8 @@ with Engram(path=":memory:") as mem:
 > configured. `observe()`, `assert_fact()`, `forget()`, and `forget_fact()`
 > each emit a `memory_written`/`memory_forgotten` event (`info`); `reflect()`
 > emits one `reflection_run` event (`info`) plus one `contradiction_found`
-> event (`medium`) per fact it supersedes. Events with no `agent_id` set on
+> event (`medium`) per fact it supersedes with a differing object (a
+> same-object re-extraction supersedes silently, as agreement). Events with no `agent_id` set on
 > the instance are skipped, never fabricated. A local file append is not a
 > network call, so this does not violate Engram's write-time invariant - see
 > `engram/events.py` for the full reasoning. Failures to write an event are
@@ -545,7 +546,7 @@ Engram
 │
 ├── timeline(entity)   → facts WHERE subject=? ORDER BY valid_from
 ├── why(fact_id)       → provenance: derived_from + extracted_by
-├── contradictions()   → active facts with same (subject, predicate)
+├── contradictions()   → active facts with same (subject, predicate), different object
 ├── forget()           → hard-delete one episode (all structures)
 ├── forget_fact()      → hard-delete one semantic fact
 ├── forget_entity()    → GDPR: hard-delete all data about a named entity

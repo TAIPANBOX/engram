@@ -259,7 +259,7 @@ LLM calls in Engram never block writes. The reflection loop runs asynchronously 
 1. Group recent observations by entity or topic
 2. Call the LLM to extract structured facts (`Ivan works_at Globex`)
 3. Detect contradictions - same subject and predicate, different value
-4. Close outdated facts with an end date
+4. Close superseded facts with an end date (newest value wins; an identical re-extraction supersedes silently)
 5. Recompute importance scores
 6. Prune memories below threshold
 

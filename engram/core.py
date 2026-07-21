@@ -444,8 +444,7 @@ class Engram:
         concurrent :meth:`reflect_async`), this call blocks until that pass
         finishes. Without this, two racing calls could both read the same
         "since" watermark, both reprocess the same episode window, and both
-        insert -- producing duplicate facts and a self-inflicted
-        contradiction between the two runs.
+        insert -- duplicating the same extracted facts.
 
         Returns:
             The completed :class:`ReflectionRun`.
