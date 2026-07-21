@@ -42,8 +42,10 @@ def reflect(
         now: Reference time (defaults to current UTC time).
         events: Optional Agent Passport event log. When given, a
             ``contradiction_found`` event is emitted at the point a
-            newly-extracted fact actually supersedes an older one (see
-            :mod:`engram.events`). ``None`` (the default) emits nothing.
+            newly-extracted fact supersedes an older one with a *different*
+            object; a same-object re-extraction supersedes silently, as
+            agreement (see :mod:`engram.events`). ``None`` (the default)
+            emits nothing.
         agent_id: Agent scope to attach to emitted events. Ignored when
             *events* is ``None``.
 
@@ -111,19 +113,27 @@ def reflect(
                     store.insert_fact(fact)
                     facts_extracted += 1
 
-                    # Contradiction detection: close any older active facts with same (s, p).
+                    # Supersede any older active facts with the same (s, p):
+                    # the newest extraction wins, leaving one active value per
+                    # pair. Only a differing object is a contradiction (counted
+                    # and emitted); re-extracting the same object is agreement,
+                    # so the supersede chain is refreshed silently -- mirroring
+                    # contradictions(), which skips same-object pairs too.
                     conflicts = store.get_active_facts(fact.subject, fact.predicate)
                     for old in conflicts:
-                        if old.id != fact.id:
-                            store.close_fact(old.id, valid_to=now, superseded_by=fact.id)
-                            contradictions_resolved += 1
-                            if events is not None:
-                                events.emit(
-                                    "contradiction_found",
-                                    agent_id,
-                                    {"memory_id": fact.id, "conflicting_memory_id": old.id},
-                                    run_id=run_id,
-                                )
+                        if old.id == fact.id:
+                            continue
+                        store.close_fact(old.id, valid_to=now, superseded_by=fact.id)
+                        if old.object == fact.object:
+                            continue
+                        contradictions_resolved += 1
+                        if events is not None:
+                            events.emit(
+                                "contradiction_found",
+                                agent_id,
+                                {"memory_id": fact.id, "conflicting_memory_id": old.id},
+                                run_id=run_id,
+                            )
 
                     # Entity extraction and episode→entity edges (Hebbian reinforcement).
                     for name in (fact.subject, fact.object):

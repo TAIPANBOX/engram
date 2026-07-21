@@ -201,6 +201,38 @@ def test_reflect_contradiction_detection() -> None:
         assert closed[0].object == "Acme"
 
 
+def test_reflect_same_object_reextraction_is_not_a_contradiction() -> None:
+    """Re-extracting an identical (s, p, o) is agreement, not a contradiction.
+
+    The old row is still superseded (fresh provenance, intact chain), but
+    silently: no contradictions_resolved increment. Mirrors contradictions(),
+    which skips same-object pairs.
+    """
+    stub = StubLLMAdapter(
+        facts=[
+            {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
+        ]
+    )
+    with Engram(path=":memory:", llm=stub) as mem:
+        mem.observe("Ivan works at Globex")
+        mem.reflect()
+
+        mem.observe("Ivan mentioned Globex again")
+        run = mem.reflect()
+
+        assert run.contradictions_resolved == 0
+        # The re-extraction still refreshes via the supersede chain: exactly
+        # one active fact (the new row), the old row closed and chained to it.
+        active = mem._store.get_active_facts("Ivan", "works_at")
+        assert len(active) == 1
+        all_facts = mem._store.get_all_facts("Ivan")
+        assert len(all_facts) == 2
+        closed = [f for f in all_facts if f.valid_to is not None]
+        assert len(closed) == 1
+        assert closed[0].superseded_by == active[0].id
+        assert closed[0].object == active[0].object == "Globex"
+
+
 # ------------------------------------------------------------------
 # reflect_async()
 # ------------------------------------------------------------------

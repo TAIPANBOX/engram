@@ -234,6 +234,22 @@ def test_reflect_emits_valid_contradiction_found_event(tmp_path) -> None:
     assert run.contradictions_resolved == 1
 
 
+def test_same_object_reextraction_emits_no_contradiction_event(tmp_path) -> None:
+    """Superseding an identical (s, p, o) is agreement: no event, no count."""
+    events_path = tmp_path / "events.ndjson"
+    stub = StubLLMAdapter(
+        facts=[{"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9}]
+    )
+    with Engram(path=":memory:", agent_id=_AGENT_ID, llm=stub, events_path=events_path) as mem:
+        mem.assert_fact("Ivan", "works_at", "Globex")  # same object the stub re-extracts
+        mem.observe("Ivan still works at Globex")
+        run = mem.reflect()
+
+    events = _read_ndjson(events_path)
+    assert all(e["type"] != "contradiction_found" for e in events)
+    assert run.contradictions_resolved == 0
+
+
 def test_no_llm_reflect_emits_no_contradiction_event(tmp_path) -> None:
     events_path = tmp_path / "events.ndjson"
     with Engram(path=":memory:", agent_id=_AGENT_ID, events_path=events_path) as mem:
