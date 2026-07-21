@@ -233,6 +233,75 @@ def test_reflect_same_object_reextraction_is_not_a_contradiction() -> None:
         assert closed[0].object == active[0].object == "Globex"
 
 
+def test_reflect_intra_batch_duplicate_triples_are_not_contradictions() -> None:
+    """One LLM response containing the same triple twice must not self-contradict.
+
+    Each duplicate still lands as a row chained to its predecessor, but the
+    batch resolves zero contradictions and one active fact remains.
+    """
+    stub = StubLLMAdapter(
+        facts=[
+            {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
+            {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
+        ]
+    )
+    with Engram(path=":memory:", llm=stub) as mem:
+        mem.observe("Ivan works at Globex, said twice")
+        run = mem.reflect()
+
+        assert run.facts_extracted == 2
+        assert run.contradictions_resolved == 0
+        active = mem._store.get_active_facts("Ivan", "works_at")
+        assert len(active) == 1
+        assert len(mem._store.get_all_facts("Ivan")) == 2
+
+
+def test_reflect_mixed_agreement_and_conflict_counts_only_the_conflict() -> None:
+    """With one agreeing and one conflicting active fact, only the conflict counts.
+
+    Both older facts are superseded (one active value per (s, p) after
+    reflection), but contradictions_resolved reflects the differing object only.
+    """
+    stub = StubLLMAdapter(
+        facts=[
+            {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
+        ]
+    )
+    with Engram(path=":memory:", llm=stub) as mem:
+        mem.assert_fact("Ivan", "works_at", "Globex")  # agrees with the extraction
+        mem.assert_fact("Ivan", "works_at", "Acme")  # conflicts with it
+        mem.observe("Ivan confirmed he works at Globex")
+        run = mem.reflect()
+
+        assert run.contradictions_resolved == 1
+        active = mem._store.get_active_facts("Ivan", "works_at")
+        assert len(active) == 1
+        assert active[0].object == "Globex"
+        assert active[0].extracted_by == run.id  # the extracted row, not the manual one
+        closed = [f for f in mem._store.get_all_facts("Ivan") if f.valid_to is not None]
+        assert {f.object for f in closed} == {"Globex", "Acme"}
+        assert all(f.superseded_by == active[0].id for f in closed)
+
+
+def test_reflect_same_object_refresh_takes_newest_confidence() -> None:
+    """A same-object re-extraction refreshes confidence: newest evidence wins,
+    even when the older assertion was more confident."""
+    stub = StubLLMAdapter(
+        facts=[
+            {"subject": "Ivan", "predicate": "works_at", "object": "Globex", "confidence": 0.9},
+        ]
+    )
+    with Engram(path=":memory:", llm=stub) as mem:
+        mem.assert_fact("Ivan", "works_at", "Globex", confidence=1.0)
+        mem.observe("Ivan mentioned Globex in passing")
+        run = mem.reflect()
+
+        assert run.contradictions_resolved == 0
+        active = mem._store.get_active_facts("Ivan", "works_at")
+        assert len(active) == 1
+        assert active[0].confidence == pytest.approx(0.9)
+
+
 # ------------------------------------------------------------------
 # reflect_async()
 # ------------------------------------------------------------------
