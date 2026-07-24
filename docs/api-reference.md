@@ -49,7 +49,9 @@ with Engram(path=":memory:") as mem:
 > the instance are skipped, never fabricated. A local file append is not a
 > network call, so this does not violate Engram's write-time invariant - see
 > `engram/events.py` for the full reasoning. Failures to write an event are
-> logged as a warning and never raised into the memory operation.
+> logged as a warning and never raised into the memory operation. Each event
+> also carries a SPEC.md §6.5 `prev_hash` chain (one file, one chain,
+> resumed across restarts) - verify with `agent-conform -chain <file>`.
 
 ---
 
