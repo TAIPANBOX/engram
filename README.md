@@ -114,6 +114,28 @@ full `why()` provenance back to the observations it came from.
 
 Full write-up and all numbers: [`VALIDATION.md`](VALIDATION.md).
 
+
+
+### Running it on a Kubernetes cluster
+
+The whole stack was deployed as a five-node k3s cluster on Hetzner, AWS and GCP
+between 25 and 27 July 2026 (six clusters, all destroyed afterwards). The
+manifests, the traps and the evidence are public in
+[stack-k8s](https://github.com/TAIPANBOX/stack-k8s). Engram is deliberately **not** a pod. The console speaks to
+`engram-mcp` over **stdio**, and a sidecar container cannot be another
+container's stdin, so the binary has to live inside the console image rather
+than beside it. That is why `images/console.Dockerfile` is a four-language
+build. Getting this wrong produces a cluster where the memory tab is
+permanently empty while every pod reports healthy. The store itself takes an
+ordinary ReadWriteOnce volume; single-file memory is an asset here, because
+there is nothing to cluster.
+
+To be clear about scope: those runs verified the deployment shape and the
+service coming up correctly on three clouds. They did not exercise memory under load: the memory plane was
+deliberately left unseeded on those clusters, so there are no recall or
+reflection numbers from them, and none are claimed. The numbers in this file
+remain the ones to read.
+
 ---
 
 ## What is Engram, technically?
@@ -376,8 +398,8 @@ ep_id = mem.observe(
     "Alice presented the Q3 roadmap to the exec team",
     actors=["Alice"],
     tags=["work", "roadmap"],
-    salience=0.8,           # 0–1, subjective importance at encoding
-    emotional_valence=0.2,  # –1 (negative) … +1 (positive)
+    salience=0.8,           # 0-1, subjective importance at encoding
+    emotional_valence=0.2,  # -1 (negative) … +1 (positive)
 )
 
 # Semantic recall
