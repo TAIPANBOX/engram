@@ -74,6 +74,15 @@ ignore = ["E501"]  # line length handled by formatter
 
 [tool.ruff.format]
 quote-style = "double"
+# Markdown is documentation, not source. Ruff 0.16 began formatting Python
+# code blocks inside `.md`, and its first act was to collapse the aligned
+# trailing comments in the README's examples, which are aligned on purpose
+# because a reader scans them as a column. The dev pin here is `ruff>=0.6`,
+# so CI installs whatever is newest and a developer runs whatever they have;
+# that drift is what turned a formatting opinion into a red build nobody
+# could reproduce locally. The samples still get linted, they are just not
+# reformatted.
+exclude = ["*.md"]
 
 [tool.mypy]
 python_version = "3.11"
