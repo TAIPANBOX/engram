@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-18 -18 996 366" width="996" height="366" role="img" aria-label="Engram: agent memory in one SQLite file, recalled with provenance">
+  <title>Engram: agent memory in one SQLite file, recalled with provenance</title>
+  <rect x="-18" y="-18" width="996" height="366" rx="16" fill="#0A0E13"/>
+  <rect x="-17.5" y="-17.5" width="995" height="365" rx="15.5" fill="none" stroke="rgba(255,255,255,.09)"/>
+
+        <defs><marker id="a3" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#5A6675"/></marker></defs>
+        <g font-family="ui-monospace,Menlo" text-anchor="middle">
+          <rect x="16" y="120" width="120" height="58" rx="12" fill="#141C27" stroke="#2a3547"/>
+          <text x="76" y="146" fill="#E9EFF6" font-size="12.5" font-weight="700">agent</text>
+          <text x="76" y="163" fill="#8A97A6" font-size="10.5">observe &#183; recall</text>
+
+          <rect x="196" y="52" width="300" height="196" rx="16" fill="#10161F" stroke="#6C7BFF" stroke-width="1.4"><animate attributeName="stroke-opacity" values="1;.45;1" dur="3.4s" repeatCount="indefinite"/></rect>
+          <text x="346" y="80" fill="#6C7BFF" font-size="14" font-weight="700">engram.db &#183; SQLite + sqlite-vec</text>
+          <g font-size="10.5" fill="#8A97A6">
+            <rect x="216" y="96" width="261" height="30" rx="8" fill="#141C27" stroke="#2a3547"/><text x="346" y="115" fill="#E9EFF6">episodic &#183; semantic &#183; procedural</text>
+            <rect x="216" y="134" width="125" height="30" rx="8" fill="#141C27" stroke="#2a3547"/><text x="278" y="153" fill="#E9EFF6">bitemporal facts</text>
+            <rect x="352" y="134" width="125" height="30" rx="8" fill="#141C27" stroke="#2a3547"/><text x="414" y="153" fill="#E9EFF6" font-size="10">spreading activation</text>
+            <rect x="216" y="172" width="125" height="30" rx="8" fill="#141C27" stroke="#2a3547"/><text x="278" y="191" fill="#E9EFF6">Ebbinghaus decay</text>
+            <rect x="352" y="172" width="125" height="30" rx="8" fill="#141C27" stroke="#2a3547"/><text x="414" y="191" fill="#E9EFF6">working memory</text>
+            <text x="346" y="228" fill="#5A6675" font-size="10.5">writes in ~4 ms &#183; no LLM in the write path</text>
+          </g>
+
+          <rect x="544" y="106" width="158" height="86" rx="12" fill="#141C27" stroke="#2a3547"/>
+          <text x="623" y="130" fill="#E9EFF6" font-size="12.5" font-weight="700">LLM adapter</text>
+          <text x="623" y="149" fill="#8A97A6" font-size="10.5">Anthropic/OpenAI/Ollama</text>
+          <text x="623" y="168" font-size="10.5"><tspan fill="#8A97A6">via </tspan><tspan fill="#F4B23E">TokenFuse</tspan><tspan fill="#8A97A6"> base_url</tspan></text>
+          <text x="520" y="116" fill="#5A6675" font-size="9.5">reflect</text>
+          <text x="520" y="188" fill="#5A6675" font-size="10.5">facts</text>
+
+          <rect x="742" y="34" width="200" height="104" rx="14" fill="#10161F" stroke="#2a3547"/>
+          <text x="842" y="60" fill="#E9EFF6" font-size="12.5" font-weight="700">MCP server &#183; stdio</text>
+          <text x="842" y="79" fill="#8A97A6" font-size="10.5">Claude Desktop &#183; Cursor</text>
+          <text x="842" y="96" fill="#8A97A6" font-size="10.5">remember/recall/why/forget</text>
+          <text x="842" y="115" fill="#5A6675" font-size="10.5">no network listener</text>
+
+          <rect x="742" y="196" width="200" height="100" rx="14" fill="#10161F" stroke="#2a3547"/>
+          <text x="842" y="222" fill="#E9EFF6" font-size="12.5" font-weight="700">agent-event NDJSON</text>
+          <text x="842" y="241" fill="#8A97A6" font-size="10.5">memory_written&#183;reflection_run</text>
+          <text x="842" y="256" fill="#8A97A6" font-size="10.5">contradiction&#183;memory_forgotten</text>
+          <text x="842" y="276" fill="#5A6675" font-size="10.5">opt-in &#183; off by default</text>
+        </g>
+        <g stroke="#5A6675" stroke-width="1.5" class="flow">
+          <line x1="136" y1="149" x2="188" y2="149" marker-end="url(#a3)"/>
+          <line x1="496" y1="126" x2="536" y2="126" marker-end="url(#a3)"/>
+          <line x1="544" y1="172" x2="504" y2="172" marker-end="url(#a3)"/>
+          <line x1="734" y1="88" x2="504" y2="102" marker-end="url(#a3)"/>
+          <line x1="496" y1="212" x2="734" y2="232" marker-end="url(#a3)"/>
+        </g>
+      
+  <g fill="none">
+  <line x1="136" y1="149" x2="188" y2="149" pathLength="100" stroke="#6C7BFF" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="7 100" stroke-dashoffset="7"><animate attributeName="stroke-dashoffset" from="7" to="-100" dur="2.4s" begin="-0.00s" repeatCount="indefinite"/></line>
+  <line x1="496" y1="126" x2="536" y2="126" pathLength="100" stroke="#6C7BFF" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="7 100" stroke-dashoffset="7"><animate attributeName="stroke-dashoffset" from="7" to="-100" dur="2.4s" begin="-0.37s" repeatCount="indefinite"/></line>
+  <line x1="544" y1="172" x2="504" y2="172" pathLength="100" stroke="#6C7BFF" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="7 100" stroke-dashoffset="7"><animate attributeName="stroke-dashoffset" from="7" to="-100" dur="2.4s" begin="-0.74s" repeatCount="indefinite"/></line>
+  <line x1="734" y1="88" x2="504" y2="102" pathLength="100" stroke="#6C7BFF" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="7 100" stroke-dashoffset="7"><animate attributeName="stroke-dashoffset" from="7" to="-100" dur="2.4s" begin="-1.11s" repeatCount="indefinite"/></line>
+  <line x1="496" y1="212" x2="734" y2="232" pathLength="100" stroke="#6C7BFF" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="7 100" stroke-dashoffset="7"><animate attributeName="stroke-dashoffset" from="7" to="-100" dur="2.4s" begin="-1.48s" repeatCount="indefinite"/></line>
+  </g>
+</svg>

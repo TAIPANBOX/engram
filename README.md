@@ -64,6 +64,14 @@ Here is what Engram gives you that a plain vector database does not:
 
 **Works with multiple agents** - several agents can share a single `.engram` file. Each has its own private observations; extracted facts and the relationship graph are shared between them.
 
+<div align="center">
+
+<img src="assets/diagram.svg" alt="Engram architecture: an agent observes and recalls against one SQLite file holding episodic, semantic and procedural memory with bitemporal facts, spreading activation and decay, exposed over MCP on stdio" width="960">
+
+<sub>The same service as its room on <a href="https://it-rat.com/services/engram.html">it-rat.com</a> draws it, where the diagram sits next to a simulation you can scrub back and forth.</sub>
+
+</div>
+
 ---
 
 ## Where this fits in the stack
