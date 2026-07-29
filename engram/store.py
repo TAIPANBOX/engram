@@ -91,13 +91,26 @@ def _escape_fts5_query(query: str) -> str:
 
     FTS5 treats bare ``*``, ``(``, ``OR``, ``NOT``, ``-``, ``"`` and others as
     operators; raw user input therefore crashes the query parser with
-    ``OperationalError``. We split on whitespace, double-escape embedded quotes,
-    wrap each non-empty token in double quotes (making it a phrase), and join
-    with spaces (implicit AND). Empty input becomes an empty string that the
+    ``OperationalError``. Each non-empty token is double-quoted as a phrase,
+    with embedded quotes doubled. Empty input becomes an empty string that the
     caller can short-circuit on.
+
+    Tokens are joined with ``OR``, not with spaces. A space in FTS5 is an
+    implicit AND, which requires every word of the query to appear in one
+    episode: for a real question ("what was the name of the restaurant I
+    mentioned when we talked about my anniversary dinner?") that is sixteen
+    words and never matches, so the BM25 side of hybrid recall returned nothing
+    and the blend collapsed to ``vector_weight`` times cosine. Hybrid mode was
+    silently identical to cosine for any query longer than a few words, which
+    is how it reached a LongMemEval run scoring both modes to three identical
+    decimal places.
+
+    OR is also what BM25 is for: it ranks by how many query terms a document
+    matches and how rare they are, so a document carrying every term still
+    wins and common words contribute almost nothing through their low IDF.
     """
     tokens = [tok.replace('"', '""') for tok in query.split() if tok]
-    return " ".join(f'"{tok}"' for tok in tokens)
+    return " OR ".join(f'"{tok}"' for tok in tokens)
 
 
 _EPISODE_COLS = (

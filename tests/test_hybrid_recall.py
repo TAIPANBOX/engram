@@ -155,3 +155,80 @@ def test_hybrid_single_candidate_not_collapsed_to_zero(tmp_path) -> None:
         results = mem.recall("quasars", k=3, mode="hybrid")
         assert results
         assert results[0].score > 0.0
+
+
+# ------------------------------------------------------------------
+# BM25 must actually run (regression: implicit AND matched nothing)
+# ------------------------------------------------------------------
+
+
+_LONG_QUESTION = (
+    "What was the name of the restaurant I mentioned when we talked about my anniversary dinner?"
+)
+
+
+@pytest.fixture()
+def restaurant_mem(tmp_path):
+    """A corpus where the lexical match and the nearest vector disagree.
+
+    The episode that answers the question shares rare terms with it
+    ("restaurant", "mentioned"); the one about booking somewhere nice is
+    closer in plain embedding space but names nothing.
+    """
+    with Engram(path=str(tmp_path / "fts.engram")) as m:
+        m.observe_many(
+            [
+                ObserveInput(content="The restaurant I mentioned earlier was Osteria Bianca."),
+                ObserveInput(
+                    content="I have been meaning to book somewhere nice for our anniversary."
+                ),
+                ObserveInput(
+                    content="We finally picked Osteria Bianca for the anniversary dinner."
+                ),
+                ObserveInput(content="The migration finished on Tuesday and nothing broke."),
+                ObserveInput(content="Budget review is on Thursday, bring the numbers for Q3."),
+            ]
+        )
+        yield m
+
+
+def test_fts5_query_ors_its_terms() -> None:
+    """Spaces are an implicit AND in FTS5, so a joined-by-space query demands
+    every word of a question in one episode and matches nothing."""
+    from engram.store import _escape_fts5_query
+
+    assert _escape_fts5_query("alpha beta gamma") == '"alpha" OR "beta" OR "gamma"'
+    assert _escape_fts5_query("solo") == '"solo"'
+    assert _escape_fts5_query("") == ""
+
+
+def test_bm25_matches_a_natural_language_question(restaurant_mem: Engram) -> None:
+    from engram.store import _escape_fts5_query
+
+    conn = restaurant_mem._store._conn
+    rows = conn.execute(
+        "SELECT e.id FROM fts_episodes JOIN episodes e ON e.rowid = fts_episodes.rowid "
+        "WHERE fts_episodes MATCH ? LIMIT 20",
+        (_escape_fts5_query(_LONG_QUESTION),),
+    ).fetchall()
+    assert rows, "the BM25 side returned nothing, so hybrid is cosine with extra steps"
+
+
+def test_fts_only_scores_are_real(restaurant_mem: Engram) -> None:
+    """With the vector side switched off, every score comes from BM25. While the
+    FTS query matched nothing on a question this long, ``norm_fts`` was empty and
+    each blended score reduced to ``vector_weight`` times cosine, so fts-only
+    recall scored every episode exactly 0.0 and their order fell out of a set."""
+    results = restaurant_mem.recall(
+        _LONG_QUESTION, k=5, mode="hybrid", vector_weight=0.0, fts_weight=1.0
+    )
+    assert results[0].score > 0.0, "BM25 contributed nothing to the blend"
+    assert results[0].score > results[-1].score, "BM25 did not separate the candidates"
+
+
+def test_fts_only_ranks_the_lexical_matches_first(restaurant_mem: Engram) -> None:
+    results = restaurant_mem.recall(
+        _LONG_QUESTION, k=5, mode="hybrid", vector_weight=0.0, fts_weight=1.0
+    )
+    top_two = [r.episode.content for r in results[:2]]
+    assert all("Osteria Bianca" in c for c in top_two), top_two
