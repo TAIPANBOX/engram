@@ -254,7 +254,7 @@ class Engram:
             Episode(
                 id=ep_id,
                 content=item.content,
-                timestamp=now,
+                timestamp=item.timestamp or now,
                 actors=item.actors,
                 tags=item.tags,
                 salience=item.salience,

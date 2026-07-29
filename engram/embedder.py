@@ -46,12 +46,23 @@ class Embedder:
     """
 
     def __init__(
-        self, model_name: str = DEFAULT_MODEL, cache_size: int = _DEFAULT_CACHE_SIZE
+        self,
+        model_name: str = DEFAULT_MODEL,
+        cache_size: int = _DEFAULT_CACHE_SIZE,
+        threads: int | None = None,
     ) -> None:
+        """
+        Args:
+            threads: ONNX intra-op threads. ``None`` keeps fastembed's own
+                default, which is what an agent embedding one turn at a time
+                wants. Raising it pays off for bulk loads: on an 8-core M-series
+                machine, 8 threads embeds long turns about 1.4x faster.
+        """
         self._model_name = model_name
         self._model: _TextEmbedding | None = None
         self._cache: OrderedDict[str, np.ndarray] = OrderedDict()
         self._cache_size = cache_size
+        self._threads = threads
         self._dim: int | None = _KNOWN_DIMS.get(model_name)
         # Guards the LRU cache and lazy model init: AsyncEngram embeds from a
         # thread pool, so concurrent embed() calls would otherwise corrupt the
@@ -62,7 +73,11 @@ class Embedder:
         if self._model is None:
             from fastembed import TextEmbedding
 
-            self._model = TextEmbedding(self._model_name)
+            self._model = (
+                TextEmbedding(self._model_name)
+                if self._threads is None
+                else TextEmbedding(self._model_name, threads=self._threads)
+            )
         return self._model
 
     def embed(self, text: str) -> np.ndarray:
