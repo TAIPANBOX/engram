@@ -209,3 +209,25 @@ def test_interrupted_repartition_keeps_the_vectors(tmp_path, monkeypatch) -> Non
     with Engram(path=path, agent_id="a") as mem:
         assert mem._store.vec_count() == 10
         assert len(mem.recall("Episode", k=5)) == 5
+
+
+def test_repartition_warns_about_the_format_floor(tmp_path) -> None:
+    """The rewrite is irreversible for older sqlite-vec installs, so it must
+    not happen silently."""
+    from engram import Engram
+
+    path = str(tmp_path / "warns.engram")
+    with Engram(path=path, agent_id="a") as mem:
+        mem.observe("Something worth keeping")
+
+    _downgrade_to_flat_vec(path)
+
+    with pytest.warns(UserWarning, match="sqlite-vec >= 0.1.6"):
+        Engram(path=path, agent_id="a").close()
+
+    # Second open is already migrated, so it stays quiet.
+    import warnings as _w
+
+    with _w.catch_warnings():
+        _w.simplefilter("error", UserWarning)
+        Engram(path=path, agent_id="a").close()

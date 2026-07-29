@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import re
 import sqlite3
+import warnings
 
 import sqlite_vec  # type: ignore[import-untyped]
 
@@ -36,6 +37,12 @@ def _vec_ddl(dim: int) -> str:
     to be applied in an outer JOIN, which could only ever cut into an already
     chosen global top-k: an agent whose episodes were not globally nearest got
     an empty result instead of its own nearest ones.
+
+    One trap for anyone editing the recall queries: a KNN constrained by
+    ``agent_id IS NULL`` returns an empty result rather than the unscoped
+    rows, and raises nothing. Episodes written without an agent live in the
+    NULL partition and are reached by omitting the constraint entirely, which
+    is what an unscoped store does.
     """
     return (
         "CREATE VIRTUAL TABLE vec_episodes USING vec0("
@@ -139,6 +146,14 @@ def _repartition_vec_episodes(conn: sqlite3.Connection, dim: int) -> None:
     DDL transactional, so an interrupted migration rolls back to the flat
     table and simply runs again on the next open.
     """
+    warnings.warn(
+        "Rebuilding the vector index in the partitioned layout introduced in "
+        "v2.3. This runs once and preserves every vector, but the rewritten "
+        "file needs sqlite-vec >= 0.1.6 and will not open in an older install. "
+        "Copy the file first if it has to stay readable by one.",
+        UserWarning,
+        stacklevel=3,
+    )
     rows = conn.execute(
         "SELECT v.rowid, e.agent_id, COALESCE(e.timestamp, ''), v.embedding "
         "FROM vec_episodes v LEFT JOIN episodes e ON e.rowid = v.rowid"
