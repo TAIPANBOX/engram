@@ -1,1 +1,1 @@
-"""Engram benchmark suite: latency, LoCoMo recall accuracy, reflection cost."""
+"""Engram benchmark suite: latency, recall accuracy, reflection cost."""

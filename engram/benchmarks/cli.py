@@ -40,9 +40,16 @@ def _run_latency(n: int, k: int) -> None:
 
 
 def _run_locomo(data_path: str | None, k: int) -> None:
+    bundled = data_path is None
     if data_path is None:
         data_path = str(Path(__file__).parent / "data" / "locomo_sample.json")
-    _header(f"LoCoMo Benchmark  (k={k}, data={Path(data_path).name})")
+    _header(f"Recall Accuracy  (k={k}, data={Path(data_path).name})")
+    if bundled:
+        print("  NOTE: the bundled fixture is synthetic, written alongside the")
+        print("  questions it answers. These scores show the retrieval path is")
+        print("  wired up. They are not a result on LoCoMo or any other")
+        print("  benchmark; pass --data to measure something real.")
+        print()
     print("  Ingesting sessions and running QA eval…", flush=True)
     from engram.benchmarks.locomo import run_locomo
 

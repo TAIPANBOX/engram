@@ -40,6 +40,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `recall(k=...)` above the vec0 limit of 4096 raises `ValueError` naming the
   limit, instead of surfacing a raw `sqlite3.OperationalError`.
 
+### Removed
+- The published recall-accuracy numbers (`hit@1 33.3%`, `hit@5 93.3%`,
+  `MRR 0.586`). They were produced by the fixture bundled in
+  `engram/benchmarks/data/`, which is five hand-written sessions and fifteen
+  questions whose keywords were chosen alongside the text they match, and were
+  presented under the heading "LoCoMo recall quality", which read as a result
+  on the LoCoMo benchmark and was not one. The harness still scores any file
+  in that format via `engram-bench locomo --data`, and now says plainly when
+  it is running on the synthetic fixture. Numbers return when there is a run
+  against a public dataset behind them.
+
 ### Deprecated
 - `recall(k_inner=...)` is ignored and warns. It sized an over-fetch that
   compensated for filters running outside the vector search; there is no inner

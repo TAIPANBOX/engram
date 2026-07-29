@@ -1,4 +1,10 @@
-"""LoCoMo-format recall accuracy benchmark.
+"""Recall accuracy harness for data in LoCoMo's format.
+
+This measures whatever file it is given. The fixture bundled in ``data/`` is
+synthetic, written by hand alongside the questions it answers, so its scores
+are a smoke test for the retrieval path and not a result on any benchmark.
+Reporting them as one would be a claim about a dataset that was never run.
+
 
 Data format (JSON):
     {

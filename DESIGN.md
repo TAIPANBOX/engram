@@ -16,7 +16,7 @@
 | v0.4 | Entity extraction, episode→entity edges (Hebbian), BFS spreading-activation recall | ✅ shipped |
 | v0.5 | Bitemporal queries — `as_of`, `timeline()` | ✅ shipped |
 | v0.6 | MCP server (FastMCP, 6 tools), LangChain + LlamaIndex adapters | ✅ shipped |
-| v1.0 | Benchmark suite (`engram-bench`), LoCoMo fixture, README | ✅ shipped |
+| v1.0 | Benchmark suite (`engram-bench`), synthetic recall fixture, README | ✅ shipped |
 
 **Test suite:** 320 tests, all green. `mypy --strict` passes. `ruff` clean.
 
@@ -377,7 +377,7 @@ All versions shipped. Items are marked ✅.
 
 ### v1.0 — Polish ✅
 - ✅ `engram-bench` CLI entry, latency suite (p50/p99/throughput)
-- ✅ LoCoMo benchmark (hit@1, hit@5, MRR) with sample fixture
+- ✅ Recall harness (hit@1, hit@5, MRR) over LoCoMo-format data, with a synthetic fixture
 - ✅ Cost benchmark (tokens/$ per 1k episodes)
 - ✅ README overhaul with real numbers
 
@@ -393,13 +393,20 @@ All versions shipped. Items are marked ✅.
 | `recall` (cosine) | 4.3 ms | 5.0 ms | 232 q/s |
 | `recall` (spreading) | 4.4 ms | 5.0 ms | 224 q/s |
 
-### LoCoMo recall quality (5 sessions, 15 questions)
+### Recall quality
 
-| Metric | Score |
-|--------|-------|
-| hit@1 | 33.3% |
-| hit@5 | 93.3% |
-| MRR | 0.586 |
+No numbers published yet.
+
+`engram-bench locomo` evaluates hit@k and MRR over any file in LoCoMo's
+format, but the fixture shipped in `engram/benchmarks/data/` is synthetic:
+five hand-written sessions and fifteen questions whose keywords were chosen
+alongside the text they are meant to find. Scores from it say the retrieval
+path is wired up, and nothing about recall quality. They were previously
+quoted here as "LoCoMo recall quality", which read as a result on the LoCoMo
+benchmark and was not one.
+
+A run against a public dataset with its own metric is the open item. Until
+that exists, the honest number is no number.
 
 ### Reflection cost
 

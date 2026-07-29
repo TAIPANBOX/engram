@@ -676,13 +676,19 @@ The batch rewrite eliminates 5 000 SQL calls and replaces them with 3.
 
 WAL mode is enabled automatically for all file-based stores. Readers (`recall`, `timeline`) and writers (`observe`, `reflect_async`) now run concurrently without blocking each other.
 
-### LoCoMo Recall Accuracy (5 sessions, 15 questions)
+### Recall accuracy
 
-| Metric | Score |
-|---|---|
-| hit@1 | 33.3% |
-| hit@5 | 93.3% |
-| MRR | 0.586 |
+Not published. `engram-bench locomo` scores hit@k and MRR over any file in
+LoCoMo's format, but the bundled fixture is synthetic: five hand-written
+sessions, fifteen questions, keywords chosen next to the text they match. It
+is a smoke test for the retrieval path, not a measurement of recall quality,
+and the scores it produces are not quoted here for that reason.
+
+Point it at real data to get a real number:
+
+```bash
+engram-bench locomo --data ./your_dataset.json --k 5
+```
 
 ### Reflection cost (per 1 000 episodes)
 
