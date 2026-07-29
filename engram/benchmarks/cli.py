@@ -95,35 +95,40 @@ def _run_longmemeval(
     data_path: str, k_values: str, mode: str, sample: int | None, seed: int
 ) -> None:
     ks = tuple(int(x) for x in k_values.split(",") if x.strip())
-    _header(f"LongMemEval-S  (mode={mode}, k={ks})")
+    modes = tuple(m.strip() for m in mode.split(",") if m.strip())
+    _header(f"LongMemEval-S  (modes={modes}, k={ks})")
     from engram.benchmarks.longmemeval import run_longmemeval
 
     def progress(done: int, total: int) -> None:
-        if done % 25 == 0 or done == total:
+        if done % 5 == 0 or done == total:
             print(f"  {done}/{total} questions", flush=True)
 
-    result = run_longmemeval(
-        data_path, k_values=ks, mode=mode, sample=sample, seed=seed, progress=progress
+    results = run_longmemeval(
+        data_path, k_values=ks, modes=modes, sample=sample, seed=seed, progress=progress
     )
+    first = next(iter(results.values()))
 
     print()
-    scope = f"stratified sample, seed {seed}" if result.sampled else "full set"
-    print(f"  Questions:    {result.n_questions:,}  ({scope})")
-    print(f"  Episodes:     {result.n_episodes:,}  (one per turn)")
-    print(f"  Ingest:       {result.ingest_s:,.0f} s")
-    print(f"  Query:        {result.query_s * 1000 / max(result.n_questions, 1):,.0f} ms/question")
+    scope = f"stratified sample, seed {seed}" if first.sampled else "full set"
+    print(f"  Questions:    {first.n_questions:,}  ({scope})")
+    print(f"  Episodes:     {first.n_episodes:,}  (one per turn)")
+    print(f"  Ingest:       {first.ingest_s:,.0f} s")
     print()
     print("  Evidence found inside the top k:")
-    for k in ks:
-        print(
-            f"    k={k:<4} session {result.session_recall[k]:.3f}"
-            f"    turn {result.turn_recall[k]:.3f}"
-        )
+    print(f"    {'mode':<10} {'k':>4} {'session':>9} {'turn':>7} {'ms/query':>10}")
+    for mode_name, result in results.items():
+        for k in ks:
+            print(
+                f"    {mode_name:<10} {k:>4} {result.session_recall[k]:>9.3f}"
+                f" {result.turn_recall[k]:>7.3f}"
+                f" {result.query_s * 1000 / max(result.n_questions, 1):>10.0f}"
+            )
     print()
     print("  Session recall by question type:")
-    for qtype, scores in result.session_recall_by_type.items():
-        cells = "  ".join(f"k={k} {scores[k]:.3f}" for k in ks)
-        print(f"    {qtype:<26} {cells}")
+    for mode_name, result in results.items():
+        for qtype, scores in result.session_recall_by_type.items():
+            cells = "  ".join(f"k={k} {scores[k]:.3f}" for k in ks)
+            print(f"    {mode_name:<10} {qtype:<26} {cells}")
 
 
 def _run_cost(n: int) -> None:
@@ -170,7 +175,9 @@ def main(argv: list[str] | None = None) -> None:
     lme = sub.add_parser("longmemeval", help="retrieval recall on LongMemEval-S")
     lme.add_argument("--data", required=True, metavar="FILE", help="longmemeval_s json")
     lme.add_argument("--k", default="5,10", help="comma-separated k values (default 5,10)")
-    lme.add_argument("--mode", default="cosine", help="recall mode (default cosine)")
+    lme.add_argument(
+        "--mode", default="cosine", help="recall modes, comma separated (default cosine)"
+    )
     lme.add_argument("--sample", type=int, default=None, help="stratified subsample of this size")
     lme.add_argument("--seed", type=int, default=0, help="sampling seed (default 0)")
 

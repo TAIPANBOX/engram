@@ -124,16 +124,21 @@ def _stratified_sample(
 def run_longmemeval(
     data_path: str | Path,
     k_values: tuple[int, ...] = (5, 10),
-    mode: str = "cosine",
+    modes: tuple[str, ...] = ("cosine",),
     sample: int | None = None,
     seed: int = 0,
     progress: Any = None,
-) -> LongMemEvalResult:
-    """Score retrieval over the questions in *data_path*.
+) -> dict[str, LongMemEvalResult]:
+    """Score retrieval over the questions in *data_path*, one result per mode.
 
     Each question gets its own in-memory store, which is the benchmark's own
     protocol: the histories are per-question and pooling them would let a
     question be answered from another question's haystack.
+
+    Every mode is queried against the same freshly built store before it is
+    dropped. Ingesting a question's history costs about 45 seconds and a query
+    costs 11 milliseconds, so comparing modes in one pass is nearly free while
+    running the benchmark once per mode would not be.
 
     Args:
         sample: Evaluate a stratified subsample of this size instead of all
@@ -159,19 +164,18 @@ def run_longmemeval(
     embedder = Embedder(cache_size=50_000, threads=os.cpu_count())
 
     max_k = max(k_values)
-    session_hits = dict.fromkeys(k_values, 0)
-    turn_hits = dict.fromkeys(k_values, 0)
-    by_type: dict[str, dict[int, int]] = {}
+    session_hits = {m: dict.fromkeys(k_values, 0) for m in modes}
+    turn_hits = {m: dict.fromkeys(k_values, 0) for m in modes}
+    by_type: dict[str, dict[str, dict[int, int]]] = {m: {} for m in modes}
     type_totals: dict[str, int] = {}
     n_episodes = 0
     ingest_s = 0.0
-    query_s = 0.0
+    query_s = dict.fromkeys(modes, 0.0)
 
     for n_done, question in enumerate(questions, start=1):
         gold_sessions = set(question.get("answer_session_ids") or [])
         qtype = question["question_type"]
         type_totals[qtype] = type_totals.get(qtype, 0) + 1
-        by_type.setdefault(qtype, dict.fromkeys(k_values, 0))
 
         mem = Engram()
         mem._embedder = embedder
@@ -180,35 +184,41 @@ def run_longmemeval(
             n_episodes += _ingest(mem, question)
             ingest_s += time.perf_counter() - t0
 
-            t0 = time.perf_counter()
-            results = mem.recall(question["question"], k=max_k, mode=mode)
-            query_s += time.perf_counter() - t0
+            for mode in modes:
+                by_type[mode].setdefault(qtype, dict.fromkeys(k_values, 0))
+                t0 = time.perf_counter()
+                results = mem.recall(question["question"], k=max_k, mode=mode)
+                query_s[mode] += time.perf_counter() - t0
+
+                for k in k_values:
+                    top = results[:k]
+                    if any(gold_sessions & set(r.episode.tags) for r in top):
+                        session_hits[mode][k] += 1
+                        by_type[mode][qtype][k] += 1
+                    if any("__evidence__" in r.episode.tags for r in top):
+                        turn_hits[mode][k] += 1
         finally:
             mem.close()
-
-        for k in k_values:
-            top = results[:k]
-            if any(gold_sessions & set(r.episode.tags) for r in top):
-                session_hits[k] += 1
-                by_type[qtype][k] += 1
-            if any("__evidence__" in r.episode.tags for r in top):
-                turn_hits[k] += 1
 
         if progress is not None:
             progress(n_done, len(questions))
 
     n = len(questions)
-    return LongMemEvalResult(
-        sampled=sampled,
-        n_questions=n,
-        n_episodes=n_episodes,
-        mode=mode,
-        k_values=k_values,
-        session_recall={k: session_hits[k] / n for k in k_values} if n else {},
-        turn_recall={k: turn_hits[k] / n for k in k_values} if n else {},
-        session_recall_by_type={
-            t: {k: by_type[t][k] / type_totals[t] for k in k_values} for t in sorted(by_type)
-        },
-        ingest_s=ingest_s,
-        query_s=query_s,
-    )
+    return {
+        mode: LongMemEvalResult(
+            sampled=sampled,
+            n_questions=n,
+            n_episodes=n_episodes,
+            mode=mode,
+            k_values=k_values,
+            session_recall={k: session_hits[mode][k] / n for k in k_values} if n else {},
+            turn_recall={k: turn_hits[mode][k] / n for k in k_values} if n else {},
+            session_recall_by_type={
+                t: {k: by_type[mode][t][k] / type_totals[t] for k in k_values}
+                for t in sorted(by_type[mode])
+            },
+            ingest_s=ingest_s,
+            query_s=query_s[mode],
+        )
+        for mode in modes
+    }

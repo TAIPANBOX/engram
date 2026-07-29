@@ -286,7 +286,11 @@ def _fake_longmemeval(tmp_path, n_per_type: int = 4):
 def test_longmemeval_scores_session_and_turn_recall(tmp_path) -> None:
     from engram.benchmarks.longmemeval import run_longmemeval
 
-    result = run_longmemeval(_fake_longmemeval(tmp_path), k_values=(1, 2))
+    results = run_longmemeval(
+        _fake_longmemeval(tmp_path), k_values=(1, 2), modes=("cosine", "hybrid")
+    )
+    assert set(results) == {"cosine", "hybrid"}
+    result = results["cosine"]
 
     assert result.n_questions == 8
     assert result.n_episodes == 16
