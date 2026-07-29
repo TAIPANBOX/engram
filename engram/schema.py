@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import re
 import sqlite3
+import warnings
 
 import sqlite_vec  # type: ignore[import-untyped]
 
@@ -20,6 +21,37 @@ except ImportError:
 
 # Embedding dimension for bge-small-en-v1.5
 DEFAULT_DIM: int = 384
+
+# vec0 preallocates one chunk per partition, so the value trades scan speed
+# against wasted space in stores with many small agents. Measured at 50k
+# vectors / 384 dim: chunk_size=128 scans ~4% slower than the 1024 default,
+# while 50 single-episode agents cost 10 MB instead of 80 MB.
+_VEC_CHUNK_SIZE = 128
+
+
+def _vec_ddl(dim: int) -> str:
+    """DDL for the vector index.
+
+    ``agent_id`` is a partition key and ``ts`` a metadata column so that
+    scoped and ``as_of`` recall are resolved *inside* the KNN scan. Both used
+    to be applied in an outer JOIN, which could only ever cut into an already
+    chosen global top-k: an agent whose episodes were not globally nearest got
+    an empty result instead of its own nearest ones.
+
+    One trap for anyone editing the recall queries: a KNN constrained by
+    ``agent_id IS NULL`` returns an empty result rather than the unscoped
+    rows, and raises nothing. Episodes written without an agent live in the
+    NULL partition and are reached by omitting the constraint entirely, which
+    is what an unscoped store does.
+    """
+    return (
+        "CREATE VIRTUAL TABLE vec_episodes USING vec0("
+        "agent_id text partition key, "
+        "ts text, "
+        f"embedding float[{dim}], "
+        f"chunk_size={_VEC_CHUNK_SIZE})"
+    )
+
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS episodes (
@@ -91,6 +123,56 @@ CREATE TABLE IF NOT EXISTS access_log (
 """
 
 
+def _repartition_vec_episodes(conn: sqlite3.Connection, dim: int) -> None:
+    """Rebuild a pre-v2.3 flat vec0 table as a partitioned one.
+
+    A vec0 table's partition keys and metadata columns are fixed at creation,
+    so the only way forward for an existing store is to copy the vectors out,
+    drop the table, and re-insert them alongside the ``agent_id`` and
+    ``timestamp`` their episodes already carry. Runs once per store, costs one
+    O(N) pass, and holds every vector in memory while it does: the vectors have
+    to be read before the table they live in can be dropped.
+
+    Orphan vectors (no surviving episode row) keep a NULL partition, exactly
+    where an unscoped write would have put them, and an empty ``ts``: vec0
+    accepts NULL in a partition key but rejects it in a TEXT metadata column.
+    The empty string never reaches a result, because every search path inner
+    joins ``episodes`` and an orphan has no row there to join to.
+
+    The rebuild runs in one explicit transaction. Without it the DROP commits
+    on its own, and a process that dies before the re-insert lands leaves a
+    store whose episodes still hold their text but have lost every embedding,
+    with no way to recompute them short of export and re-import. SQLite makes
+    DDL transactional, so an interrupted migration rolls back to the flat
+    table and simply runs again on the next open.
+    """
+    warnings.warn(
+        "Rebuilding the vector index in the partitioned layout introduced in "
+        "v2.3. This runs once and preserves every vector, but the rewritten "
+        "file needs sqlite-vec >= 0.1.6 and will not open in an older install. "
+        "Copy the file first if it has to stay readable by one.",
+        UserWarning,
+        stacklevel=3,
+    )
+    rows = conn.execute(
+        "SELECT v.rowid, e.agent_id, COALESCE(e.timestamp, ''), v.embedding "
+        "FROM vec_episodes v LEFT JOIN episodes e ON e.rowid = v.rowid"
+    ).fetchall()
+    conn.commit()  # close any implicit transaction so BEGIN is legal
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("DROP TABLE vec_episodes")
+        conn.execute(_vec_ddl(dim))
+        conn.executemany(
+            "INSERT INTO vec_episodes(rowid, agent_id, ts, embedding) VALUES (?, ?, ?, ?)",
+            rows,
+        )
+    except BaseException:
+        conn.rollback()
+        raise
+    conn.commit()
+
+
 def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
     """Create all tables and the vector index. Idempotent — safe to call repeatedly."""
     conn.enable_load_extension(True)
@@ -124,17 +206,18 @@ def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
     with contextlib.suppress(*_OP_ERRORS):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_agent ON edges(agent_id)")
 
-    # vec0 virtual table dimension is baked in at creation; IF NOT EXISTS guards re-runs.
-    conn.execute(
-        f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_episodes USING vec0(embedding float[{dim}])"
-    )
-
-    # Guard against re-opening an existing store with a different embedder:
-    # the vec0 dimension is immutable, so a mismatch would silently corrupt
-    # search (inserts/queries with wrong-size vectors). Fail loudly instead.
+    # The vec0 dimension and layout are baked in at creation, so an existing
+    # table is inspected rather than recreated.
     row = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'vec_episodes'").fetchone()
-    if row is not None and row[0]:
-        match = re.search(r"float\[(\d+)\]", row[0])
+    existing = row[0] if row is not None and row[0] else None
+
+    if existing is None:
+        conn.execute(_vec_ddl(dim))
+    else:
+        # Guard against re-opening an existing store with a different embedder:
+        # the vec0 dimension is immutable, so a mismatch would silently corrupt
+        # search (inserts/queries with wrong-size vectors). Fail loudly instead.
+        match = re.search(r"float\[(\d+)\]", existing)
         if match is not None and int(match.group(1)) != dim:
             raise ValueError(
                 f"embedding dimension mismatch: this store was created with "
@@ -142,6 +225,8 @@ def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
                 f"Open the store with the original embedder model, or export and "
                 f"re-import to re-embed with the new model."
             )
+        if "partition key" not in existing:
+            _repartition_vec_episodes(conn, dim)
 
     # FTS5 full-text index over episode content (added in v2.1).
     conn.execute(

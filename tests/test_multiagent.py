@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from engram import Engram, StubLLMAdapter
@@ -452,3 +454,122 @@ def test_cli_recall_cross_agent(shared_path, capsys):
     out = capsys.readouterr().out
     assert "Alpha" in out
     assert "Beta" in out
+
+
+# ------------------------------------------------------------------
+# Scoped recall on a lopsided store.
+#
+# Regression for the pre-v2.3 layout, where agent_id was filtered in the
+# outer JOIN and so could only cut into a global top-k that vec0 had already
+# chosen: an agent whose episodes were not globally nearest got an empty
+# result instead of its own nearest ones. agent_id is now a vec0 partition
+# key, so k counts only rows that already belong to the agent.
+#
+# Every fixture here is deliberately lopsided. The old tests all used
+# two-episode stores, where the global top-k trivially contains everything
+# and the bug is invisible.
+# ------------------------------------------------------------------
+
+
+@pytest.fixture()
+def lopsided_store(shared_path):
+    """One noisy agent dominating the index, one quiet agent beside it."""
+    noisy = Engram(path=shared_path, agent_id="noisy")
+    quiet = Engram(path=shared_path, agent_id="quiet")
+    for i in range(60):
+        noisy.observe(f"Database migration step {i} completed on the primary cluster")
+    for i in range(5):
+        quiet.observe(f"Database migration rollback plan {i} for the primary cluster")
+    yield noisy, quiet
+    noisy.close()
+    quiet.close()
+
+
+def test_scoped_recall_returns_k_despite_a_dominant_agent(lopsided_store):
+    _, quiet = lopsided_store
+
+    results = quiet.recall("database migration cluster", k=5)
+
+    assert len(results) == 5
+    assert all("rollback plan" in r.episode.content for r in results)
+
+
+def test_scoped_hybrid_recall_returns_k_despite_a_dominant_agent(shared_path):
+    """Hybrid leans on BM25 to survive a thinned vector pool, so this fixture
+    denies it that crutch: the quiet agent shares no query terms at all."""
+    noisy = Engram(path=shared_path, agent_id="noisy")
+    quiet = Engram(path=shared_path, agent_id="quiet")
+    try:
+        for i in range(60):
+            noisy.observe(f"Database migration step {i} completed on the primary cluster")
+        for i in range(5):
+            quiet.observe(f"Rehearsal notes {i}, written up the evening before")
+
+        results = quiet.recall("database migration cluster", k=5, mode="hybrid")
+    finally:
+        noisy.close()
+        quiet.close()
+
+    assert len(results) == 5
+    assert all("Rehearsal notes" in r.episode.content for r in results)
+
+
+def test_scoped_recall_never_leaks_the_other_agent(lopsided_store):
+    noisy, quiet = lopsided_store
+
+    assert all("step" not in r.episode.content for r in quiet.recall("migration", k=20))
+    assert all("rollback" not in r.episode.content for r in noisy.recall("migration", k=20))
+
+
+def test_cross_agent_recall_still_sees_both(lopsided_store, shared_path):
+    with Engram(path=shared_path) as everyone:
+        contents = [r.episode.content for r in everyone.recall("migration", k=65)]
+
+    assert any("rollback plan" in c for c in contents)
+    assert any("step" in c for c in contents)
+
+
+def test_scoped_as_of_reaches_past_a_dominant_agent(shared_path):
+    """as_of used to be filtered outside the KNN too, so a date old enough to
+    exclude the noisy agent's episodes emptied the whole window."""
+    old = datetime(2024, 1, 1, tzinfo=UTC)
+    noisy = Engram(path=shared_path, agent_id="noisy")
+    quiet = Engram(path=shared_path, agent_id="quiet")
+    try:
+        for i in range(60):
+            noisy.observe(f"Database migration step {i} on the primary cluster")
+        for i in range(5):
+            quiet.observe(f"Database migration note {i}", timestamp=old)
+
+        cutoff = datetime(2024, 6, 1, tzinfo=UTC)
+        assert len(quiet.recall("database migration", k=5, as_of=cutoff)) == 5
+        # The noisy agent wrote everything today, so its own window is empty.
+        assert noisy.recall("database migration", k=5, as_of=cutoff) == []
+    finally:
+        noisy.close()
+        quiet.close()
+
+
+def test_scoped_recall_accepts_a_large_k(lopsided_store):
+    """The widening workaround this schema replaced multiplied k by 10 before
+    handing it to vec0, so a scoped k this size raised OperationalError."""
+    _, quiet = lopsided_store
+
+    assert len(quiet.recall("database migration", k=500)) == 5
+    assert len(quiet.recall("database migration", k=500, mode="hybrid")) == 5
+
+
+def test_k_above_the_index_limit_raises_a_clear_error(lopsided_store):
+    _, quiet = lopsided_store
+
+    with pytest.raises(ValueError, match="exceeds the vector index limit of 4096"):
+        quiet.recall("database migration", k=5000)
+
+
+def test_unscoped_store_still_recalls_after_partitioning(shared_path):
+    """Episodes written with no agent_id land in the NULL partition; an
+    unscoped store must still find them."""
+    with Engram(path=shared_path) as mem:
+        for i in range(20):
+            mem.observe(f"Nobody owns observation {i}")
+        assert len(mem.recall("observation", k=5)) == 5

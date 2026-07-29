@@ -127,3 +127,48 @@ def test_compress_mixed_importance(tmp_path) -> None:
     # Only 2 low-importance episodes should be candidates
     assert result.episodes_removed == 2
     assert result.summaries_created == 1
+
+
+# ------------------------------------------------------------------
+# Compression and as_of time travel
+# ------------------------------------------------------------------
+
+
+def test_summary_inherits_the_period_it_covers(tmp_path) -> None:
+    """Compression hard-deletes the originals. If the summary were stamped
+    with the moment it was written, an as_of query into the compressed period
+    would find neither the originals nor the summary standing in for them."""
+    from datetime import UTC, datetime
+
+    path = str(tmp_path / "asof.engram")
+    stub = StubLLMAdapter(summary="Everything that happened in March.")
+    march = datetime(2024, 3, 15, tzinfo=UTC)
+    with Engram(path=path, llm=stub) as mem:
+        for i in range(5):
+            mem.observe(f"March event number {i}", timestamp=march)
+        for ep in mem._store.get_episodes_below_importance(1.1):
+            mem._store.update_importance(ep.id, 0.1)
+
+        mem.compress(max_episodes=1, importance_threshold=0.3, batch_size=20)
+
+        cutoff = datetime(2024, 4, 1, tzinfo=UTC)
+        results = mem.recall("March", k=5, as_of=cutoff)
+        assert [r.episode.content for r in results] == ["Everything that happened in March."]
+
+
+def test_summary_timestamp_is_the_newest_source(tmp_path) -> None:
+    from datetime import UTC, datetime
+
+    path = str(tmp_path / "newest.engram")
+    stub = StubLLMAdapter(summary="Spanning summary.")
+    with Engram(path=path, llm=stub) as mem:
+        stamps = [datetime(2024, 3, day, tzinfo=UTC) for day in (1, 9, 5)]
+        for i, ts in enumerate(stamps):
+            mem.observe(f"Event {i}", timestamp=ts)
+        for ep in mem._store.get_episodes_below_importance(1.1):
+            mem._store.update_importance(ep.id, 0.1)
+
+        mem.compress(max_episodes=1, importance_threshold=0.3, batch_size=20)
+
+        summary = mem._store.get_episodes_below_importance(2.0)[0]
+        assert summary.timestamp == max(stamps)

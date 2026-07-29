@@ -6,6 +6,7 @@ import importlib
 import sqlite3
 import threading
 import uuid
+import warnings
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -191,6 +192,7 @@ class Engram:
         tags: list[str] | None = None,
         salience: float = 0.5,
         emotional_valence: float = 0.0,
+        timestamp: datetime | None = None,
     ) -> str:
         """Record a new episodic observation.
 
@@ -200,6 +202,10 @@ class Engram:
             tags: Categorical labels for filtering.
             salience: Subjective importance at encoding time (0-1).
             emotional_valence: Affective weight (-1 negative to +1 positive).
+            timestamp: When the event happened. Defaults to now. Set it when
+                back-filling history, so ``recall(as_of=...)`` places the
+                episode in the period it describes rather than the moment it
+                was written.
 
         Returns:
             The episode id (UUID string).
@@ -210,7 +216,7 @@ class Engram:
         ep = Episode(
             id=episode_id,
             content=content,
-            timestamp=datetime.now(tz=UTC),
+            timestamp=timestamp or datetime.now(tz=UTC),
             actors=actors or [],
             tags=tags or [],
             salience=salience,
@@ -293,12 +299,23 @@ class Engram:
             as_of: If set, only episodes with timestamp <= as_of are searched.
             cross_agent: If ``True``, search all agents' episodes regardless of
                 the instance's ``agent_id``. Ignored when no ``agent_id`` is set.
-            k_inner: Inner vector-index limit for as_of search (defaults to k * 10).
+            k_inner: Deprecated and ignored since v2.3. It sized an over-fetch
+                that compensated for ``as_of`` and ``agent_id`` being applied
+                after the vector search; both are now constraints inside it, so
+                there is no inner limit left to tune.
             candidate_limit: Candidate search limit per source for hybrid search (defaults to k * 4).
 
         Returns:
             List of :class:`SearchResult` ordered by descending score.
         """
+        if k_inner is not None:
+            warnings.warn(
+                "k_inner is ignored since v2.3: as_of and agent_id are now vec0 "
+                "constraints evaluated inside the KNN scan, so there is no inner "
+                "vector-index limit to widen.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         agent_id = None if cross_agent else self._agent_id
         return _recall(
             query,
@@ -312,7 +329,6 @@ class Engram:
             fts_weight=fts_weight,
             as_of=as_of,
             agent_id=agent_id,
-            k_inner=k_inner,
             candidate_limit=candidate_limit,
         )
 
@@ -707,10 +723,16 @@ class Engram:
             summary_text, tokens = self._llm.summarise(batch)
             total_tokens += tokens
 
+            # Stamp the summary with the newest timestamp it covers, not with
+            # now. Compression hard-deletes the originals, so a summary dated
+            # today would leave the period it describes empty: an as_of query
+            # into that window would find neither the originals (gone) nor
+            # their summary (still in the future).
             summary_ep_id = self.observe(
                 summary_text,
                 tags=["summary"],
                 salience=max(ep.salience for ep in batch),
+                timestamp=max(ep.timestamp for ep in batch),
             )
             # Update summary_of field on the new episode
             batch_ids = [ep.id for ep in batch]

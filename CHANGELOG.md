@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The vector index is rebuilt on first open.** `vec_episodes` now declares
+  `agent_id` as a vec0 partition key and `ts` as a metadata column, so scoped
+  and `as_of` recall are resolved inside the KNN scan instead of being filtered
+  after it. Migration is automatic and runs once per store, in one O(N) pass
+  that holds the vectors in memory while the table is replaced.
+- **A rebuilt `.engram` file requires `sqlite-vec` 0.1.6 or newer** and cannot
+  be opened by an older install. The dependency floor moved to 0.1.9
+  accordingly. Copy a store before upgrading if it has to stay readable by an
+  older environment.
+- `Engram.observe()` and `AsyncEngram.observe()` accept `timestamp=`, for
+  back-filling history at the time it happened rather than the time it was
+  written.
+
+### Fixed
+- Scoped recall could return nothing at all. vec0 resolved its `k` against the
+  whole index and `agent_id` was applied afterwards in the join, so the filter
+  could only cut into an already-chosen global top-k: in a shared store where
+  one agent held most of the episodes, `recall(k=5)` from another agent
+  returned zero rows rather than that agent's five nearest. `as_of` had the
+  same shape, and a date far enough back emptied the window. Both filters are
+  now vec0 constraints. Existing tests missed this because their stores held
+  two episodes, where the global top-k trivially contains everything.
+- `compress()` no longer erases the period it summarises. The summary episode
+  is stamped with the newest timestamp among its sources instead of the moment
+  it was written, so `recall(as_of=...)` into a compressed window finds the
+  summary standing in for the originals it hard-deleted.
+- `forget_entity()` is atomic. It ran as a sequence of self-committing
+  deletes, so an interruption could leave an entity half-erased with nothing
+  recording that the erasure never finished.
+- `recall(k=...)` above the vec0 limit of 4096 raises `ValueError` naming the
+  limit, instead of surfacing a raw `sqlite3.OperationalError`.
+
+### Deprecated
+- `recall(k_inner=...)` is ignored and warns. It sized an over-fetch that
+  compensated for filters running outside the vector search; there is no inner
+  limit left to tune.
+
 ### Fixed
 - `reflect()` no longer counts a same-object re-extraction as a resolved
   contradiction and no longer emits a `contradiction_found` event for it. The

@@ -108,6 +108,21 @@ _EPISODE_COLS = (
 
 _ACCESS_LOG_FLUSH_SIZE = 50  # flush buffer after this many entries
 
+# vec0 refuses a KNN k above this and raises OperationalError. Callers get a
+# ValueError naming the limit instead, since k arrives straight from a caller's
+# recall(k=...) and an internal sqlite error tells them nothing actionable.
+_VEC_MAX_K = 4096
+
+
+def _check_k(k: int) -> None:
+    if k < 1:
+        raise ValueError(f"k must be at least 1, got {k}")
+    if k > _VEC_MAX_K:
+        raise ValueError(
+            f"k={k} exceeds the vector index limit of {_VEC_MAX_K}. "
+            f"Recall more narrowly, or page through timeline() / recent_episodes()."
+        )
+
 
 @_synchronized
 class Store:
@@ -203,8 +218,8 @@ class Store:
         )
         rowid: int = cur.lastrowid  # type: ignore[assignment]
         self._conn.execute(
-            "INSERT INTO vec_episodes(rowid, embedding) VALUES (?, ?)",
-            (rowid, _serialize(embedding)),
+            "INSERT INTO vec_episodes(rowid, agent_id, ts, embedding) VALUES (?, ?, ?, ?)",
+            (rowid, self._agent_id, _iso_utc(ep.timestamp), _serialize(embedding)),
         )
         self._conn.execute(
             "INSERT INTO fts_episodes(rowid, content) VALUES (?, ?)",
@@ -247,12 +262,13 @@ class Store:
 
         Returns list of (episode, score, distance) triples, best first.
         """
-        if agent_id is not None:
-            agent_clause = "AND e.agent_id = ?"
-            params: tuple[Any, ...] = (_serialize(query_embedding), k, agent_id)
-        else:
-            agent_clause = ""
-            params = (_serialize(query_embedding), k)
+        _check_k(k)
+        # v.agent_id, not e.agent_id: the constraint has to sit on the vec0
+        # table to prune partitions during the scan. Moving it to the joined
+        # episodes row would put it back outside the KNN, which is the bug
+        # this schema exists to remove.
+        agent_clause = "AND v.agent_id = ?" if agent_id is not None else ""
+        tail: tuple[Any, ...] = (agent_id,) if agent_id is not None else ()
 
         rows: list[Any] = self._conn.execute(
             f"""
@@ -266,7 +282,7 @@ class Store:
               {agent_clause}
             ORDER BY v.distance ASC
             """,
-            params,
+            (_serialize(query_embedding), k, *tail),
         ).fetchall()
 
         results: list[tuple[Episode, float, float]] = []
@@ -419,9 +435,9 @@ class Store:
         ).fetchall()
         rowid_map = {str(r[0]): int(r[1]) for r in rowid_rows}
         self._conn.executemany(
-            "INSERT INTO vec_episodes(rowid, embedding) VALUES (?, ?)",
+            "INSERT INTO vec_episodes(rowid, agent_id, ts, embedding) VALUES (?, ?, ?, ?)",
             [
-                (rowid_map[ep.id], _serialize(emb))
+                (rowid_map[ep.id], self._agent_id, _iso_utc(ep.timestamp), _serialize(emb))
                 for ep, emb in zip(episodes, embeddings, strict=True)
             ],
         )
@@ -539,7 +555,7 @@ class Store:
             "DELETE FROM edges WHERE src_id = ? OR dst_id = ?", (episode_id, episode_id)
         )
         self._conn.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
-        self._conn.commit()
+        self._commit()
         return True
 
     def delete_fact(self, fact_id: str) -> bool:
@@ -549,7 +565,7 @@ class Store:
             True if the fact existed and was deleted; False if not found.
         """
         cur = self._conn.execute("DELETE FROM facts WHERE id = ?", (fact_id,))
-        self._conn.commit()
+        self._commit()
         return cur.rowcount > 0
 
     def get_episodes_by_actor(self, actor_name: str) -> list[Episode]:
@@ -587,7 +603,7 @@ class Store:
             "DELETE FROM edges WHERE src_id = ? OR dst_id = ?", (entity.id, entity.id)
         )
         self._conn.execute("DELETE FROM entities WHERE id = ?", (entity.id,))
-        self._conn.commit()
+        self._commit()
         return True
 
     def forget_entity(self, entity_name: str) -> ForgetResult:
@@ -598,16 +614,23 @@ class Store:
         - Facts where ``subject`` or ``object`` equals the entity name
         - The entity record and all graph edges connected to it
 
+        Erasure is all-or-nothing. Without the transaction the method is a run
+        of self-committing deletes, so a crash partway through leaves an
+        entity half-forgotten with nothing recording that the erasure never
+        finished, which is the one outcome a right-to-be-forgotten claim
+        cannot survive.
+
         Returns:
             :class:`ForgetResult` with counts of deleted episodes and facts.
         """
-        episodes = self.get_episodes_by_actor(entity_name)
-        episodes_deleted = sum(1 for ep in episodes if self.delete_episode(ep.id))
+        with self.transaction():
+            episodes = self.get_episodes_by_actor(entity_name)
+            episodes_deleted = sum(1 for ep in episodes if self.delete_episode(ep.id))
 
-        facts = self.get_facts_by_entity(entity_name)
-        facts_deleted = sum(1 for f in facts if self.delete_fact(f.id))
+            facts = self.get_facts_by_entity(entity_name)
+            facts_deleted = sum(1 for f in facts if self.delete_fact(f.id))
 
-        self.delete_entity(entity_name)
+            self.delete_entity(entity_name)
 
         return ForgetResult(
             entity=entity_name,
@@ -988,33 +1011,23 @@ class Store:
         k: int,
         as_of: datetime,
         agent_id: str | None = None,
-        k_inner: int | None = None,
     ) -> list[tuple[Episode, float, float]]:
         """Like search_episodes but restricted to episodes with timestamp <= as_of.
 
-        Uses k_inner as the inner vector-index limit so there are enough candidates
-        after the timestamp filter; returns at most k results.
+        Both filters are vec0 constraints (``v.ts`` is a metadata column,
+        ``v.agent_id`` a partition key), so they are evaluated inside the KNN
+        scan and k counts only rows that already passed them.
 
         Args:
             agent_id: If set, restrict to this agent's episodes.
-            k_inner: The inner vector-index limit (defaults to k * 10).
         """
-        if k_inner is None:
-            k_inner = k * 10
-        if agent_id is not None:
-            agent_clause = "AND e.agent_id = ?"
-            params: tuple[Any, ...] = (
-                _serialize(query_embedding),
-                k_inner,
-                _iso_utc(as_of),
-                agent_id,
-            )
-        else:
-            agent_clause = ""
-            params = (_serialize(query_embedding), k_inner, _iso_utc(as_of))
+        _check_k(k)
+        agent_clause = "AND v.agent_id = ?" if agent_id is not None else ""
+        tail: tuple[Any, ...] = (
+            (_iso_utc(as_of), agent_id) if agent_id is not None else (_iso_utc(as_of),)
+        )
 
-        rows: list[Any] = self._conn.execute(
-            f"""
+        sql = f"""
             SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
                    e.salience, e.emotional_valence, e.summary_of, e.importance_score,
                    e.agent_id, v.distance
@@ -1022,14 +1035,16 @@ class Store:
             JOIN episodes e ON e.rowid = v.rowid
             WHERE v.embedding MATCH ?
               AND k = ?
-              AND e.timestamp <= ?
+              AND v.ts <= ?
               {agent_clause}
             ORDER BY v.distance ASC
-            """,
-            params,
+        """
+
+        rows: list[Any] = self._conn.execute(
+            sql, (_serialize(query_embedding), k, *tail)
         ).fetchall()
         results: list[tuple[Episode, float, float]] = []
-        for row in rows[:k]:
+        for row in rows:
             ep = Episode.from_row(tuple(row[:10]))
             distance = float(row[10])
             score = _distance_to_score(distance)
@@ -1067,23 +1082,27 @@ class Store:
         """
         if candidate_limit is None:
             candidate_limit = k * 4
+        _check_k(candidate_limit)
 
-        extra_clause = ""
-        extra_params: tuple[Any, ...] = ()
+        # The two sources filter through different columns: vec0 needs its own
+        # partition key and metadata column so the constraints run inside the
+        # KNN scan, while FTS joins episodes and filters there, ahead of LIMIT.
+        vec_clause = ""
+        vec_params: tuple[Any, ...] = ()
+        fts_clause = ""
+        fts_params: tuple[Any, ...] = ()
         if agent_id is not None:
-            extra_clause += " AND e.agent_id = ?"
-            extra_params = (*extra_params, agent_id)
+            vec_clause += " AND v.agent_id = ?"
+            vec_params = (*vec_params, agent_id)
+            fts_clause += " AND e.agent_id = ?"
+            fts_params = (*fts_params, agent_id)
         if as_of is not None:
-            extra_clause += " AND e.timestamp <= ?"
-            extra_params = (*extra_params, _iso_utc(as_of))
+            vec_clause += " AND v.ts <= ?"
+            vec_params = (*vec_params, _iso_utc(as_of))
+            fts_clause += " AND e.timestamp <= ?"
+            fts_params = (*fts_params, _iso_utc(as_of))
 
         # --- Vector candidates ---
-        vec_params: tuple[Any, ...] = (
-            _serialize(query_embedding),
-            candidate_limit,
-            *extra_params,
-        )
-
         vec_rows: list[Any] = self._conn.execute(
             f"""
             SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
@@ -1093,10 +1112,10 @@ class Store:
             JOIN episodes e ON e.rowid = v.rowid
             WHERE v.embedding MATCH ?
               AND k = ?
-              {extra_clause}
+              {vec_clause}
             ORDER BY v.distance ASC
             """,
-            vec_params,
+            (_serialize(query_embedding), candidate_limit, *vec_params),
         ).fetchall()
 
         # distance → cosine score, then normalise to [0, 1] across candidates
@@ -1117,11 +1136,11 @@ class Store:
             FROM fts_episodes
             JOIN episodes e ON e.rowid = fts_episodes.rowid
             WHERE fts_episodes MATCH ?
-              {extra_clause}
+              {fts_clause}
             ORDER BY bm25_score DESC
             LIMIT ?
             """,
-            (fts_query, *extra_params, candidate_limit),
+            (fts_query, *fts_params, candidate_limit),
         ).fetchall()
 
         fts_scores: dict[str, float] = {str(row[0]): float(row[1]) for row in fts_rows}
