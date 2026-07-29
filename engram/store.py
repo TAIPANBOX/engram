@@ -238,24 +238,25 @@ class Store:
         query_embedding: EmbeddedVector,
         k: int,
         agent_id: str | None = None,
+        k_inner: int | None = None,
     ) -> list[tuple[Episode, float, float]]:
         """Return top-k episodes by vector similarity.
 
         Args:
             agent_id: If set, restrict results to this agent's episodes.
                       If None, search across all agents.
+            k_inner: The inner vector-index limit. Defaults to ``k * 10`` when
+                     ``agent_id`` is set, and to ``k`` otherwise.
 
         Returns list of (episode, score, distance) triples, best first.
         """
-        if agent_id is not None:
-            agent_clause = "AND e.agent_id = ?"
-            params: tuple[Any, ...] = (_serialize(query_embedding), k, agent_id)
-        else:
-            agent_clause = ""
-            params = (_serialize(query_embedding), k)
+        scoped = agent_id is not None
+        if k_inner is None:
+            k_inner = k * 10 if scoped else k
+        agent_clause = "AND e.agent_id = ?" if scoped else ""
+        tail: tuple[Any, ...] = (agent_id,) if scoped else ()
 
-        rows: list[Any] = self._conn.execute(
-            f"""
+        sql = f"""
             SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
                    e.salience, e.emotional_valence, e.summary_of, e.importance_score,
                    e.agent_id, v.distance
@@ -265,12 +266,15 @@ class Store:
               AND k = ?
               {agent_clause}
             ORDER BY v.distance ASC
-            """,
-            params,
-        ).fetchall()
+        """
+
+        def run(limit: int) -> list[Any]:
+            return self._conn.execute(sql, (_serialize(query_embedding), limit, *tail)).fetchall()
+
+        rows: list[Any] = self._fetch_widening(run, want=k, start=k_inner, escalate=scoped)
 
         results: list[tuple[Episode, float, float]] = []
-        for row in rows:
+        for row in rows[:k]:
             ep = Episode.from_row(tuple(row[:10]))
             distance = float(row[10])
             score = _distance_to_score(distance)
@@ -836,6 +840,36 @@ class Store:
         row: Any = self._conn.execute("SELECT COUNT(*) FROM vec_episodes").fetchone()
         return int(row[0])
 
+    def _fetch_widening(
+        self,
+        run: Callable[[int], list[Any]],
+        want: int,
+        start: int,
+        escalate: bool,
+    ) -> list[Any]:
+        """Call ``run(limit)`` until it yields ``want`` rows or the index is spent.
+
+        vec0 resolves its ``k = ?`` constraint against the entire index, so any
+        filter applied afterwards (``agent_id``, ``as_of``) thins the result
+        set: one agent owning the nearest neighbours can starve another agent's
+        query down to zero rows. Widening the inner limit until the post-filter
+        set is full keeps the answer exact, because once ``want`` filtered rows
+        appear inside the global top-N they are, in order, the true top-``want``
+        of the filtered set.
+
+        No filter means no thinning, so unfiltered callers pass
+        ``escalate=False`` and issue exactly one query.
+        """
+        rows = run(start)
+        if not escalate:
+            return rows
+        limit = start
+        total = self.vec_count()
+        while len(rows) < want and limit < total:
+            limit = min(limit * 4, total)
+            rows = run(limit)
+        return rows
+
     def fact_count(self) -> int:
         row: Any = self._conn.execute("SELECT COUNT(*) FROM facts").fetchone()
         return int(row[0])
@@ -1001,20 +1035,12 @@ class Store:
         """
         if k_inner is None:
             k_inner = k * 10
-        if agent_id is not None:
-            agent_clause = "AND e.agent_id = ?"
-            params: tuple[Any, ...] = (
-                _serialize(query_embedding),
-                k_inner,
-                _iso_utc(as_of),
-                agent_id,
-            )
-        else:
-            agent_clause = ""
-            params = (_serialize(query_embedding), k_inner, _iso_utc(as_of))
+        agent_clause = "AND e.agent_id = ?" if agent_id is not None else ""
+        tail: tuple[Any, ...] = (
+            (_iso_utc(as_of), agent_id) if agent_id is not None else (_iso_utc(as_of),)
+        )
 
-        rows: list[Any] = self._conn.execute(
-            f"""
+        sql = f"""
             SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
                    e.salience, e.emotional_valence, e.summary_of, e.importance_score,
                    e.agent_id, v.distance
@@ -1025,9 +1051,13 @@ class Store:
               AND e.timestamp <= ?
               {agent_clause}
             ORDER BY v.distance ASC
-            """,
-            params,
-        ).fetchall()
+        """
+
+        def run(limit: int) -> list[Any]:
+            return self._conn.execute(sql, (_serialize(query_embedding), limit, *tail)).fetchall()
+
+        # The timestamp filter always runs after vec0's k, so always widen.
+        rows: list[Any] = self._fetch_widening(run, want=k, start=k_inner, escalate=True)
         results: list[tuple[Episode, float, float]] = []
         for row in rows[:k]:
             ep = Episode.from_row(tuple(row[:10]))
@@ -1078,14 +1108,11 @@ class Store:
             extra_params = (*extra_params, _iso_utc(as_of))
 
         # --- Vector candidates ---
-        vec_params: tuple[Any, ...] = (
-            _serialize(query_embedding),
-            candidate_limit,
-            *extra_params,
-        )
-
-        vec_rows: list[Any] = self._conn.execute(
-            f"""
+        # vec0 applies its ``k = ?`` before agent_id / as_of, so a filtered pool
+        # arrives at the blend already thinned and has to be widened until it
+        # holds candidate_limit rows. FTS needs no widening: there the filters
+        # sit in WHERE, ahead of LIMIT.
+        vec_sql = f"""
             SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
                    e.salience, e.emotional_valence, e.summary_of, e.importance_score,
                    e.agent_id, v.distance
@@ -1095,9 +1122,20 @@ class Store:
               AND k = ?
               {extra_clause}
             ORDER BY v.distance ASC
-            """,
-            vec_params,
-        ).fetchall()
+        """
+
+        def run_vec(limit: int) -> list[Any]:
+            return self._conn.execute(
+                vec_sql, (_serialize(query_embedding), limit, *extra_params)
+            ).fetchall()
+
+        filtered = bool(extra_clause)
+        vec_rows: list[Any] = self._fetch_widening(
+            run_vec,
+            want=candidate_limit,
+            start=candidate_limit * 10 if filtered else candidate_limit,
+            escalate=filtered,
+        )
 
         # distance → cosine score, then normalise to [0, 1] across candidates
         vec_scores: dict[str, float] = {

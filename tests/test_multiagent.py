@@ -452,3 +452,67 @@ def test_cli_recall_cross_agent(shared_path, capsys):
     out = capsys.readouterr().out
     assert "Alpha" in out
     assert "Beta" in out
+
+
+# ------------------------------------------------------------------
+# Scoped recall on a lopsided store (regression: vec0 k applies before
+# the agent_id filter, so a bare k under-returns)
+# ------------------------------------------------------------------
+
+
+@pytest.fixture()
+def lopsided_store(shared_path):
+    """One noisy agent dominating the index, one quiet agent beside it."""
+    noisy = Engram(path=shared_path, agent_id="noisy")
+    quiet = Engram(path=shared_path, agent_id="quiet")
+    for i in range(60):
+        noisy.observe(f"Database migration step {i} completed on the primary cluster")
+    for i in range(5):
+        quiet.observe(f"Database migration rollback plan {i} for the primary cluster")
+    yield noisy, quiet
+    noisy.close()
+    quiet.close()
+
+
+def test_scoped_recall_returns_k_despite_a_dominant_agent(lopsided_store):
+    _, quiet = lopsided_store
+
+    results = quiet.recall("database migration cluster", k=5)
+
+    assert len(results) == 5
+    assert all("rollback plan" in r.episode.content for r in results)
+
+
+def test_scoped_hybrid_recall_returns_k_despite_a_dominant_agent(shared_path):
+    """Hybrid leans on BM25 to survive a thinned vector pool, so this fixture
+    denies it that crutch: the quiet agent shares no query terms at all."""
+    noisy = Engram(path=shared_path, agent_id="noisy")
+    quiet = Engram(path=shared_path, agent_id="quiet")
+    try:
+        for i in range(60):
+            noisy.observe(f"Database migration step {i} completed on the primary cluster")
+        for i in range(5):
+            quiet.observe(f"Rehearsal notes {i}, written up the evening before")
+
+        results = quiet.recall("database migration cluster", k=5, mode="hybrid")
+    finally:
+        noisy.close()
+        quiet.close()
+
+    assert len(results) == 5
+    assert all("Rehearsal notes" in r.episode.content for r in results)
+
+
+def test_scoped_recall_never_leaks_the_other_agent(lopsided_store):
+    noisy, quiet = lopsided_store
+
+    assert all("step" not in r.episode.content for r in quiet.recall("migration", k=20))
+    assert all("rollback" not in r.episode.content for r in noisy.recall("migration", k=20))
+
+
+def test_cross_agent_recall_still_sees_both(lopsided_store, shared_path):
+    with Engram(path=shared_path) as everyone:
+        contents = [r.episode.content for r in everyone.recall("migration", k=65)]
+
+    assert any("rollback plan" in c for c in contents)
+    assert any("step" in c for c in contents)
