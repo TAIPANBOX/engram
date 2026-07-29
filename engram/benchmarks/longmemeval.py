@@ -121,6 +121,93 @@ def _stratified_sample(
     return picked
 
 
+def _score_question(
+    question: dict[str, Any],
+    results_by_mode: dict[str, list[Any]],
+    k_values: tuple[int, ...],
+) -> dict[str, dict[str, dict[str, bool]]]:
+    """Reduce one question's recall output to hit flags per mode and k."""
+    gold_sessions = set(question.get("answer_session_ids") or [])
+    hits: dict[str, dict[str, dict[str, bool]]] = {}
+    for mode, results in results_by_mode.items():
+        hits[mode] = {"session": {}, "turn": {}}
+        for k in k_values:
+            top = results[:k]
+            hits[mode]["session"][str(k)] = any(gold_sessions & set(r.episode.tags) for r in top)
+            hits[mode]["turn"][str(k)] = any("__evidence__" in r.episode.tags for r in top)
+    return hits
+
+
+def _aggregate(
+    records: list[dict[str, Any]],
+    k_values: tuple[int, ...],
+    modes: tuple[str, ...],
+    sampled: bool,
+) -> dict[str, LongMemEvalResult]:
+    """Build per-mode results from per-question records.
+
+    Aggregation reads only the records, so a run that died partway can be
+    scored from its checkpoint without repeating a single embedding.
+    """
+    n = len(records)
+    type_totals: dict[str, int] = {}
+    for rec in records:
+        type_totals[rec["question_type"]] = type_totals.get(rec["question_type"], 0) + 1
+
+    out: dict[str, LongMemEvalResult] = {}
+    for mode in modes:
+        session_hits = dict.fromkeys(k_values, 0)
+        turn_hits = dict.fromkeys(k_values, 0)
+        by_type: dict[str, dict[int, int]] = {}
+        for rec in records:
+            hits = rec["hits"].get(mode)
+            if hits is None:
+                continue
+            by_type.setdefault(rec["question_type"], dict.fromkeys(k_values, 0))
+            for k in k_values:
+                if hits["session"].get(str(k)):
+                    session_hits[k] += 1
+                    by_type[rec["question_type"]][k] += 1
+                if hits["turn"].get(str(k)):
+                    turn_hits[k] += 1
+        out[mode] = LongMemEvalResult(
+            sampled=sampled,
+            n_questions=n,
+            n_episodes=sum(r["n_episodes"] for r in records),
+            mode=mode,
+            k_values=k_values,
+            session_recall={k: session_hits[k] / n for k in k_values} if n else {},
+            turn_recall={k: turn_hits[k] / n for k in k_values} if n else {},
+            session_recall_by_type={
+                t: {k: by_type[t][k] / type_totals[t] for k in k_values} for t in sorted(by_type)
+            },
+            ingest_s=sum(r["ingest_s"] for r in records),
+            query_s=sum(r["query_s"].get(mode, 0.0) for r in records),
+        )
+    return out
+
+
+def load_checkpoint(path: str | Path) -> list[dict[str, Any]]:
+    """Read per-question records, skipping a truncated final line.
+
+    A run killed mid-write leaves a partial line; it is dropped rather than
+    failing the load, since the question it describes was never scored.
+    """
+    file = Path(path)
+    if not file.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return records
+
+
 def run_longmemeval(
     data_path: str | Path,
     k_values: tuple[int, ...] = (5, 10),
@@ -128,6 +215,8 @@ def run_longmemeval(
     sample: int | None = None,
     seed: int = 0,
     progress: Any = None,
+    checkpoint: str | Path | None = None,
+    resume: bool = False,
 ) -> dict[str, LongMemEvalResult]:
     """Score retrieval over the questions in *data_path*, one result per mode.
 
@@ -145,6 +234,11 @@ def run_longmemeval(
             500 questions, keeping each question type's share. The full run
             embeds 246 738 turns and takes hours on a laptop.
         seed: Sampling seed, so a subsample is reproducible.
+        checkpoint: Append one JSON record per scored question here. The run
+            takes six hours and holds nothing else durable, so without this a
+            failure at question 300 discards every hour that preceded it.
+        resume: Skip questions already present in the checkpoint and score the
+            rest, then aggregate over both.
     """
     import os
 
@@ -164,61 +258,50 @@ def run_longmemeval(
     embedder = Embedder(cache_size=50_000, threads=os.cpu_count())
 
     max_k = max(k_values)
-    session_hits = {m: dict.fromkeys(k_values, 0) for m in modes}
-    turn_hits = {m: dict.fromkeys(k_values, 0) for m in modes}
-    by_type: dict[str, dict[str, dict[int, int]]] = {m: {} for m in modes}
-    type_totals: dict[str, int] = {}
-    n_episodes = 0
-    ingest_s = 0.0
-    query_s = dict.fromkeys(modes, 0.0)
+    records: list[dict[str, Any]] = []
+    done_ids: set[str] = set()
+    if checkpoint is not None and resume:
+        records = load_checkpoint(checkpoint)
+        done_ids = {r["question_id"] for r in records}
 
-    for n_done, question in enumerate(questions, start=1):
-        gold_sessions = set(question.get("answer_session_ids") or [])
-        qtype = question["question_type"]
-        type_totals[qtype] = type_totals.get(qtype, 0) + 1
+    pending = [q for q in questions if q["question_id"] not in done_ids]
+    total = len(questions)
 
+    for n_done, question in enumerate(pending, start=len(done_ids) + 1):
         mem = Engram()
         mem._embedder = embedder
         try:
             t0 = time.perf_counter()
-            n_episodes += _ingest(mem, question)
-            ingest_s += time.perf_counter() - t0
+            n_ep = _ingest(mem, question)
+            ingest = time.perf_counter() - t0
 
+            results_by_mode: dict[str, list[Any]] = {}
+            query_s: dict[str, float] = {}
             for mode in modes:
-                by_type[mode].setdefault(qtype, dict.fromkeys(k_values, 0))
                 t0 = time.perf_counter()
-                results = mem.recall(question["question"], k=max_k, mode=mode)
-                query_s[mode] += time.perf_counter() - t0
-
-                for k in k_values:
-                    top = results[:k]
-                    if any(gold_sessions & set(r.episode.tags) for r in top):
-                        session_hits[mode][k] += 1
-                        by_type[mode][qtype][k] += 1
-                    if any("__evidence__" in r.episode.tags for r in top):
-                        turn_hits[mode][k] += 1
+                results_by_mode[mode] = mem.recall(question["question"], k=max_k, mode=mode)
+                query_s[mode] = time.perf_counter() - t0
         finally:
             mem.close()
 
-        if progress is not None:
-            progress(n_done, len(questions))
+        record = {
+            "question_id": question["question_id"],
+            "question_type": question["question_type"],
+            "n_episodes": n_ep,
+            "ingest_s": ingest,
+            "query_s": query_s,
+            "hits": _score_question(question, results_by_mode, k_values),
+        }
+        records.append(record)
 
-    n = len(questions)
-    return {
-        mode: LongMemEvalResult(
-            sampled=sampled,
-            n_questions=n,
-            n_episodes=n_episodes,
-            mode=mode,
-            k_values=k_values,
-            session_recall={k: session_hits[mode][k] / n for k in k_values} if n else {},
-            turn_recall={k: turn_hits[mode][k] / n for k in k_values} if n else {},
-            session_recall_by_type={
-                t: {k: by_type[mode][t][k] / type_totals[t] for k in k_values}
-                for t in sorted(by_type[mode])
-            },
-            ingest_s=ingest_s,
-            query_s=query_s[mode],
-        )
-        for mode in modes
-    }
+        if checkpoint is not None:
+            # Flushed per question: the point of the file is to survive a kill,
+            # and a buffered write would lose exactly what it exists to keep.
+            with Path(checkpoint).open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record) + "\n")
+                fh.flush()
+
+        if progress is not None:
+            progress(n_done, total)
+
+    return _aggregate(records, k_values, modes, sampled)

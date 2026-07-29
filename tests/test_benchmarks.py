@@ -333,3 +333,52 @@ def test_longmemeval_evidence_tag_is_not_searchable(tmp_path) -> None:
         assert mem.recall("__evidence__", k=5, mode="hybrid") != []
         for r in mem.recall("__evidence__", k=5, mode="hybrid"):
             assert "__evidence__" not in r.episode.content
+
+
+def test_longmemeval_checkpoint_survives_a_kill(tmp_path) -> None:
+    """A six-hour run that holds its results only in memory loses all of them
+    to one bad record, so every scored question is written as it completes."""
+    import json
+
+    from engram.benchmarks.longmemeval import load_checkpoint, run_longmemeval
+
+    data = _fake_longmemeval(tmp_path)
+    ckpt = tmp_path / "ckpt.jsonl"
+    run_longmemeval(data, k_values=(1,), checkpoint=ckpt)
+
+    records = load_checkpoint(ckpt)
+    assert len(records) == 8
+    assert {r["question_id"] for r in records} == {
+        q["question_id"] for q in json.loads(data.read_text())
+    }
+    assert all("hits" in r and "n_episodes" in r for r in records)
+
+
+def test_longmemeval_resume_skips_finished_questions(tmp_path) -> None:
+    from engram.benchmarks.longmemeval import load_checkpoint, run_longmemeval
+
+    data = _fake_longmemeval(tmp_path)
+    ckpt = tmp_path / "partial.jsonl"
+
+    full = run_longmemeval(data, k_values=(1,), checkpoint=ckpt)
+    done = load_checkpoint(ckpt)
+
+    # Drop the last three records, as a kill mid-run would have.
+    lines = ckpt.read_text().splitlines()[:-3]
+    ckpt.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    resumed = run_longmemeval(data, k_values=(1,), checkpoint=ckpt, resume=True)
+
+    assert len(load_checkpoint(ckpt)) == len(done)
+    assert resumed["cosine"].n_questions == full["cosine"].n_questions
+    assert resumed["cosine"].session_recall == full["cosine"].session_recall
+
+
+def test_longmemeval_tolerates_a_truncated_checkpoint_line(tmp_path) -> None:
+    from engram.benchmarks.longmemeval import load_checkpoint
+
+    ckpt = tmp_path / "torn.jsonl"
+    ckpt.write_text('{"question_id": "a", "hits": {}}\n{"question_id": "b", "hi', encoding="utf-8")
+
+    records = load_checkpoint(ckpt)
+    assert [r["question_id"] for r in records] == ["a"]

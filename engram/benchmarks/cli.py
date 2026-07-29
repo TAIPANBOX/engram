@@ -92,7 +92,13 @@ def _run_scale(sizes: str, k: int, n_queries: int) -> None:
 
 
 def _run_longmemeval(
-    data_path: str, k_values: str, mode: str, sample: int | None, seed: int
+    data_path: str,
+    k_values: str,
+    mode: str,
+    sample: int | None,
+    seed: int,
+    checkpoint: str | None,
+    resume: bool,
 ) -> None:
     ks = tuple(int(x) for x in k_values.split(",") if x.strip())
     modes = tuple(m.strip() for m in mode.split(",") if m.strip())
@@ -104,7 +110,14 @@ def _run_longmemeval(
             print(f"  {done}/{total} questions", flush=True)
 
     results = run_longmemeval(
-        data_path, k_values=ks, modes=modes, sample=sample, seed=seed, progress=progress
+        data_path,
+        k_values=ks,
+        modes=modes,
+        sample=sample,
+        seed=seed,
+        progress=progress,
+        checkpoint=checkpoint,
+        resume=resume,
     )
     first = next(iter(results.values()))
 
@@ -180,6 +193,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     lme.add_argument("--sample", type=int, default=None, help="stratified subsample of this size")
     lme.add_argument("--seed", type=int, default=0, help="sampling seed (default 0)")
+    lme.add_argument(
+        "--checkpoint", default=None, metavar="FILE", help="append one JSON record per question"
+    )
+    lme.add_argument(
+        "--resume", action="store_true", help="skip questions already in the checkpoint"
+    )
 
     cost = sub.add_parser("cost", help="reflection token cost projection")
     cost.add_argument("--n", type=int, default=200, help="episodes to simulate (default 200)")
@@ -195,7 +214,9 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "scale":
         _run_scale(args.sizes, args.k, args.queries)
     elif args.cmd == "longmemeval":
-        _run_longmemeval(args.data, args.k, args.mode, args.sample, args.seed)
+        _run_longmemeval(
+            args.data, args.k, args.mode, args.sample, args.seed, args.checkpoint, args.resume
+        )
     elif args.cmd == "cost":
         _run_cost(args.n)
     elif args.cmd == "all":
