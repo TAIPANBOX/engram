@@ -55,7 +55,7 @@ with Engram(path=":memory:") as mem:
 
 ---
 
-### `observe(content, *, actors, tags, salience, emotional_valence) → str`
+### `observe(content, *, actors, tags, salience, emotional_valence, timestamp) → str`
 
 Record a raw episodic observation. Returns the episode id. No LLM call. ~4 ms.
 
@@ -67,6 +67,10 @@ ep_id = mem.observe(
     salience=0.8,           # subjective importance at encoding (0–1)
     emotional_valence=0.3,  # –1 (negative) … +1 (positive)
 )
+
+# Back-filling history: date it when it happened, not when it was written,
+# so recall(as_of=...) places it in the period it belongs to.
+ep_id = mem.observe("Alice joined Globex", timestamp=datetime(2024, 3, 1, tzinfo=UTC))
 ```
 
 ---
@@ -88,7 +92,7 @@ ids = mem.observe_many([
 
 ---
 
-### `recall(query, k, *, mode, depth, decay, vector_weight, fts_weight, as_of, cross_agent, k_inner, candidate_limit) → list[SearchResult]`
+### `recall(query, k, *, mode, depth, decay, vector_weight, fts_weight, as_of, cross_agent, candidate_limit) → list[SearchResult]`
 
 ```python
 # Default: cosine similarity
@@ -112,10 +116,17 @@ results = mem.recall(
 # Cross-agent: bypass agent_id scope
 results = mem.recall("migration", k=10, cross_agent=True)
 
-# Tune the candidate pool sizes for harder bitemporal / hybrid queries
-results = mem.recall("Ivan employer", k=5, as_of=t, k_inner=200)        # vector inner KNN size
+# Tune the candidate pool for hybrid search
 results = mem.recall("Q3 revenue", k=5, mode="hybrid", candidate_limit=64)  # per-source pool
 ```
+
+`k` is capped at 4096, the vec0 KNN limit; above it `recall` raises `ValueError`.
+
+`k_inner` is accepted but ignored since v2.3, and warns. It sized an over-fetch
+that compensated for `as_of` and `agent_id` being applied after the vector
+search. They are now a metadata column and a partition key on the index itself,
+evaluated during the scan, so `k` counts only rows that already passed them and
+there is no inner limit left to tune.
 
 `SearchResult` fields: `episode`, `score` (0–1, higher is better - derived
 from the L2 distance of unit-norm embeddings, so monotone in cosine),

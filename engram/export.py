@@ -124,8 +124,9 @@ def import_json(mem: Engram, src: str | Path, *, merge: bool = False) -> dict[st
                 0
             ]
             conn.execute(
-                "INSERT OR IGNORE INTO vec_episodes(rowid, embedding) VALUES (?, ?)",
-                (rowid, embedding),
+                "INSERT OR IGNORE INTO vec_episodes(rowid, agent_id, ts, embedding) "
+                "VALUES (?, ?, ?, ?)",
+                (rowid, ep["agent_id"], ep["timestamp"], embedding),
             )
             conn.execute(
                 "INSERT OR IGNORE INTO fts_episodes(rowid, content) VALUES (?, ?)",

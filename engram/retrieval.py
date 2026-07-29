@@ -25,7 +25,6 @@ def recall(
     fts_weight: float = 0.3,
     as_of: datetime | None = None,
     agent_id: str | None = None,
-    k_inner: int | None = None,
     candidate_limit: int | None = None,
 ) -> list[SearchResult]:
     """Return the top-k episodes most similar to *query*.
@@ -81,13 +80,7 @@ def recall(
             as_of=as_of,
         )
     elif as_of is not None:
-        hits = store.search_episodes_as_of(
-            query_vec,
-            k,
-            as_of,
-            agent_id=agent_id,
-            k_inner=k_inner,
-        )
+        hits = store.search_episodes_as_of(query_vec, k, as_of, agent_id=agent_id)
     else:
         hits = store.search_episodes(query_vec, k, agent_id=agent_id)
 

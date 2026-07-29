@@ -218,3 +218,36 @@ def test_prune_removes_from_vec_index(mem: Engram) -> None:
     assert pruned > 0
     assert mem._store.vec_count() == before_vec - pruned
     assert mem._store.episode_count() == mem._store.vec_count()
+
+
+# ------------------------------------------------------------------
+# Erasure is all-or-nothing
+# ------------------------------------------------------------------
+
+
+def test_forget_entity_rolls_back_when_erasure_fails(mem: Engram) -> None:
+    """A crash partway through erasure must leave the entity fully present
+    rather than half-forgotten, since nothing records that it was interrupted."""
+    mem.observe("Ivan joined Globex", actors=["Ivan"])
+    mem.observe("Ivan shipped the migration", actors=["Ivan"])
+    mem.assert_fact("Ivan", "works_at", "Globex")
+    before = mem._store.episode_count()
+
+    original = mem._store.delete_fact
+    calls = {"n": 0}
+
+    def explode(fact_id: str) -> bool:
+        calls["n"] += 1
+        raise RuntimeError("disk died mid-erasure")
+
+    mem._store.delete_fact = explode  # type: ignore[method-assign]
+    try:
+        with pytest.raises(RuntimeError):
+            mem.forget_entity("Ivan")
+    finally:
+        mem._store.delete_fact = original  # type: ignore[method-assign]
+
+    assert calls["n"] == 1
+    assert mem._store.episode_count() == before
+    assert len(mem.timeline("Ivan")) == 1
+    assert len(mem.recall("Ivan Globex", k=5)) == 2

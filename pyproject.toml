@@ -22,7 +22,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "sqlite-vec>=0.1.0",
+    # Partition keys and metadata columns on vec0 landed in 0.1.6; the schema
+    # requires them and is verified against 0.1.9.
+    "sqlite-vec>=0.1.9",
     "fastembed>=0.3.0",
     "rfc8785>=0.1.4",
 ]
