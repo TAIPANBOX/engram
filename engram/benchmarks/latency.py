@@ -16,11 +16,26 @@ class LatencyStats:
     p99_ms: float
     mean_ms: float
     throughput_per_sec: float
+    p95_ms: float = 0.0
 
     def __str__(self) -> str:
         return (
-            f"p50={self.p50_ms:.1f}ms  p99={self.p99_ms:.1f}ms  "
-            f"mean={self.mean_ms:.1f}ms  tput={self.throughput_per_sec:.0f}/s"
+            f"p50={self.p50_ms:.1f}ms  p95={self.p95_ms:.1f}ms  "
+            f"p99={self.p99_ms:.1f}ms  mean={self.mean_ms:.1f}ms  "
+            f"tput={self.throughput_per_sec:.0f}/s"
+        )
+
+    @classmethod
+    def from_samples(cls, samples_ms: list[float]) -> LatencyStats:
+        """Summarise a list of per-call durations in milliseconds."""
+        arr = np.array(samples_ms)
+        total_s = sum(samples_ms) / 1000
+        return cls(
+            p50_ms=float(np.percentile(arr, 50)),
+            p95_ms=float(np.percentile(arr, 95)),
+            p99_ms=float(np.percentile(arr, 99)),
+            mean_ms=float(arr.mean()),
+            throughput_per_sec=len(samples_ms) / total_s if total_s > 0 else 0.0,
         )
 
 
@@ -66,14 +81,7 @@ def bench_observe(n: int = 200, warmup: int = 5) -> LatencyStats:
         mem.observe(texts[i])
         samples_ms.append((time.perf_counter() - t0) * 1000)
 
-    arr = np.array(samples_ms)
-    total_s = sum(samples_ms) / 1000
-    return LatencyStats(
-        p50_ms=float(np.percentile(arr, 50)),
-        p99_ms=float(np.percentile(arr, 99)),
-        mean_ms=float(arr.mean()),
-        throughput_per_sec=n / total_s if total_s > 0 else 0.0,
-    )
+    return LatencyStats.from_samples(samples_ms)
 
 
 def bench_recall(
@@ -115,14 +123,7 @@ def bench_recall(
         mem.recall(queries[i], k=k, mode=mode)
         samples_ms.append((time.perf_counter() - t0) * 1000)
 
-    arr = np.array(samples_ms)
-    total_s = sum(samples_ms) / 1000
-    return LatencyStats(
-        p50_ms=float(np.percentile(arr, 50)),
-        p99_ms=float(np.percentile(arr, 99)),
-        mean_ms=float(arr.mean()),
-        throughput_per_sec=n_queries / total_s if total_s > 0 else 0.0,
-    )
+    return LatencyStats.from_samples(samples_ms)
 
 
 def run_latency_suite(n: int = 200, k: int = 5) -> dict[str, LatencyStats]:

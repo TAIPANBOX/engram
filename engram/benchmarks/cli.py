@@ -64,6 +64,33 @@ def _run_locomo(data_path: str | None, k: int) -> None:
     print(f"  MRR:          {result.mrr:.3f}")
 
 
+def _run_scale(sizes: str, k: int, n_queries: int) -> None:
+    parsed = tuple(int(s) for s in sizes.split(",") if s.strip())
+    _header(f"Scaling  (sizes={parsed}, k={k}, {n_queries} queries each)")
+    print("  Exact vector scan, so cost is linear in the episodes that survive")
+    print("  the filters. Every column but the last excludes query embedding,")
+    print("  which is a flat ~4 ms and would otherwise hide the curve. RSS is")
+    print("  a fresh process opening the finished store and recalling from it.")
+    print()
+    from engram.benchmarks.scale import bench_scale_point
+
+    # Printed per size rather than at the end: the largest store takes minutes
+    # to build, and a run that shows nothing until it is done looks hung.
+    head = ""
+    for n in sorted(parsed):
+        point = bench_scale_point(n, k=k, n_queries=n_queries)
+        if not head:
+            head = f"  {'episodes':>9} {'file MB':>8} {'RSS MB':>7} {'build s':>8}"
+            head += "".join(f" {m + ' p50/p95':>22}" for m in point.latencies)
+            print(head)
+            print("  " + "-" * (len(head) - 2))
+        rss = f"{point.rss_mb:.0f}" if point.rss_mb is not None else "n/a"
+        row = f"  {point.n_episodes:>9,} {point.file_mb:>8.1f} {rss:>7} {point.build_s:>8.1f}"
+        for stats in point.latencies.values():
+            row += f" {stats.p50_ms:>10.2f} /{stats.p95_ms:>10.2f}"
+        print(row, flush=True)
+
+
 def _run_cost(n: int) -> None:
     _header(f"Cost Benchmark  (n={n} episodes)")
     print("  Simulating reflection passes…", flush=True)
@@ -100,6 +127,11 @@ def main(argv: list[str] | None = None) -> None:
     loc.add_argument("--data", default=None, metavar="FILE", help="path to LoCoMo JSON")
     loc.add_argument("--k", type=int, default=5, help="recall top-k (default 5)")
 
+    scale = sub.add_parser("scale", help="recall latency as the store grows")
+    scale.add_argument("--sizes", default="1000,10000,100000", help="store sizes, comma separated")
+    scale.add_argument("--k", type=int, default=10, help="recall top-k (default 10)")
+    scale.add_argument("--queries", type=int, default=50, help="queries per size (default 50)")
+
     cost = sub.add_parser("cost", help="reflection token cost projection")
     cost.add_argument("--n", type=int, default=200, help="episodes to simulate (default 200)")
 
@@ -111,6 +143,8 @@ def main(argv: list[str] | None = None) -> None:
         _run_latency(args.n, args.k)
     elif args.cmd == "locomo":
         _run_locomo(args.data, args.k)
+    elif args.cmd == "scale":
+        _run_scale(args.sizes, args.k, args.queries)
     elif args.cmd == "cost":
         _run_cost(args.n)
     elif args.cmd == "all":
