@@ -184,3 +184,56 @@ def test_cli_no_subcommand_exits(capsys: pytest.CaptureFixture[str]) -> None:
 
     with pytest.raises(SystemExit):
         main([])
+
+
+# ------------------------------------------------------------------
+# Scaling benchmark
+# ------------------------------------------------------------------
+
+
+def test_scale_point_measures_every_query_path() -> None:
+    from engram.benchmarks.scale import bench_scale_point
+
+    point = bench_scale_point(n=60, k=5, n_queries=6, warmup=2)
+
+    assert point.n_episodes == 60
+    assert point.file_mb > 0, "WAL must be checkpointed before the file is measured"
+    assert point.build_s > 0
+    assert set(point.latencies) == {
+        "cosine",
+        "hybrid",
+        "as_of",
+        "scoped (5 of n)",
+        "recall() end to end",
+    }
+    for stats in point.latencies.values():
+        assert stats.p50_ms > 0
+        assert stats.p95_ms >= stats.p50_ms
+
+
+def test_scale_queries_are_absent_from_the_corpus() -> None:
+    """Querying with corpus strings measures the embedder's LRU cache instead
+    of the store: hits while the corpus fits, misses once it does not."""
+    from engram.benchmarks.latency import _make_texts
+    from engram.benchmarks.scale import _make_queries
+
+    queries = _make_queries(200)
+    assert len(set(queries)) == 200, "repeated queries would be served from cache"
+    assert not set(queries) & set(_make_texts(2000))
+
+
+def test_scoped_recall_does_not_scale_with_the_store() -> None:
+    """The partition key is the whole point: an agent holding five episodes
+    pays for five, not for everything the other agent wrote."""
+    from engram.benchmarks.scale import bench_scale_point
+
+    small = bench_scale_point(n=100, k=5, n_queries=6, warmup=2)
+    large = bench_scale_point(n=1500, k=5, n_queries=6, warmup=2)
+
+    scoped_growth = large.latencies["scoped (5 of n)"].p50_ms / (
+        small.latencies["scoped (5 of n)"].p50_ms or 1e-9
+    )
+    unscoped_growth = large.latencies["cosine"].p50_ms / (small.latencies["cosine"].p50_ms or 1e-9)
+
+    assert scoped_growth < 3, f"scoped recall grew {scoped_growth:.1f}x for 15x the store"
+    assert unscoped_growth > scoped_growth

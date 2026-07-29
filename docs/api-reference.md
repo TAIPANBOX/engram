@@ -641,7 +641,7 @@ CREATE TABLE reflections (
 
 Measured on Apple M-series, fastembed `BAAI/bge-small-en-v1.5`, SQLite WAL mode.
 
-### Write latency (n=300 episodes in store)
+### Write latency (n=300 episodes in store, embedding included)
 
 | Operation | p50 | p99 | Notes |
 |---|---|---|---|
@@ -649,14 +649,38 @@ Measured on Apple M-series, fastembed `BAAI/bge-small-en-v1.5`, SQLite WAL mode.
 | `observe_many()` 100 eps | 2.0 ms/ep | - | Single ONNX pass + single transaction |
 | `observe_many()` 500 eps | 1.6 ms/ep | - | Batch efficiency increases with N |
 
-### Read latency (n=300 episodes)
+### Read latency as the store grows
 
-| Operation | p50 | p99 |
-|---|---|---|
-| `recall(mode="cosine")` | 4.3 ms | 5.0 ms |
-| `recall(mode="hybrid")` | 4.6 ms | 5.3 ms |
-| `recall(mode="spreading")` | 4.4 ms | 5.0 ms |
-| `recall(as_of=...)` | 4.5 ms | 5.2 ms |
+`engram-bench scale --sizes 1000,10000,100000`. Search columns are p50/p95 in
+milliseconds against a pre-computed query embedding, so they show the part
+that grows with the store; `recall()` keeps the ~4 ms embedding in, because
+that is what a caller waits for. RSS is a fresh process opening the finished
+store and recalling from it.
+
+| episodes | file | RSS | cosine | hybrid | `as_of` | scoped | `recall()` |
+|---|---|---|---|---|---|---|---|
+| 1 000 | 2.4 MB | 342 MB | 0.18 / 0.18 | 0.45 / 0.53 | 0.87 / 1.03 | **0.05 / 0.05** | 4.4 / 4.9 |
+| 10 000 | 19.8 MB | 346 MB | 3.03 / 3.25 | 3.59 / 3.68 | 10.0 / 10.5 | **0.05 / 0.07** | 7.2 / 7.7 |
+| 100 000 | 193.6 MB | 353 MB | 31.8 / 32.5 | 35.8 / 36.9 | 107 / 107 | **0.09 / 0.11** | 35.7 / 36.6 |
+
+Read it as four facts:
+
+- **Unscoped search is linear**, ten times the episodes for ten times the
+  cost, because the scan is exact. Around 100 000 episodes it stops being
+  free at ~32 ms, still small next to any LLM call in the same loop, and at a
+  million it would be the slowest thing an agent does.
+- **Scoped search does not grow at all.** `agent_id` is a vec0 partition key,
+  so an agent holding five episodes pays for five however large the shared
+  store gets: 350x faster than unscoped at 100 000 episodes.
+- **`as_of` costs about 3.4x cosine** and hits the wall first, at ~107 ms per
+  query at 100 000 episodes. The `ts` metadata filter is evaluated per row
+  during the scan.
+- **Memory is flat.** Vectors live on disk and are read by SQLite, so the
+  resident footprint is the ONNX runtime, not the store.
+
+Spreading activation is absent because its edges come from `reflect()`, which
+needs an LLM; on a store built by `observe()` alone the graph is empty and the
+number would describe the seed KNN rather than the mode.
 
 ### Decay (n=1000 episodes)
 
@@ -706,6 +730,7 @@ Reflection is optional and async - you only pay when you need semantic fact extr
 ```bash
 # Both spellings work
 python -m engram.benchmarks all
+engram-bench scale --sizes 1000,10000,100000
 engram-bench latency --n 500
 engram-bench locomo --data ./my_data.json
 engram-bench cost --n 1000 --model gpt-4o-mini

@@ -383,15 +383,32 @@ All versions shipped. Items are marked ✅.
 
 ---
 
-## 8. Benchmarks (measured on M-series, bge-small-en-v1.5, n=300)
+## 8. Benchmarks (measured on M-series, bge-small-en-v1.5)
 
-### Latency
+### Write latency (n=300)
 
 | Operation | p50 | p99 | Throughput |
 |-----------|-----|-----|-----------|
 | `observe` | 4.1 ms | 4.8 ms | 236 ep/s |
-| `recall` (cosine) | 4.3 ms | 5.0 ms | 232 q/s |
-| `recall` (spreading) | 4.4 ms | 5.0 ms | 224 q/s |
+
+### Search latency as the store grows
+
+`engram-bench scale`. p50, milliseconds, against a pre-computed embedding.
+
+| episodes | cosine | `as_of` | scoped | RSS |
+|---|---|---|---|---|
+| 1 000 | 0.18 | 0.87 | 0.05 | 342 MB |
+| 10 000 | 3.03 | 10.0 | 0.05 | 346 MB |
+| 100 000 | 31.8 | 107 | 0.09 | 353 MB |
+
+Exact scan, so unscoped cost is linear in the episodes that survive the
+filters. Scoped recall is flat because `agent_id` partitions the vec0 table:
+an agent pays for its own episodes, not for the store. `as_of` is the
+expensive path at ~3.4x cosine, and the first one that will need attention,
+around a million episodes or sooner if a caller leans on time travel.
+
+Memory does not grow with the store; SQLite reads vectors from disk and the
+resident footprint is the ONNX runtime.
 
 ### Recall quality
 

@@ -40,6 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `recall(k=...)` above the vec0 limit of 4096 raises `ValueError` naming the
   limit, instead of surfacing a raw `sqlite3.OperationalError`.
 
+### Added
+- `engram-bench scale` sweeps store sizes and reports search latency, file
+  size and resident memory at each, replacing read-latency numbers that were
+  measured at 300 episodes and were mostly the query embedding. Published
+  results at 1k/10k/100k are in the API reference: unscoped search is linear
+  (0.18 / 3.03 / 31.8 ms p50), scoped search is flat (0.05 / 0.05 / 0.09 ms)
+  because `agent_id` partitions the index, `as_of` costs about 3.4x cosine,
+  and memory does not grow with the store.
+
 ### Removed
 - The published recall-accuracy numbers (`hit@1 33.3%`, `hit@5 93.3%`,
   `MRR 0.586`). They were produced by the fixture bundled in
