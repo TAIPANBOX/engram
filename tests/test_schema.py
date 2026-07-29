@@ -167,3 +167,45 @@ def test_repartition_preserves_orphan_vectors(tmp_path) -> None:
     with Engram(path=path, agent_id="a") as mem:
         assert mem._store.vec_count() == 2
         assert len(mem.recall("survives", k=5)) == 1
+
+
+def test_interrupted_repartition_keeps_the_vectors(tmp_path, monkeypatch) -> None:
+    """An interrupted migration must roll back to the flat table rather than
+    leave episodes whose embeddings are gone and cannot be recomputed."""
+    from engram import Engram
+    from engram.schema import _vec_ddl
+
+    path = str(tmp_path / "interrupted.engram")
+    with Engram(path=path, agent_id="a") as mem:
+        for i in range(10):
+            mem.observe(f"Episode number {i}")
+
+    _downgrade_to_flat_vec(path)
+
+    boom = RuntimeError("process died mid-migration")
+
+    def explode(dim: int) -> str:
+        _vec_ddl(dim)
+        raise boom
+
+    monkeypatch.setattr("engram.schema._vec_ddl", explode)
+    with pytest.raises(RuntimeError):
+        Engram(path=path, agent_id="a")
+    monkeypatch.undo()
+
+    # The flat table is back, with every vector still in it.
+    import sqlite_vec
+
+    conn = sqlite3.connect(path)
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    ddl = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'vec_episodes'").fetchone()[0]
+    assert "partition key" not in ddl
+    assert conn.execute("SELECT COUNT(*) FROM vec_episodes").fetchone()[0] == 10
+    conn.close()
+
+    # And the next open migrates cleanly.
+    with Engram(path=path, agent_id="a") as mem:
+        assert mem._store.vec_count() == 10
+        assert len(mem.recall("Episode", k=5)) == 5

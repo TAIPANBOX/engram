@@ -131,17 +131,30 @@ def _repartition_vec_episodes(conn: sqlite3.Connection, dim: int) -> None:
     accepts NULL in a partition key but rejects it in a TEXT metadata column.
     The empty string never reaches a result, because every search path inner
     joins ``episodes`` and an orphan has no row there to join to.
+
+    The rebuild runs in one explicit transaction. Without it the DROP commits
+    on its own, and a process that dies before the re-insert lands leaves a
+    store whose episodes still hold their text but have lost every embedding,
+    with no way to recompute them short of export and re-import. SQLite makes
+    DDL transactional, so an interrupted migration rolls back to the flat
+    table and simply runs again on the next open.
     """
     rows = conn.execute(
         "SELECT v.rowid, e.agent_id, COALESCE(e.timestamp, ''), v.embedding "
         "FROM vec_episodes v LEFT JOIN episodes e ON e.rowid = v.rowid"
     ).fetchall()
-    conn.execute("DROP TABLE vec_episodes")
-    conn.execute(_vec_ddl(dim))
-    conn.executemany(
-        "INSERT INTO vec_episodes(rowid, agent_id, ts, embedding) VALUES (?, ?, ?, ?)",
-        rows,
-    )
+    conn.commit()  # close any implicit transaction so BEGIN is legal
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("DROP TABLE vec_episodes")
+        conn.execute(_vec_ddl(dim))
+        conn.executemany(
+            "INSERT INTO vec_episodes(rowid, agent_id, ts, embedding) VALUES (?, ?, ?, ?)",
+            rows,
+        )
+    except BaseException:
+        conn.rollback()
+        raise
     conn.commit()
 
 
