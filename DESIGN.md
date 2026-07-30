@@ -18,7 +18,8 @@
 | v0.6 | MCP server (FastMCP, 6 tools), LangChain + LlamaIndex adapters | ✅ shipped |
 | v1.0 | Benchmark suite (`engram-bench`), synthetic recall fixture, README | ✅ shipped |
 
-**Test suite:** 320 tests, all green. `mypy --strict` passes. `ruff` clean.
+**Test suite:** 457 tests, all green, plus a SQLCipher module skipped where the
+library is absent. `mypy --strict` passes. `ruff` clean.
 
 ---
 
