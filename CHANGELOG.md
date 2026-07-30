@@ -5,6 +5,27 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- The LongMemEval checkpoint records the rank of every evidence and gold-session
+  hit, and each question's evidence count, alongside the pass/fail flags. Any
+  smaller k, and the strict "every flagged turn retrieved" reading, are now
+  recomputable from a finished run instead of requiring another six-hour pass.
+  Storing the verdict and discarding the observation is what made the first run
+  unrepeatable except by repeating it.
+- `engram-bench longmemeval` prints turn recall three ways when the checkpoint
+  carries ranks: any flagged turn retrieved, the same over questions that flag
+  any turn at all, and every flagged turn retrieved.
+
+### Fixed
+- The published turn-recall figure is now stated with the caveat it needed. 21
+  of the 500 questions flag no turn, so they cannot be hit and lower the number
+  for a reason unrelated to retrieval: over the 479 answerable questions the
+  figure is 0.866 at k=5, not 0.830. And 59% of questions flag more than one
+  turn, so "at least one retrieved" is an upper bound on what the model was
+  actually handed, which the docs now say rather than imply.
+
 ## [2.4.0] - 2026-07-30
 
 ### Changed

@@ -52,6 +52,15 @@ class LongMemEvalResult:
     sampled: bool = False
     session_recall: dict[int, float] = field(default_factory=dict)
     turn_recall: dict[int, float] = field(default_factory=dict)
+    strict_turn_recall: dict[int, float] = field(default_factory=dict)
+    """Every flagged turn retrieved, not merely one of them. 59% of questions
+    flag more than one, so ``turn_recall`` is an upper bound on what the agent
+    was actually handed. Empty for checkpoints written before ranks were
+    recorded."""
+    answerable_turn_recall: dict[int, float] = field(default_factory=dict)
+    """``turn_recall`` over the questions that flag at least one turn. The 21
+    that flag none can never be hit, so they lower the headline figure for a
+    reason that has nothing to do with retrieval."""
     session_recall_by_type: dict[str, dict[int, float]] = field(default_factory=dict)
     ingest_s: float = 0.0
     query_s: float = 0.0
@@ -171,21 +180,44 @@ def variants_from_modes(modes: tuple[str, ...]) -> tuple[Variant, ...]:
     return tuple(Variant(label=m, mode=m) for m in modes)
 
 
+def evidence_count(question: dict[str, Any]) -> int:
+    """How many turns the dataset flags as holding this question's answer.
+
+    59% of LongMemEval-S questions flag more than one, and 21 of the 500 flag
+    none at all. Both facts change what a recall number means, so the count
+    travels with every record.
+    """
+    return sum(
+        1 for session in question["haystack_sessions"] for turn in session if turn.get("has_answer")
+    )
+
+
 def _score_question(
     question: dict[str, Any],
     results_by_label: dict[str, list[Any]],
     k_values: tuple[int, ...],
-) -> dict[str, dict[str, dict[str, bool]]]:
-    """Reduce one question's recall output to hit flags per variant and k."""
+) -> dict[str, dict[str, Any]]:
+    """Reduce one question's recall output to hit flags and the ranks behind them.
+
+    The flags answer the questions we ask today. The ranks answer the ones we
+    have not thought of yet: with them, any @k below the k that was run, and
+    the strict "every flagged turn retrieved" variant, are recomputable from
+    the checkpoint without repeating a six-hour pass. Storing the conclusion
+    and discarding the observation is what forced this run to be repeated once
+    already.
+    """
     gold_sessions = set(question.get("answer_session_ids") or [])
-    hits: dict[str, dict[str, dict[str, bool]]] = {}
+    scored: dict[str, dict[str, Any]] = {}
     for label, results in results_by_label.items():
-        hits[label] = {"session": {}, "turn": {}}
-        for k in k_values:
-            top = results[:k]
-            hits[label]["session"][str(k)] = any(gold_sessions & set(r.episode.tags) for r in top)
-            hits[label]["turn"][str(k)] = any("__evidence__" in r.episode.tags for r in top)
-    return hits
+        session_ranks = [i for i, r in enumerate(results) if gold_sessions & set(r.episode.tags)]
+        evidence_ranks = [i for i, r in enumerate(results) if "__evidence__" in r.episode.tags]
+        scored[label] = {
+            "session": {str(k): any(i < k for i in session_ranks) for k in k_values},
+            "turn": {str(k): any(i < k for i in evidence_ranks) for k in k_values},
+            "session_ranks": session_ranks,
+            "evidence_ranks": evidence_ranks,
+        }
+    return scored
 
 
 def _aggregate(
@@ -221,6 +253,26 @@ def _aggregate(
                     by_type[rec["question_type"]][k] += 1
                 if hits["turn"].get(str(k)):
                     turn_hits[k] += 1
+        strict = dict.fromkeys(k_values, 0)
+        answerable_hits = dict.fromkeys(k_values, 0)
+        answerable_n = 0
+        have_ranks = False
+        for rec in records:
+            hits = rec["hits"].get(label)
+            total = rec.get("evidence_total")
+            if hits is None or total is None or "evidence_ranks" not in hits:
+                continue
+            have_ranks = True
+            if total > 0:
+                answerable_n += 1
+            for k in k_values:
+                found = sum(1 for i in hits["evidence_ranks"] if i < k)
+                if total > 0:
+                    if found >= total:
+                        strict[k] += 1
+                    if found > 0:
+                        answerable_hits[k] += 1
+
         out[label] = LongMemEvalResult(
             sampled=sampled,
             n_questions=n,
@@ -232,6 +284,16 @@ def _aggregate(
             session_recall_by_type={
                 t: {k: by_type[t][k] / type_totals[t] for k in k_values} for t in sorted(by_type)
             },
+            strict_turn_recall=(
+                {k: strict[k] / answerable_n for k in k_values}
+                if have_ranks and answerable_n
+                else {}
+            ),
+            answerable_turn_recall=(
+                {k: answerable_hits[k] / answerable_n for k in k_values}
+                if have_ranks and answerable_n
+                else {}
+            ),
             ingest_s=sum(r["ingest_s"] for r in records),
             query_s=sum(r["query_s"].get(label, 0.0) for r in records),
         )
@@ -351,6 +413,7 @@ def run_longmemeval(
             "question_id": question["question_id"],
             "question_type": question["question_type"],
             "n_episodes": n_ep,
+            "evidence_total": evidence_count(question),
             "ingest_s": ingest,
             "query_s": query_s,
             "hits": _score_question(question, results_by_label, k_values),
