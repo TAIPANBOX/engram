@@ -5,6 +5,23 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **The hybrid blend defaults to `0.5 / 0.5`** instead of `0.7 / 0.3`. The old
+  weights shipped without anyone measuring them; `engram-bench longmemeval
+  --sweep` now scores every configuration in one pass, and on all 500 questions
+  of LongMemEval-S the equal blend leads on session@5, turn@5, session@10 and
+  turn@10 at once. The margin is one point of turn@5, five questions in five
+  hundred, and the two sit on the same plateau. The result worth having is the
+  shape: BM25 alone (0.750 turn@5) and vector alone (0.772) are both clearly
+  worse than the middle (0.830).
+
+### Added
+- `engram-bench longmemeval --sweep` scores cosine plus hybrid across seven
+  blend points in a single pass. Ingest is shared, so the whole sweep costs
+  about a minute on top of a six-hour run. Records in `benchmarks/results/`.
+
 ## [2.3.0] - 2026-07-30
 
 ### Changed

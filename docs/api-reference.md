@@ -738,6 +738,38 @@ Session recall at k=5 by question type, hybrid against cosine:
 `single-session-user` 0.986 / 0.957, `multi-session` 0.970 / 0.970,
 `temporal-reasoning` 0.940 / 0.925, `single-session-preference` 0.933 / 0.900.
 
+### The blend weights, swept
+
+`0.7 / 0.3` shipped as the default without anyone measuring it. One run scores
+every configuration, because ingesting a question's history costs ~40 seconds
+and querying it costs ~10 ms, so eight variants add under a minute to a
+six-hour pass. All 500 questions, all against the same store per question:
+
+| blend (cosine / bm25) | session@5 | turn@5 | session@10 | turn@10 |
+|---|---|---|---|---|
+| `cosine` mode | 0.956 | 0.772 | 0.978 | 0.862 |
+| 0.0 / 1.0 | 0.938 | 0.750 | 0.960 | 0.814 |
+| 0.1 / 0.9 | 0.938 | 0.764 | 0.966 | 0.822 |
+| 0.3 / 0.7 | 0.954 | 0.786 | 0.970 | 0.860 |
+| **0.5 / 0.5** (default) | **0.970** | **0.830** | **0.982** | **0.894** |
+| 0.7 / 0.3 (previous) | 0.968 | 0.820 | 0.982 | 0.892 |
+| 0.9 / 0.1 | 0.956 | 0.790 | 0.976 | 0.870 |
+| 1.0 / 0.0 | 0.956 | 0.772 | 0.978 | 0.862 |
+
+**Read the margin honestly.** 0.5 beats the old 0.7 by 1.0 point of turn@5,
+which is five questions out of five hundred. It is the default because it
+leads on all four metrics at once and costs nothing to adopt, not because the
+gap is large. The two sit on the same plateau.
+
+**The shape is the real result.** Both ends are clearly worse than the middle:
+BM25 alone is the weakest configuration measured (0.750 turn@5) and pure vector
+is 0.772, against 0.830 in the middle. The blend adds signal rather than
+diluting the stronger side, which is the claim `mode="hybrid"` rests on.
+
+Hybrid at `1.0 / 0.0` reproduced `mode="cosine"` to three decimals on all four
+metrics. The two paths differ in code (candidate pool, min-max normalisation)
+and not measurably on this dataset.
+
 Reproduce it (the dataset is 265 MB and is not vendored):
 
 ```bash

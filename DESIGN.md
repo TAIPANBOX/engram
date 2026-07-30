@@ -426,6 +426,11 @@ turn the dataset flagged as holding the answer, 896 of 246 738. The 18-point
 gap at k=5 is the interesting part, and it is the number a system quoting a
 bare "R@k" is usually not quoting.
 
+The blend weights were swept in one pass (eight configurations, same store
+per question): both ends are worse than the middle, and the default moved
+from `0.7 / 0.3` to `0.5 / 0.5` on a margin of about five questions in five
+hundred.
+
 Raw per-question records: `benchmarks/results/`. Method and per-type
 breakdown: `docs/api-reference.md`.
 

@@ -21,8 +21,8 @@ def recall(
     alpha: float = 0.6,
     beta: float = 0.3,
     gamma: float = 0.1,
-    vector_weight: float = 0.7,
-    fts_weight: float = 0.3,
+    vector_weight: float = 0.5,
+    fts_weight: float = 0.5,
     as_of: datetime | None = None,
     agent_id: str | None = None,
     candidate_limit: int | None = None,
@@ -41,8 +41,8 @@ def recall(
         alpha: Cosine weight in spreading score.
         beta: Graph activation weight in spreading score.
         gamma: Importance weight in spreading score.
-        vector_weight: Cosine fraction for hybrid mode (default 0.7).
-        fts_weight: BM25 fraction for hybrid mode (default 0.3).
+        vector_weight: Cosine fraction for hybrid mode (default 0.5).
+        fts_weight: BM25 fraction for hybrid mode (default 0.5).
         as_of: If set, only episodes with timestamp <= as_of are considered.
         agent_id: If set, restrict results to this agent. None searches all agents.
 

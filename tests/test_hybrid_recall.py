@@ -266,3 +266,25 @@ def test_hybrid_is_the_default_mode(tmp_path) -> None:
         default = mem.recall("which restaurant did we pick", k=2)
         hybrid = mem.recall("which restaurant did we pick", k=2, mode="hybrid")
         assert [r.episode.id for r in default] == [r.episode.id for r in hybrid]
+
+
+def test_blend_defaults_to_the_swept_optimum() -> None:
+    """Pins 0.5/0.5. It replaced an inherited 0.7/0.3 that nobody had measured;
+    the sweep across all 500 LongMemEval-S questions put the equal blend ahead
+    on every metric, and both ends of the range clearly behind the middle."""
+    import inspect
+
+    from engram.async_engram import AsyncEngram
+    from engram.core import Engram as EngramClass
+    from engram.retrieval import recall as retrieval_recall
+    from engram.store import Store
+
+    for fn in (
+        EngramClass.recall,
+        AsyncEngram.recall,
+        retrieval_recall,
+        Store.search_episodes_hybrid,
+    ):
+        params = inspect.signature(fn).parameters
+        assert params["vector_weight"].default == 0.5, fn.__qualname__
+        assert params["fts_weight"].default == 0.5, fn.__qualname__
