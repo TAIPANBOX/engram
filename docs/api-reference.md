@@ -702,17 +702,58 @@ WAL mode is enabled automatically for all file-based stores. Readers (`recall`, 
 
 ### Recall accuracy
 
-Not published. `engram-bench locomo` scores hit@k and MRR over any file in
-LoCoMo's format, but the bundled fixture is synthetic: five hand-written
-sessions, fifteen questions, keywords chosen next to the text they match. It
-is a smoke test for the retrieval path, not a measurement of recall quality,
-and the scores it produces are not quoted here for that reason.
+Measured on the full 500 questions of
+[LongMemEval-S](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned)
+(`longmemeval_s_cleaned.json`, ICLR 2025, MIT). Each question carries its own
+history of 30 to 60 sessions; every turn is ingested as one episode, 246 738
+in total, and the question is asked against that store. `bge-small-en-v1.5`,
+`mode="cosine"`, no LLM anywhere in the loop.
 
-Point it at real data to get a real number:
+| | k=5 | k=10 |
+|---|---|---|
+| **session recall** | 0.956 | 0.978 |
+| **turn recall** | 0.772 | 0.862 |
+
+The dataset marks both the sessions holding the evidence and the individual
+turns, so there are two honest numbers and they are not interchangeable:
+
+- **session recall** counts a hit when any retrieved episode came from a
+  session listed in `answer_session_ids`. A session can run a dozen turns, so
+  this says the right conversation was found.
+- **turn recall** counts a hit only when a retrieved episode is one of the
+  896 turns flagged `has_answer` out of 246 738. This says the answer itself
+  was put in front of the agent, and it is 18 points lower at k=5.
+
+A memory system quoting one unqualified "R@k" is almost certainly quoting the
+first. Ask which.
+
+By question type, session recall at k=5: `single-session-assistant` 1.000,
+`knowledge-update` 0.974, `multi-session` 0.970, `single-session-user` 0.957,
+`temporal-reasoning` 0.925, `single-session-preference` 0.900.
+
+Reproduce it (the dataset is 265 MB and is not vendored):
 
 ```bash
-engram-bench locomo --data ./your_dataset.json --k 5
+engram-bench longmemeval --data ./longmemeval_s_cleaned.json --k 5,10 \
+    --checkpoint ./lme.jsonl --resume
 ```
+
+Ingestion is the whole cost: 5.6 hours on eight dedicated cores, against 15 ms
+per query. `--checkpoint` writes one record per question so a run that stops
+can be resumed and scored from where it got to. The records behind the table
+above are in [`benchmarks/results/`](../benchmarks/results/).
+
+**`mode="hybrid"` is deliberately absent.** The same run scored it and got
+figures identical to cosine to three decimals on all 500 questions, which is
+what exposed a bug: the BM25 query joined its terms with an implicit AND, so
+it matched nothing for any question longer than a few words and the blend
+reduced to cosine. That is fixed, but no hybrid number is published until a
+run measures the fixed code.
+
+`engram-bench locomo` also scores hit@k and MRR over any file in LoCoMo's
+format. The fixture bundled with it is synthetic, five hand-written sessions
+whose keywords were chosen next to the text they match, so it is a smoke test
+for the retrieval path and its scores are not quoted anywhere.
 
 ### Reflection cost (per 1 000 episodes)
 

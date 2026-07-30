@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   limit, instead of surfacing a raw `sqlite3.OperationalError`.
 
 ### Added
+- **Recall accuracy on LongMemEval-S**, full 500 questions, 246 738 turns:
+  session recall 0.956 at k=5 and 0.978 at k=10, turn recall 0.772 and 0.862.
+  `engram-bench longmemeval` runs it, `--checkpoint` makes a six-hour run
+  resumable, and the per-question records behind the table are committed in
+  `benchmarks/results/`. First published recall number that comes from a
+  public dataset rather than from a fixture written alongside its own answers.
 - `engram-bench scale` sweeps store sizes and reports search latency, file
   size and resident memory at each, replacing read-latency numbers that were
   measured at 300 episodes and were mostly the query embedding. Published
