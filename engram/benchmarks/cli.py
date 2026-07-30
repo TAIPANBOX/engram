@@ -149,6 +149,7 @@ def _run_longmemeval(
     print(head)
     print("    " + "-" * (len(head) - 4))
     best = max(results.items(), key=lambda kv: kv[1].turn_recall[min(ks)])
+    strict_available = any(r.strict_turn_recall for r in results.values())
     for name, result in results.items():
         row = f"    {name:<{width}}"
         for k in ks:
@@ -157,6 +158,25 @@ def _run_longmemeval(
         if name == best[0]:
             row += f"   <- best turn@{min(ks)}"
         print(row)
+    if strict_available:
+        print()
+        print("  Turn recall, read three ways:")
+        print(
+            f"    {'variant':<{width}} {'any@' + str(min(ks)):>9} {'answerable':>11} {'strict':>8}"
+        )
+        for name, result in results.items():
+            k = min(ks)
+            print(
+                f"    {name:<{width}} {result.turn_recall[k]:>9.3f}"
+                f" {result.answerable_turn_recall.get(k, float('nan')):>11.3f}"
+                f" {result.strict_turn_recall.get(k, float('nan')):>8.3f}"
+            )
+        print()
+        print("    any        = at least one flagged turn retrieved")
+        print("    answerable = the same, over questions that flag any turn at all")
+        print("    strict     = every flagged turn retrieved, which is what a")
+        print("                 question needing several of them actually requires")
+
     print()
     print("  Session recall by question type:")
     for name, result in results.items():

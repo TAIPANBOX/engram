@@ -738,6 +738,30 @@ Session recall at k=5 by question type, hybrid against cosine:
 `single-session-user` 0.986 / 0.957, `multi-session` 0.970 / 0.970,
 `temporal-reasoning` 0.940 / 0.925, `single-session-preference` 0.933 / 0.900.
 
+**Three readings of turn recall, and why the headline one is the loosest.**
+The dataset flags 896 turns across 500 questions, but not evenly: 182 questions
+flag exactly one, 297 flag between two and six, and **21 flag none at all**.
+That matters twice over.
+
+- The 21 unflagged questions can never produce a turn hit, so they lower the
+  figure for a reason that has nothing to do with retrieval. Over the 479
+  questions that flag at least one turn, turn recall at k=5 is **0.866** rather
+  than 0.830, and at k=10 it is **0.933** rather than 0.894.
+- For the 297 questions needing more than one turn, "at least one retrieved"
+  counts a hit while the agent was handed half of what it needed. The published
+  figure is therefore an **upper bound** on the probability that everything
+  required was in front of the model. Reasoning from the per-question records:
+  for the 182 single-evidence questions the two readings coincide at 0.830, and
+  across the whole answerable set the strict reading lies between 0.57 and 0.87
+  at k=5, the spread depending on how strongly the retrieval of one evidence
+  turn predicts the retrieval of its siblings. It is not measured, so it is not
+  claimed.
+
+Runs from v2.4.1 onward record the rank of every evidence hit, which makes the
+strict reading and any smaller k recomputable from the checkpoint without
+repeating the pass. `engram-bench longmemeval` prints all three readings when
+the checkpoint carries them.
+
 ### The blend weights, swept
 
 `0.7 / 0.3` shipped as the default without anyone measuring it. One run scores

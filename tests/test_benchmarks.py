@@ -456,3 +456,124 @@ def test_sweep_results_survive_a_reload_from_checkpoint(tmp_path) -> None:
     for label in live:
         assert live[label].session_recall == reloaded[label].session_recall
         assert live[label].turn_recall == reloaded[label].turn_recall
+
+
+# ------------------------------------------------------------------
+# What the checkpoint keeps
+# ------------------------------------------------------------------
+
+
+def _fake_multi_evidence(tmp_path):
+    """A question whose answer needs two flagged turns, and one that needs one.
+
+    59% of LongMemEval-S questions flag more than one turn, and "at least one
+    retrieved" counts those as hits while the agent got half of what it needed.
+    """
+    import json
+
+    questions = [
+        {
+            "question_id": "needs-two",
+            "question_type": "multi",
+            "question": "where and when was the offsite",
+            "question_date": "2024/03/01 (Fri) 10:00",
+            "answer": "Berlin, March",
+            "answer_session_ids": ["s-two-1", "s-two-2"],
+            "haystack_session_ids": ["s-two-1", "s-two-2"],
+            "haystack_dates": ["2024/01/02 (Tue) 09:00", "2024/02/03 (Sat) 11:00"],
+            "haystack_sessions": [
+                [{"role": "user", "content": "the offsite was in Berlin", "has_answer": True}],
+                [{"role": "user", "content": "the offsite ran through March", "has_answer": True}],
+            ],
+        },
+        {
+            "question_id": "needs-one",
+            "question_type": "single",
+            "question": "who chaired the review",
+            "question_date": "2024/03/01 (Fri) 10:00",
+            "answer": "Alice",
+            "answer_session_ids": ["s-one-1"],
+            "haystack_session_ids": ["s-one-0", "s-one-1"],
+            "haystack_dates": ["2024/01/02 (Tue) 09:00", "2024/02/03 (Sat) 11:00"],
+            "haystack_sessions": [
+                [{"role": "user", "content": "unrelated chatter about parking"}],
+                [{"role": "user", "content": "Alice chaired the review", "has_answer": True}],
+            ],
+        },
+    ]
+    path = tmp_path / "multi.json"
+    path.write_text(json.dumps(questions), encoding="utf-8")
+    return path
+
+
+def test_evidence_count_reads_the_flags(tmp_path) -> None:
+    import json
+
+    from engram.benchmarks.longmemeval import evidence_count
+
+    questions = json.loads(_fake_multi_evidence(tmp_path).read_text())
+    counts = {q["question_id"]: evidence_count(q) for q in questions}
+    assert counts == {"needs-two": 2, "needs-one": 1}
+
+
+def test_checkpoint_keeps_ranks_not_only_verdicts(tmp_path) -> None:
+    """Storing the conclusion and discarding the observation is what made the
+    LongMemEval run repeatable only by repeating it. Ranks let any @k below the
+    k that was run, and the strict metric, be recomputed from the file."""
+    from engram.benchmarks.longmemeval import load_checkpoint, run_longmemeval
+
+    ckpt = tmp_path / "ranks.jsonl"
+    run_longmemeval(_fake_multi_evidence(tmp_path), k_values=(2,), checkpoint=ckpt)
+
+    records = {r["question_id"]: r for r in load_checkpoint(ckpt)}
+    assert records["needs-two"]["evidence_total"] == 2
+    assert records["needs-one"]["evidence_total"] == 1
+    for rec in records.values():
+        hits = rec["hits"]["cosine"]
+        assert "evidence_ranks" in hits and "session_ranks" in hits
+        assert all(isinstance(i, int) for i in hits["evidence_ranks"])
+
+
+def test_strict_recall_is_not_satisfied_by_half_the_evidence(tmp_path) -> None:
+    from engram.benchmarks.longmemeval import _aggregate, load_checkpoint, variants_from_modes
+
+    ckpt = tmp_path / "strict.jsonl"
+    from engram.benchmarks.longmemeval import run_longmemeval
+
+    run_longmemeval(_fake_multi_evidence(tmp_path), k_values=(1,), checkpoint=ckpt)
+
+    result = _aggregate(load_checkpoint(ckpt), (1,), variants_from_modes(("cosine",)), False)[
+        "cosine"
+    ]
+    # At k=1 a question needing two turns cannot be fully served, whatever is
+    # retrieved, so strict can never exceed the any-reading.
+    assert result.strict_turn_recall[1] <= result.turn_recall[1]
+    assert result.strict_turn_recall[1] <= 0.5
+
+
+def test_answerable_recall_excludes_questions_with_no_flagged_turn(tmp_path) -> None:
+    """21 of the 500 real questions flag no turn at all. They can never be hit,
+    so they lower the headline number for a reason unrelated to retrieval."""
+    import json
+
+    from engram.benchmarks.longmemeval import (
+        _aggregate,
+        load_checkpoint,
+        run_longmemeval,
+        variants_from_modes,
+    )
+
+    questions = json.loads(_fake_multi_evidence(tmp_path).read_text())
+    for session in questions[1]["haystack_sessions"]:
+        for turn in session:
+            turn.pop("has_answer", None)
+    path = tmp_path / "one_unhittable.json"
+    path.write_text(json.dumps(questions), encoding="utf-8")
+
+    ckpt = tmp_path / "answerable.jsonl"
+    run_longmemeval(path, k_values=(2,), checkpoint=ckpt)
+    result = _aggregate(load_checkpoint(ckpt), (2,), variants_from_modes(("cosine",)), False)[
+        "cosine"
+    ]
+
+    assert result.answerable_turn_recall[2] >= result.turn_recall[2]
