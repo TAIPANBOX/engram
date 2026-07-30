@@ -99,11 +99,25 @@ def _run_longmemeval(
     seed: int,
     checkpoint: str | None,
     resume: bool,
+    sweep: bool,
 ) -> None:
     ks = tuple(int(x) for x in k_values.split(",") if x.strip())
-    modes = tuple(m.strip() for m in mode.split(",") if m.strip())
-    _header(f"LongMemEval-S  (modes={modes}, k={ks})")
-    from engram.benchmarks.longmemeval import run_longmemeval
+    from engram.benchmarks.longmemeval import (
+        default_weight_sweep,
+        run_longmemeval,
+        variants_from_modes,
+    )
+
+    variants = (
+        default_weight_sweep()
+        if sweep
+        else variants_from_modes(tuple(m.strip() for m in mode.split(",") if m.strip()))
+    )
+    _header(f"LongMemEval-S  ({len(variants)} variants, k={ks})")
+    if sweep:
+        print("  Sweeping the blend. Ingest is shared across every variant, so")
+        print("  the whole sweep costs one pass plus a few seconds of queries.")
+        print()
 
     def progress(done: int, total: int) -> None:
         if done % 5 == 0 or done == total:
@@ -112,7 +126,7 @@ def _run_longmemeval(
     results = run_longmemeval(
         data_path,
         k_values=ks,
-        modes=modes,
+        variants=variants,
         sample=sample,
         seed=seed,
         progress=progress,
@@ -128,20 +142,27 @@ def _run_longmemeval(
     print(f"  Ingest:       {first.ingest_s:,.0f} s")
     print()
     print("  Evidence found inside the top k:")
-    print(f"    {'mode':<10} {'k':>4} {'session':>9} {'turn':>7} {'ms/query':>10}")
-    for mode_name, result in results.items():
+    width = max(len(name) for name in results)
+    head = f"    {'variant':<{width}}"
+    head += "".join(f" {f'session@{k}':>11} {f'turn@{k}':>9}" for k in ks)
+    head += f" {'ms/query':>9}"
+    print(head)
+    print("    " + "-" * (len(head) - 4))
+    best = max(results.items(), key=lambda kv: kv[1].turn_recall[min(ks)])
+    for name, result in results.items():
+        row = f"    {name:<{width}}"
         for k in ks:
-            print(
-                f"    {mode_name:<10} {k:>4} {result.session_recall[k]:>9.3f}"
-                f" {result.turn_recall[k]:>7.3f}"
-                f" {result.query_s * 1000 / max(result.n_questions, 1):>10.0f}"
-            )
+            row += f" {result.session_recall[k]:>11.3f} {result.turn_recall[k]:>9.3f}"
+        row += f" {result.query_s * 1000 / max(result.n_questions, 1):>9.0f}"
+        if name == best[0]:
+            row += f"   <- best turn@{min(ks)}"
+        print(row)
     print()
     print("  Session recall by question type:")
-    for mode_name, result in results.items():
+    for name, result in results.items():
         for qtype, scores in result.session_recall_by_type.items():
             cells = "  ".join(f"k={k} {scores[k]:.3f}" for k in ks)
-            print(f"    {mode_name:<10} {qtype:<26} {cells}")
+            print(f"    {name:<{width}} {qtype:<26} {cells}")
 
 
 def _run_cost(n: int) -> None:
@@ -199,6 +220,11 @@ def main(argv: list[str] | None = None) -> None:
     lme.add_argument(
         "--resume", action="store_true", help="skip questions already in the checkpoint"
     )
+    lme.add_argument(
+        "--sweep",
+        action="store_true",
+        help="score cosine plus hybrid across the blend, instead of --mode",
+    )
 
     cost = sub.add_parser("cost", help="reflection token cost projection")
     cost.add_argument("--n", type=int, default=200, help="episodes to simulate (default 200)")
@@ -215,7 +241,14 @@ def main(argv: list[str] | None = None) -> None:
         _run_scale(args.sizes, args.k, args.queries)
     elif args.cmd == "longmemeval":
         _run_longmemeval(
-            args.data, args.k, args.mode, args.sample, args.seed, args.checkpoint, args.resume
+            args.data,
+            args.k,
+            args.mode,
+            args.sample,
+            args.seed,
+            args.checkpoint,
+            args.resume,
+            args.sweep,
         )
     elif args.cmd == "cost":
         _run_cost(args.n)

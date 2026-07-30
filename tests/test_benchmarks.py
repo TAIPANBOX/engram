@@ -382,3 +382,77 @@ def test_longmemeval_tolerates_a_truncated_checkpoint_line(tmp_path) -> None:
 
     records = load_checkpoint(ckpt)
     assert [r["question_id"] for r in records] == ["a"]
+
+
+# ------------------------------------------------------------------
+# Weight sweep
+# ------------------------------------------------------------------
+
+
+def test_default_sweep_covers_the_blend_including_the_shipped_default() -> None:
+    """0.7 / 0.3 was inherited and never measured. The sweep exists to turn it
+    into a justified number or a corrected one, so it has to contain it."""
+    from engram.benchmarks.longmemeval import default_weight_sweep
+
+    sweep = default_weight_sweep()
+    labels = [v.label for v in sweep]
+    assert len(labels) == len(set(labels)), "labels key the checkpoint, so they must be unique"
+
+    weights = {(v.vector_weight, v.fts_weight) for v in sweep if v.mode == "hybrid"}
+    assert (0.7, 0.3) in weights, "the shipped default must be in the sweep"
+    assert (0.0, 1.0) in weights and (1.0, 0.0) in weights, "endpoints pin the two extremes"
+    assert any(v.mode == "cosine" for v in sweep), "cosine is the reference line"
+
+
+def test_variant_kwargs_only_carry_explicit_weights() -> None:
+    from engram.benchmarks.longmemeval import Variant
+
+    assert Variant(label="cosine", mode="cosine").kwargs() == {}
+    assert Variant(label="h", mode="hybrid", vector_weight=0.4, fts_weight=0.6).kwargs() == {
+        "vector_weight": 0.4,
+        "fts_weight": 0.6,
+    }
+
+
+def test_sweep_scores_every_variant_in_one_pass(tmp_path) -> None:
+    """The point of the sweep is that ingest is paid once. Every variant must
+    come back scored from a single run over the questions."""
+    from engram.benchmarks.longmemeval import Variant, load_checkpoint, run_longmemeval
+
+    variants = (
+        Variant(label="cosine", mode="cosine"),
+        Variant(label="hybrid v0.7", mode="hybrid", vector_weight=0.7, fts_weight=0.3),
+        Variant(label="hybrid v0.0", mode="hybrid", vector_weight=0.0, fts_weight=1.0),
+    )
+    ckpt = tmp_path / "sweep.jsonl"
+    results = run_longmemeval(
+        _fake_longmemeval(tmp_path), k_values=(1,), variants=variants, checkpoint=ckpt
+    )
+
+    assert set(results) == {v.label for v in variants}
+    # One ingest, not three: episodes are counted once per question.
+    assert results["cosine"].n_episodes == results["hybrid v0.7"].n_episodes == 16
+
+    records = load_checkpoint(ckpt)
+    assert all(set(r["hits"]) == {v.label for v in variants} for r in records)
+    assert all(set(r["query_s"]) == {v.label for v in variants} for r in records)
+
+
+def test_sweep_results_survive_a_reload_from_checkpoint(tmp_path) -> None:
+    from engram.benchmarks.longmemeval import (
+        _aggregate,
+        default_weight_sweep,
+        load_checkpoint,
+        run_longmemeval,
+    )
+
+    sweep = default_weight_sweep()
+    ckpt = tmp_path / "reload.jsonl"
+    live = run_longmemeval(
+        _fake_longmemeval(tmp_path), k_values=(1, 2), variants=sweep, checkpoint=ckpt
+    )
+    reloaded = _aggregate(load_checkpoint(ckpt), (1, 2), sweep, sampled=False)
+
+    for label in live:
+        assert live[label].session_recall == reloaded[label].session_recall
+        assert live[label].turn_recall == reloaded[label].turn_recall

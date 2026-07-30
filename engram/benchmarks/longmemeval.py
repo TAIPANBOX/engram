@@ -121,30 +121,80 @@ def _stratified_sample(
     return picked
 
 
+@dataclass(frozen=True)
+class Variant:
+    """One retrieval configuration to score, and the label it reports under.
+
+    Modes and blend weights are both just configurations of the same call, so
+    they are scored the same way. Ingesting a question's history costs about
+    40 seconds and querying it costs 12 milliseconds, which is why a sweep of
+    ten configurations is essentially free while a second full run would not
+    be.
+    """
+
+    label: str
+    mode: str
+    vector_weight: float | None = None
+    fts_weight: float | None = None
+
+    def kwargs(self) -> dict[str, float]:
+        if self.vector_weight is None or self.fts_weight is None:
+            return {}
+        return {"vector_weight": self.vector_weight, "fts_weight": self.fts_weight}
+
+
+def default_weight_sweep() -> tuple[Variant, ...]:
+    """Cosine, then hybrid across the blend, including the shipped default.
+
+    The 0.7 / 0.3 default was inherited, never measured. This sweep is what
+    turns it into either a justified number or a corrected one. The endpoints
+    matter too: hybrid at 1.0 / 0.0 is not the same as ``mode="cosine"``,
+    because the candidate pool and the min-max normalisation still differ.
+    """
+    weights = (0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0)
+    return (
+        Variant(label="cosine", mode="cosine"),
+        *(
+            Variant(
+                label=f"hybrid v{v:.1f}/f{1 - v:.1f}",
+                mode="hybrid",
+                vector_weight=v,
+                fts_weight=round(1 - v, 3),
+            )
+            for v in weights
+        ),
+    )
+
+
+def variants_from_modes(modes: tuple[str, ...]) -> tuple[Variant, ...]:
+    """Plain mode names, each at its own default weights."""
+    return tuple(Variant(label=m, mode=m) for m in modes)
+
+
 def _score_question(
     question: dict[str, Any],
-    results_by_mode: dict[str, list[Any]],
+    results_by_label: dict[str, list[Any]],
     k_values: tuple[int, ...],
 ) -> dict[str, dict[str, dict[str, bool]]]:
-    """Reduce one question's recall output to hit flags per mode and k."""
+    """Reduce one question's recall output to hit flags per variant and k."""
     gold_sessions = set(question.get("answer_session_ids") or [])
     hits: dict[str, dict[str, dict[str, bool]]] = {}
-    for mode, results in results_by_mode.items():
-        hits[mode] = {"session": {}, "turn": {}}
+    for label, results in results_by_label.items():
+        hits[label] = {"session": {}, "turn": {}}
         for k in k_values:
             top = results[:k]
-            hits[mode]["session"][str(k)] = any(gold_sessions & set(r.episode.tags) for r in top)
-            hits[mode]["turn"][str(k)] = any("__evidence__" in r.episode.tags for r in top)
+            hits[label]["session"][str(k)] = any(gold_sessions & set(r.episode.tags) for r in top)
+            hits[label]["turn"][str(k)] = any("__evidence__" in r.episode.tags for r in top)
     return hits
 
 
 def _aggregate(
     records: list[dict[str, Any]],
     k_values: tuple[int, ...],
-    modes: tuple[str, ...],
+    variants: tuple[Variant, ...],
     sampled: bool,
 ) -> dict[str, LongMemEvalResult]:
-    """Build per-mode results from per-question records.
+    """Build per-variant results from per-question records.
 
     Aggregation reads only the records, so a run that died partway can be
     scored from its checkpoint without repeating a single embedding.
@@ -155,12 +205,13 @@ def _aggregate(
         type_totals[rec["question_type"]] = type_totals.get(rec["question_type"], 0) + 1
 
     out: dict[str, LongMemEvalResult] = {}
-    for mode in modes:
+    for variant in variants:
+        label = variant.label
         session_hits = dict.fromkeys(k_values, 0)
         turn_hits = dict.fromkeys(k_values, 0)
         by_type: dict[str, dict[int, int]] = {}
         for rec in records:
-            hits = rec["hits"].get(mode)
+            hits = rec["hits"].get(label)
             if hits is None:
                 continue
             by_type.setdefault(rec["question_type"], dict.fromkeys(k_values, 0))
@@ -170,11 +221,11 @@ def _aggregate(
                     by_type[rec["question_type"]][k] += 1
                 if hits["turn"].get(str(k)):
                     turn_hits[k] += 1
-        out[mode] = LongMemEvalResult(
+        out[label] = LongMemEvalResult(
             sampled=sampled,
             n_questions=n,
             n_episodes=sum(r["n_episodes"] for r in records),
-            mode=mode,
+            mode=label,
             k_values=k_values,
             session_recall={k: session_hits[k] / n for k in k_values} if n else {},
             turn_recall={k: turn_hits[k] / n for k in k_values} if n else {},
@@ -182,7 +233,7 @@ def _aggregate(
                 t: {k: by_type[t][k] / type_totals[t] for k in k_values} for t in sorted(by_type)
             },
             ingest_s=sum(r["ingest_s"] for r in records),
-            query_s=sum(r["query_s"].get(mode, 0.0) for r in records),
+            query_s=sum(r["query_s"].get(label, 0.0) for r in records),
         )
     return out
 
@@ -212,22 +263,29 @@ def run_longmemeval(
     data_path: str | Path,
     k_values: tuple[int, ...] = (5, 10),
     modes: tuple[str, ...] = ("cosine",),
+    variants: tuple[Variant, ...] | None = None,
     sample: int | None = None,
     seed: int = 0,
     progress: Any = None,
     checkpoint: str | Path | None = None,
     resume: bool = False,
 ) -> dict[str, LongMemEvalResult]:
-    """Score retrieval over the questions in *data_path*, one result per mode.
+    """Score retrieval over the questions in *data_path*, one result per variant.
 
     Each question gets its own in-memory store, which is the benchmark's own
     protocol: the histories are per-question and pooling them would let a
     question be answered from another question's haystack.
 
-    Every mode is queried against the same freshly built store before it is
-    dropped. Ingesting a question's history costs about 45 seconds and a query
-    costs 11 milliseconds, so comparing modes in one pass is nearly free while
-    running the benchmark once per mode would not be.
+    Every variant is queried against the same freshly built store before it is
+    dropped. Ingesting a question's history costs about 40 seconds and a query
+    costs 12 milliseconds, so comparing ten configurations in one pass is
+    nearly free while running the benchmark once per configuration would not
+    be.
+
+    Args:
+        variants: Configurations to score. Defaults to one per entry in
+            *modes*; pass :func:`default_weight_sweep` to measure the blend
+            weights instead of assuming them.
 
     Args:
         sample: Evaluate a stratified subsample of this size instead of all
@@ -244,6 +302,9 @@ def run_longmemeval(
 
     from engram.core import Engram
     from engram.embedder import Embedder
+
+    if variants is None:
+        variants = variants_from_modes(modes)
 
     questions: list[dict[str, Any]] = json.loads(Path(data_path).read_text(encoding="utf-8"))
     sampled = sample is not None and sample < len(questions)
@@ -275,12 +336,14 @@ def run_longmemeval(
             n_ep = _ingest(mem, question)
             ingest = time.perf_counter() - t0
 
-            results_by_mode: dict[str, list[Any]] = {}
+            results_by_label: dict[str, list[Any]] = {}
             query_s: dict[str, float] = {}
-            for mode in modes:
+            for variant in variants:
                 t0 = time.perf_counter()
-                results_by_mode[mode] = mem.recall(question["question"], k=max_k, mode=mode)
-                query_s[mode] = time.perf_counter() - t0
+                results_by_label[variant.label] = mem.recall(
+                    question["question"], k=max_k, mode=variant.mode, **variant.kwargs()
+                )
+                query_s[variant.label] = time.perf_counter() - t0
         finally:
             mem.close()
 
@@ -290,7 +353,7 @@ def run_longmemeval(
             "n_episodes": n_ep,
             "ingest_s": ingest,
             "query_s": query_s,
-            "hits": _score_question(question, results_by_mode, k_values),
+            "hits": _score_question(question, results_by_label, k_values),
         }
         records.append(record)
 
@@ -304,4 +367,4 @@ def run_longmemeval(
         if progress is not None:
             progress(n_done, total)
 
-    return _aggregate(records, k_values, modes, sampled)
+    return _aggregate(records, k_values, variants, sampled)
