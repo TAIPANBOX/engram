@@ -7,7 +7,7 @@
 [![CI](https://github.com/TAIPANBOX/engram/actions/workflows/ci.yml/badge.svg)](https://github.com/TAIPANBOX/engram/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11+-3776AB.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
-![Status](https://img.shields.io/badge/status-v2.3.0-success.svg)
+![Status](https://img.shields.io/badge/status-v2.4.0-success.svg)
 
 <img src="docs/architecture.png" alt="Engram architecture: observations flow into the memory core, which holds episodic memory, bitemporal semantic facts, and an entity graph, with optional LLM reflection and compression, and recall flowing back out to the agent" width="960">
 
@@ -833,6 +833,7 @@ tests/
 - [x] v2.2.0 - Correctness pass (bitemporal `as_of` UTC coercion, `contradictions()` identical-fact fix, `import_json` re-embed + FTS, reflection abort rollback, LLM response-parse guards), thread-safety (`Store` + embedder locks for `reflect_async` / `AsyncEngram`), per-agent edge & decay scoping, PEP 561 `py.typed`, CI matrix (Python 3.13 + encryption job), release gated on tests, `migrate()` fails loudly on embedder-dimension mismatch, `pip-audit` CI job
 - [x] Since v2.2.0 (on `main`, not yet tagged) - MCP server tool surface (`engram-mcp`): stdio transport, optional `[mcp]` extra, `remember`/`recall`/`why`/`forget`/`stats` tools with structured semantic params and per-call `agent_id`, `reflect()` deliberately not exposed; public `forget_fact()` API (sync + async) for erasing a single semantic fact; opt-in [Agent Passport](https://github.com/TAIPANBOX/agent-passport) NDJSON event exporter (`events_path` / `ENGRAM_EVENTS_PATH`, `engram-mcp --events` / `ENGRAM_MCP_EVENTS`) emitting `memory_written`, `memory_forgotten`, `reflection_run`, `contradiction_found`
 - [x] Since v2.2.1 (on `main`, not yet tagged) - `agent_id` is a vec0 partition key and `ts` a metadata column, so scoped and `as_of` recall resolve inside the KNN scan (scoped recall could return nothing at all before, and no longer grows with the store); recall accuracy published on LongMemEval-S, all 500 questions, with the per-question records in `benchmarks/results/`; `mode="hybrid"` is the default after beating cosine at every k measured, and the BM25 query it depends on no longer AND-joins its terms into matching nothing; `engram-bench scale` and `engram-bench longmemeval`; `observe(timestamp=)`; atomic `forget_entity()`; `compress()` keeps its summary inside the period it summarises
+- [x] v2.4.0 - the hybrid blend measured instead of assumed: `engram-bench longmemeval --sweep` scores every weighting in one pass, and the default moved from `0.7 / 0.3` to `0.5 / 0.5`, which leads on all four metrics by about five questions in five hundred; both ends of the range are clearly worse than the middle, which is the evidence hybrid mode rests on
 
 ---
 
