@@ -278,9 +278,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_recall.add_argument("--k", type=int, default=5, metavar="K", help="max results (default 5)")
     p_recall.add_argument(
         "--mode",
-        default="cosine",
+        default="hybrid",
         choices=["cosine", "spreading", "hybrid"],
-        help="retrieval mode (default cosine)",
+        help="retrieval mode (default hybrid)",
     )
     p_recall.add_argument(
         "--as-of",

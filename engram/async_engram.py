@@ -123,7 +123,7 @@ class AsyncEngram:
         query: str,
         k: int = 5,
         *,
-        mode: str = "cosine",
+        mode: str = "hybrid",
         depth: int = 2,
         decay: float = 0.5,
         vector_weight: float = 0.7,

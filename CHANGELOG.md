@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`recall()` defaults to `mode="hybrid"`** instead of `"cosine"`, in the
+  library, the CLI, the MCP server tool and the LangChain retriever. On the
+  full 500 questions of LongMemEval-S, scored against the same store per
+  question, hybrid beats cosine at every k and by most where it matters to an
+  agent: 0.820 against 0.772 on retrieving the specific turn that holds the
+  answer at k=5. It is also faster, 12 ms against 15 ms per query, because
+  BM25 narrows the candidate set. The two modes disagreed on 57 of the 500
+  questions. Pass `mode="cosine"` for the old behaviour; cosine leads on
+  exactly one cut, `multi-session` at k=10.
 - **The vector index is rebuilt on first open.** `vec_episodes` now declares
   `agent_id` as a vec0 partition key and `ts` as a metadata column, so scoped
   and `as_of` recall are resolved inside the KNN scan instead of being filtered
@@ -41,8 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   limit, instead of surfacing a raw `sqlite3.OperationalError`.
 
 ### Added
-- **Recall accuracy on LongMemEval-S**, full 500 questions, 246 738 turns:
-  session recall 0.956 at k=5 and 0.978 at k=10, turn recall 0.772 and 0.862.
+- **Recall accuracy on LongMemEval-S**, full 500 questions, 246 738 turns.
+  Hybrid: session recall 0.968 at k=5 and 0.982 at k=10, turn recall 0.820 and
+  0.892. Cosine: 0.956 / 0.978 and 0.772 / 0.862.
   `engram-bench longmemeval` runs it, `--checkpoint` makes a six-hour run
   resumable, and the per-question records behind the table are committed in
   `benchmarks/results/`. First published recall number that comes from a

@@ -413,12 +413,12 @@ resident footprint is the ONNX runtime.
 ### Recall quality
 
 Full 500 questions of LongMemEval-S, 246 738 turns ingested one episode per
-turn, `bge-small-en-v1.5`, `mode="cosine"`:
+turn, `bge-small-en-v1.5`:
 
-| | k=5 | k=10 |
-|---|---|---|
-| session recall | 0.956 | 0.978 |
-| turn recall | 0.772 | 0.862 |
+| mode | session@5 | session@10 | turn@5 | turn@10 |
+|---|---|---|---|---|
+| `hybrid` (default) | 0.968 | 0.982 | 0.820 | 0.892 |
+| `cosine` | 0.956 | 0.978 | 0.772 | 0.862 |
 
 Session recall finds the right conversation; turn recall finds the specific
 turn the dataset flagged as holding the answer, 896 of 246 738. The 18-point
@@ -428,9 +428,11 @@ bare "R@k" is usually not quoting.
 Raw per-question records: `benchmarks/results/`. Method and per-type
 breakdown: `docs/api-reference.md`.
 
-`mode="hybrid"` has no published number yet. The run above scored it
-identically to cosine on all 500 questions, which exposed an implicit-AND bug
-in the BM25 query; the fix landed, the measurement has not been redone.
+Hybrid became the default on the strength of the turn column. The first run
+of this benchmark scored it identically to cosine on all 500 questions, which
+is what exposed an implicit-AND bug in the BM25 query; the table is from a
+second run against the fixed code, in which cosine reproduced its earlier
+figures exactly.
 
 The synthetic fixture in `engram/benchmarks/data/` remains a smoke test for
 the retrieval path. Its scores were previously quoted here as "LoCoMo recall

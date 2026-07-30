@@ -176,7 +176,7 @@ def _recall(
     query: str,
     limit: int = 5,
     agent_id: str | None = None,
-    mode: str = "cosine",
+    mode: str = "hybrid",
 ) -> list[dict[str, Any]]:
     """Retrieve memories relevant to *query*. See ``_RECALL_DESCRIPTION``."""
     mem = pool.get(agent_id)
@@ -333,11 +333,12 @@ _REMEMBER_DESCRIPTION = (
 
 _RECALL_DESCRIPTION = (
     "Retrieve memories relevant to a natural-language query, ranked by "
-    "relevance. mode='cosine' (default) ranks by embedding similarity; "
-    "mode='spreading' additionally follows graph edges between related "
-    "memories (spreading activation) to surface indirectly relevant "
-    "context; mode='hybrid' blends embedding similarity with keyword "
-    "(BM25) search. Returns a list of memories, each with its id, content, "
+    "relevance. mode='hybrid' (default) blends embedding similarity with "
+    "keyword (BM25) search, which finds the specific turn holding an answer "
+    "more often than either alone; mode='cosine' ranks by embedding "
+    "similarity only; mode='spreading' additionally follows graph edges "
+    "between related memories (spreading activation) to surface indirectly "
+    "relevant context. Returns a list of memories, each with its id, content, "
     "and relevance score, most relevant first."
 )
 
@@ -406,7 +407,7 @@ def _build_server(pool: _EngramPool) -> Any:
         query: str,
         limit: int = 5,
         agent_id: str | None = None,
-        mode: str = "cosine",
+        mode: str = "hybrid",
     ) -> list[dict[str, Any]]:
         return _recall(pool, query, limit, agent_id, mode)
 

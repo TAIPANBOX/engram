@@ -54,7 +54,8 @@ if _LANGCHAIN_AVAILABLE:
         Args:
             engram: An :class:`~engram.core.Engram` instance.
             k: Number of documents to retrieve.
-            mode: Retrieval mode — ``"cosine"`` or ``"spreading"``.
+            mode: Retrieval mode — ``"hybrid"`` (default), ``"cosine"`` or
+                ``"spreading"``.
 
         Example::
 
@@ -70,7 +71,7 @@ if _LANGCHAIN_AVAILABLE:
 
         engram: Any
         k: int = 5
-        mode: str = "cosine"
+        mode: str = "hybrid"
 
         def _get_relevant_documents(
             self,

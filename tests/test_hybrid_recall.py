@@ -245,3 +245,24 @@ def test_hybrid_and_cosine_share_the_same_k_ceiling(tmp_path) -> None:
             assert mem.recall("limit", k=4096, mode=mode) is not None
             with pytest.raises(ValueError, match="k=4097 exceeds"):
                 mem.recall("limit", k=4097, mode=mode)
+
+
+def test_hybrid_is_the_default_mode(tmp_path) -> None:
+    """Pins the decision. Hybrid became the default on LongMemEval-S evidence
+    (turn recall 0.820 against 0.772 at k=5, and faster per query); flipping it
+    back is a decision, not a refactor, and should have to update this test."""
+    import inspect
+
+    from engram.async_engram import AsyncEngram
+    from engram.core import Engram as EngramClass
+    from engram.retrieval import recall as retrieval_recall
+
+    for fn in (EngramClass.recall, AsyncEngram.recall, retrieval_recall):
+        assert inspect.signature(fn).parameters["mode"].default == "hybrid", fn.__qualname__
+
+    with Engram(path=str(tmp_path / "default.engram")) as mem:
+        mem.observe("Osteria Bianca was the restaurant we picked")
+        mem.observe("something else entirely about deployment pipelines")
+        default = mem.recall("which restaurant did we pick", k=2)
+        hybrid = mem.recall("which restaurant did we pick", k=2, mode="hybrid")
+        assert [r.episode.id for r in default] == [r.episode.id for r in hybrid]

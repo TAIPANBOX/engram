@@ -250,9 +250,7 @@ This two-timeline approach is standard in financial databases and audit systems.
 
 Engram ships three retrieval modes behind the same API:
 
-**`mode="cosine"`** (default) - pure semantic vector search. Finds memories that mean the same thing as your query, even if the words are different.
-
-**`mode="hybrid"`** - combines keyword search (BM25) with semantic search, then blends the scores. Best when you need both exact term matching and conceptual understanding. The blend is configurable:
+**`mode="hybrid"`** (default) - combines keyword search (BM25) with semantic search, then blends the scores. It is the default because on LongMemEval-S it beats pure vector search at every k measured, by most at the thing that matters to an agent: putting the specific turn that holds the answer in front of it (0.820 against 0.772 at k=5). Questions carry names, places and specifics, and lexical matching catches those exactly where an embedding blurs them into neighbours. It is also faster per query, 12 ms against 15 ms. The blend is configurable:
 
 ```python
 # BM25 keyword + cosine vector, weighted blend
@@ -262,6 +260,8 @@ results = mem.recall("Alice CTO Globex", k=5, mode="hybrid")
 results = mem.recall("quarterly budget", k=5, mode="hybrid",
                      vector_weight=0.3, fts_weight=0.7)
 ```
+
+**`mode="cosine"`** - pure semantic vector search, no keyword component. Finds memories that mean the same thing as your query even when they share no words with it.
 
 **`mode="spreading"`** - follows relationship edges between memories. If Ivan is connected to Project X in the graph, a query about Ivan can surface Project X episodes even if they share no words or meaning. One memory activates its associates, like human associative recall.
 
@@ -334,8 +334,8 @@ recorded_at / superseded_at → when the system LEARNED it
 Three retrieval modes unified in one API:
 
 ```
+mode="hybrid"    → FTS5 BM25 + cosine, normalised and blended (default)
 mode="cosine"    → pure vector similarity (semantic)
-mode="hybrid"    → FTS5 BM25 + cosine, normalised and blended
 mode="spreading" → cosine KNN seeds → BFS over Hebbian graph
 ```
 
