@@ -710,8 +710,8 @@ no LLM anywhere in the loop.
 
 | mode | session@5 | session@10 | turn@5 | turn@10 | ms/query |
 |---|---|---|---|---|---|
-| **`hybrid`** (default) | **0.968** | **0.982** | **0.820** | **0.892** | 12 |
-| `cosine` | 0.956 | 0.978 | 0.772 | 0.862 | 15 |
+| **`hybrid`** (default, `0.5 / 0.5`) | **0.970** | **0.982** | **0.830** | **0.894** | 10 |
+| `cosine` | 0.956 | 0.978 | 0.772 | 0.862 | 16 |
 
 Both modes were scored against the same freshly built store for each
 question, so the comparison is like for like. They disagreed on 57 of the 500
