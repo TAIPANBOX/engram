@@ -7,7 +7,7 @@
 [![CI](https://github.com/TAIPANBOX/engram/actions/workflows/ci.yml/badge.svg)](https://github.com/TAIPANBOX/engram/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11+-3776AB.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
-![Status](https://img.shields.io/badge/status-v2.2.1-success.svg)
+![Status](https://img.shields.io/badge/status-v2.3.0-success.svg)
 
 <img src="docs/architecture.png" alt="Engram architecture: observations flow into the memory core, which holds episodic memory, bitemporal semantic facts, and an entity graph, with optional LLM reflection and compression, and recall flowing back out to the agent" width="960">
 
@@ -242,11 +242,36 @@ mem.timeline("Ivan")
 
 This two-timeline approach is standard in financial databases and audit systems. In the AI memory space, Engram is the only tool that implements it.
 
-### Three ways to search
+### What a recall actually does
 
 <div align="center">
-<img src="docs/recall.png" alt="Recall modes: cosine semantic search, hybrid BM25 plus cosine, spreading-activation graph traversal, and as_of bitemporal time travel across all three" width="900">
+<img src="docs/recall-pipeline.svg" alt="A recall runs two retrievers over one store: the query is embedded and searched by exact vec0 KNN with agent_id as a partition key and ts as a metadata column, and in parallel tokenised and searched by FTS5 BM25 with its terms joined by OR; each pool is min-max normalised and blended 0.7 cosine to 0.3 BM25 into the top k episodes" width="1000">
 </div>
+
+Two things in that picture are worth spelling out, because both were wrong
+until recently and neither is visible from the outside.
+
+**The filters live inside the scan.** `agent_id` is a vec0 partition key and
+the timestamp is a metadata column, so "this agent's episodes" and "as of
+March" are conditions the index applies while it searches. They used to be
+applied afterwards, in a join, where a filter can only cut into a top-k that
+has already been chosen: in a shared store where one agent held most of the
+episodes, the other agent's `recall(k=5)` returned **nothing at all** rather
+than its own five nearest. It also means scoped recall no longer grows with
+the store. An agent holding five episodes pays for five, whether the shared
+file holds a thousand or a hundred thousand: 0.05 ms against 0.09 ms across
+that whole range.
+
+**The keyword side ORs its terms.** FTS5 reads a space between words as an
+implicit AND, so joining a question's tokens with spaces demands that every
+one of them appear in a single episode. For "what was the name of the
+restaurant I mentioned when we talked about my anniversary dinner?" that is
+sixteen words; it matched nothing, and the blend quietly reduced to plain
+cosine. Hybrid mode was cosine under another name for any query longer than a
+few words. What exposed it was a benchmark run scoring both modes to three
+identical decimal places.
+
+### Three ways to search
 
 Engram ships three retrieval modes behind the same API:
 
@@ -266,6 +291,40 @@ results = mem.recall("quarterly budget", k=5, mode="hybrid",
 **`mode="spreading"`** - follows relationship edges between memories. If Ivan is connected to Project X in the graph, a query about Ivan can surface Project X episodes even if they share no words or meaning. One memory activates its associates, like human associative recall.
 
 Technically: spreading activation runs BFS over Hebbian-weighted graph edges, ranking results by `α·cosine_similarity + β·graph_activation + γ·importance_score`.
+
+### How well it recalls, measured
+
+All 500 questions of [LongMemEval-S](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned)
+(ICLR 2025, MIT). Each question carries its own history of 30 to 60 sessions;
+every turn is ingested as one episode, 246 738 in total, and the question is
+asked against that store. No LLM anywhere in the loop.
+
+| mode | session@5 | session@10 | turn@5 | turn@10 | ms/query |
+|---|---|---|---|---|---|
+| **`hybrid`** (default) | **0.968** | **0.982** | **0.820** | **0.892** | 12 |
+| `cosine` | 0.956 | 0.978 | 0.772 | 0.862 | 15 |
+
+The dataset marks both the sessions that hold the evidence and the individual
+turns, so there are two honest numbers. **Session recall** says the right
+conversation came back. **Turn recall** says one of the 896 flagged turns did,
+out of 246 738 - that is what the agent actually reads, and it is 15 points
+lower. A memory system quoting one unqualified "R@k" is quoting the first;
+ask which.
+
+Cosine reproduced its figures to three decimals across two independent
+six-hour passes over the whole dataset. Cosine is ahead on exactly one cut,
+`multi-session` at k=10 (0.992 against 0.985), which is in the
+[API reference](docs/api-reference.md#recall-accuracy) along with the
+per-type breakdown. The per-question records behind every number are in
+[`benchmarks/results/`](benchmarks/results/) with the snippet to recompute
+them, so the table can be checked rather than believed.
+
+Reproduce it yourself:
+
+```bash
+engram-bench longmemeval --data ./longmemeval_s_cleaned.json --k 5,10 \
+    --checkpoint ./lme.jsonl --resume
+```
 
 ### A scratchpad for the agent's current task
 
