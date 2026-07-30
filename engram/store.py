@@ -1093,9 +1093,15 @@ class Store:
             as_of: If set, only episodes with ``timestamp <= as_of`` are
                 considered in both the vector and FTS candidate pools.
         """
+        _check_k(k)
         if candidate_limit is None:
             candidate_limit = k * 4
-        _check_k(candidate_limit)
+        # Clamped, not validated. The pool size is derived (k * 4 by default),
+        # so checking it against the vec0 ceiling made hybrid refuse a k of
+        # 1025 while cosine accepted 4096, and reported the failure as
+        # "k=4100", a number the caller never passed. A smaller pool degrades
+        # the blend a little; refusing the query outright is worse.
+        candidate_limit = min(candidate_limit, _VEC_MAX_K)
 
         # The two sources filter through different columns: vec0 needs its own
         # partition key and metadata column so the constraints run inside the

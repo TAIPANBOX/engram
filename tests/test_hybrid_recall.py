@@ -232,3 +232,16 @@ def test_fts_only_ranks_the_lexical_matches_first(restaurant_mem: Engram) -> Non
     )
     top_two = [r.episode.content for r in results[:2]]
     assert all("Osteria Bianca" in c for c in top_two), top_two
+
+
+def test_hybrid_and_cosine_share_the_same_k_ceiling(tmp_path) -> None:
+    """Hybrid derives its candidate pool as k * 4. Validating that derived
+    number against the vec0 ceiling made hybrid refuse a k of 1025 while
+    cosine took 4096, and blamed it on "k=4100", which no caller passed."""
+    with Engram(path=str(tmp_path / "ceiling.engram")) as mem:
+        mem.observe("one episode is enough to exercise the limit")
+
+        for mode in ("cosine", "hybrid"):
+            assert mem.recall("limit", k=4096, mode=mode) is not None
+            with pytest.raises(ValueError, match="k=4097 exceeds"):
+                mem.recall("limit", k=4097, mode=mode)
