@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.4.1] - 2026-07-30
 
 ### Added
 - The LongMemEval checkpoint records the rank of every evidence and gold-session
@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   figure is 0.866 at k=5, not 0.830. And 59% of questions flag more than one
   turn, so "at least one retrieved" is an upper bound on what the model was
   actually handed, which the docs now say rather than imply.
+- The headline recall table said `hybrid` (default) over the figures for
+  `0.7 / 0.3`, which stopped being the default in 2.4.0 itself. Both rows were
+  real numbers from real runs and the sweep table below carried the right ones
+  under their own label, so nothing looked wrong, but a reader comparing Engram
+  to another system would have taken a configuration the library no longer
+  ships. Corrected in the README, the API reference, DESIGN.md, the
+  `Engram.recall` docstring and the pipeline diagram, all sourced from one run.
 
 ## [2.4.0] - 2026-07-30
 
