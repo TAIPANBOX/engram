@@ -311,6 +311,13 @@ out of 246 738 - that is what the agent actually reads, and it is 15 points
 lower. A memory system quoting one unqualified "R@k" is quoting the first;
 ask which.
 
+The blend behind hybrid was swept rather than assumed: every weighting from
+pure BM25 to pure vector was scored in the same pass, both ends came out worse
+than the middle, and the default is now `0.5 / 0.5`, which leads the previous
+`0.7 / 0.3` on all four metrics by about five questions out of five hundred.
+The margin is small and said to be small; the shape of the curve is the part
+that matters.
+
 Cosine reproduced its figures to three decimals across two independent
 six-hour passes over the whole dataset. Cosine is ahead on exactly one cut,
 `multi-session` at k=10 (0.992 against 0.985), which is in the

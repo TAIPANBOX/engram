@@ -278,8 +278,8 @@ class Engram:
         mode: str = "hybrid",
         depth: int = 2,
         decay: float = 0.5,
-        vector_weight: float = 0.7,
-        fts_weight: float = 0.3,
+        vector_weight: float = 0.5,
+        fts_weight: float = 0.5,
         as_of: datetime | None = None,
         cross_agent: bool = False,
         k_inner: int | None = None,
@@ -298,8 +298,10 @@ class Engram:
                 k=5), and it is faster per query. See docs/api-reference.md.
             depth: BFS hops; only used when ``mode="spreading"``.
             decay: Activation decay per hop; only used when ``mode="spreading"``.
-            vector_weight: Cosine fraction for hybrid mode (default 0.7).
-            fts_weight: BM25 fraction for hybrid mode (default 0.3).
+            vector_weight: Cosine fraction for hybrid mode (default 0.5). The
+                blend was swept across LongMemEval-S: both ends are worse than
+                the middle, and 0.5 edged the previous 0.7 on every metric.
+            fts_weight: BM25 fraction for hybrid mode (default 0.5).
             as_of: If set, only episodes with timestamp <= as_of are searched.
             cross_agent: If ``True``, search all agents' episodes regardless of
                 the instance's ``agent_id``. Ignored when no ``agent_id`` is set.
