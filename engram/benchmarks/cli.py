@@ -91,6 +91,59 @@ def _run_scale(sizes: str, k: int, n_queries: int) -> None:
         print(row, flush=True)
 
 
+def _run_longmemeval(
+    data_path: str,
+    k_values: str,
+    mode: str,
+    sample: int | None,
+    seed: int,
+    checkpoint: str | None,
+    resume: bool,
+) -> None:
+    ks = tuple(int(x) for x in k_values.split(",") if x.strip())
+    modes = tuple(m.strip() for m in mode.split(",") if m.strip())
+    _header(f"LongMemEval-S  (modes={modes}, k={ks})")
+    from engram.benchmarks.longmemeval import run_longmemeval
+
+    def progress(done: int, total: int) -> None:
+        if done % 5 == 0 or done == total:
+            print(f"  {done}/{total} questions", flush=True)
+
+    results = run_longmemeval(
+        data_path,
+        k_values=ks,
+        modes=modes,
+        sample=sample,
+        seed=seed,
+        progress=progress,
+        checkpoint=checkpoint,
+        resume=resume,
+    )
+    first = next(iter(results.values()))
+
+    print()
+    scope = f"stratified sample, seed {seed}" if first.sampled else "full set"
+    print(f"  Questions:    {first.n_questions:,}  ({scope})")
+    print(f"  Episodes:     {first.n_episodes:,}  (one per turn)")
+    print(f"  Ingest:       {first.ingest_s:,.0f} s")
+    print()
+    print("  Evidence found inside the top k:")
+    print(f"    {'mode':<10} {'k':>4} {'session':>9} {'turn':>7} {'ms/query':>10}")
+    for mode_name, result in results.items():
+        for k in ks:
+            print(
+                f"    {mode_name:<10} {k:>4} {result.session_recall[k]:>9.3f}"
+                f" {result.turn_recall[k]:>7.3f}"
+                f" {result.query_s * 1000 / max(result.n_questions, 1):>10.0f}"
+            )
+    print()
+    print("  Session recall by question type:")
+    for mode_name, result in results.items():
+        for qtype, scores in result.session_recall_by_type.items():
+            cells = "  ".join(f"k={k} {scores[k]:.3f}" for k in ks)
+            print(f"    {mode_name:<10} {qtype:<26} {cells}")
+
+
 def _run_cost(n: int) -> None:
     _header(f"Cost Benchmark  (n={n} episodes)")
     print("  Simulating reflection passes…", flush=True)
@@ -132,6 +185,21 @@ def main(argv: list[str] | None = None) -> None:
     scale.add_argument("--k", type=int, default=10, help="recall top-k (default 10)")
     scale.add_argument("--queries", type=int, default=50, help="queries per size (default 50)")
 
+    lme = sub.add_parser("longmemeval", help="retrieval recall on LongMemEval-S")
+    lme.add_argument("--data", required=True, metavar="FILE", help="longmemeval_s json")
+    lme.add_argument("--k", default="5,10", help="comma-separated k values (default 5,10)")
+    lme.add_argument(
+        "--mode", default="cosine", help="recall modes, comma separated (default cosine)"
+    )
+    lme.add_argument("--sample", type=int, default=None, help="stratified subsample of this size")
+    lme.add_argument("--seed", type=int, default=0, help="sampling seed (default 0)")
+    lme.add_argument(
+        "--checkpoint", default=None, metavar="FILE", help="append one JSON record per question"
+    )
+    lme.add_argument(
+        "--resume", action="store_true", help="skip questions already in the checkpoint"
+    )
+
     cost = sub.add_parser("cost", help="reflection token cost projection")
     cost.add_argument("--n", type=int, default=200, help="episodes to simulate (default 200)")
 
@@ -145,6 +213,10 @@ def main(argv: list[str] | None = None) -> None:
         _run_locomo(args.data, args.k)
     elif args.cmd == "scale":
         _run_scale(args.sizes, args.k, args.queries)
+    elif args.cmd == "longmemeval":
+        _run_longmemeval(
+            args.data, args.k, args.mode, args.sample, args.seed, args.checkpoint, args.resume
+        )
     elif args.cmd == "cost":
         _run_cost(args.n)
     elif args.cmd == "all":

@@ -95,13 +95,12 @@ ids = mem.observe_many([
 ### `recall(query, k, *, mode, depth, decay, vector_weight, fts_weight, as_of, cross_agent, candidate_limit) → list[SearchResult]`
 
 ```python
-# Default: cosine similarity
+# Default: hybrid, BM25 keyword blended with cosine vector
 results = mem.recall("where does Ivan work?", k=5)
+results = mem.recall("exact term", k=5, vector_weight=0.3, fts_weight=0.7)
 
-# Hybrid: BM25 keyword + cosine vector, blended (also honors as_of)
-results = mem.recall("Ivan Globex transfer", k=5, mode="hybrid")
-results = mem.recall("exact term", k=5, mode="hybrid",
-                     vector_weight=0.3, fts_weight=0.7)
+# Vector similarity alone, no keyword component
+results = mem.recall("Ivan Globex transfer", k=5, mode="cosine")
 
 # Graph-based spreading-activation
 results = mem.recall("Ivan", k=5, mode="spreading", depth=2, decay=0.5)
@@ -702,17 +701,70 @@ WAL mode is enabled automatically for all file-based stores. Readers (`recall`, 
 
 ### Recall accuracy
 
-Not published. `engram-bench locomo` scores hit@k and MRR over any file in
-LoCoMo's format, but the bundled fixture is synthetic: five hand-written
-sessions, fifteen questions, keywords chosen next to the text they match. It
-is a smoke test for the retrieval path, not a measurement of recall quality,
-and the scores it produces are not quoted here for that reason.
+Measured on the full 500 questions of
+[LongMemEval-S](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned)
+(`longmemeval_s_cleaned.json`, ICLR 2025, MIT). Each question carries its own
+history of 30 to 60 sessions; every turn is ingested as one episode, 246 738
+in total, and the question is asked against that store. `bge-small-en-v1.5`,
+no LLM anywhere in the loop.
 
-Point it at real data to get a real number:
+| mode | session@5 | session@10 | turn@5 | turn@10 | ms/query |
+|---|---|---|---|---|---|
+| **`hybrid`** (default) | **0.968** | **0.982** | **0.820** | **0.892** | 12 |
+| `cosine` | 0.956 | 0.978 | 0.772 | 0.862 | 15 |
+
+Both modes were scored against the same freshly built store for each
+question, so the comparison is like for like. They disagreed on 57 of the 500
+questions. Hybrid is the default because of the turn column: +4.8 points at
+k=5 on finding the specific turn that holds the answer, which is what an
+agent reads. Cosine is ahead on exactly one cut, `multi-session` at k=10
+(0.992 against 0.985).
+
+The dataset marks both the sessions holding the evidence and the individual
+turns, so there are two honest numbers and they are not interchangeable:
+
+- **session recall** counts a hit when any retrieved episode came from a
+  session listed in `answer_session_ids`. A session can run a dozen turns, so
+  this says the right conversation was found.
+- **turn recall** counts a hit only when a retrieved episode is one of the
+  896 turns flagged `has_answer` out of 246 738. This says the answer itself
+  was put in front of the agent, and it is 18 points lower at k=5.
+
+A memory system quoting one unqualified "R@k" is almost certainly quoting the
+first. Ask which.
+
+Session recall at k=5 by question type, hybrid against cosine:
+`single-session-assistant` 1.000 / 1.000, `knowledge-update` 0.987 / 0.974,
+`single-session-user` 0.986 / 0.957, `multi-session` 0.970 / 0.970,
+`temporal-reasoning` 0.940 / 0.925, `single-session-preference` 0.933 / 0.900.
+
+Reproduce it (the dataset is 265 MB and is not vendored):
 
 ```bash
-engram-bench locomo --data ./your_dataset.json --k 5
+engram-bench longmemeval --data ./longmemeval_s_cleaned.json --k 5,10 \
+    --checkpoint ./lme.jsonl --resume
 ```
+
+Ingestion is the whole cost: 5.6 hours on eight dedicated cores, against 15 ms
+per query. `--checkpoint` writes one record per question so a run that stops
+can be resumed and scored from where it got to. The records behind the table
+above are in [`benchmarks/results/`](../benchmarks/results/).
+
+The first run of this benchmark scored hybrid identically to cosine to three
+decimals on all 500 questions, which is what exposed a bug: the BM25 query
+joined its terms with an implicit AND, so it matched nothing for any question
+longer than a few words and the blend reduced to cosine. The table above is
+from a second full run against the fixed code. Records from both are in
+`benchmarks/results/`; the earlier file is kept because it is the evidence
+that produced the fix.
+
+Cosine scored identically in both runs, to three decimals on all four
+figures, which is the reproducibility check on a six-hour job.
+
+`engram-bench locomo` also scores hit@k and MRR over any file in LoCoMo's
+format. The fixture bundled with it is synthetic, five hand-written sessions
+whose keywords were chosen next to the text they match, so it is a smoke test
+for the retrieval path and its scores are not quoted anywhere.
 
 ### Reflection cost (per 1 000 episodes)
 

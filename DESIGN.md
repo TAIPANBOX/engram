@@ -412,18 +412,31 @@ resident footprint is the ONNX runtime.
 
 ### Recall quality
 
-No numbers published yet.
+Full 500 questions of LongMemEval-S, 246 738 turns ingested one episode per
+turn, `bge-small-en-v1.5`:
 
-`engram-bench locomo` evaluates hit@k and MRR over any file in LoCoMo's
-format, but the fixture shipped in `engram/benchmarks/data/` is synthetic:
-five hand-written sessions and fifteen questions whose keywords were chosen
-alongside the text they are meant to find. Scores from it say the retrieval
-path is wired up, and nothing about recall quality. They were previously
-quoted here as "LoCoMo recall quality", which read as a result on the LoCoMo
-benchmark and was not one.
+| mode | session@5 | session@10 | turn@5 | turn@10 |
+|---|---|---|---|---|
+| `hybrid` (default) | 0.968 | 0.982 | 0.820 | 0.892 |
+| `cosine` | 0.956 | 0.978 | 0.772 | 0.862 |
 
-A run against a public dataset with its own metric is the open item. Until
-that exists, the honest number is no number.
+Session recall finds the right conversation; turn recall finds the specific
+turn the dataset flagged as holding the answer, 896 of 246 738. The 18-point
+gap at k=5 is the interesting part, and it is the number a system quoting a
+bare "R@k" is usually not quoting.
+
+Raw per-question records: `benchmarks/results/`. Method and per-type
+breakdown: `docs/api-reference.md`.
+
+Hybrid became the default on the strength of the turn column. The first run
+of this benchmark scored it identically to cosine on all 500 questions, which
+is what exposed an implicit-AND bug in the BM25 query; the table is from a
+second run against the fixed code, in which cosine reproduced its earlier
+figures exactly.
+
+The synthetic fixture in `engram/benchmarks/data/` remains a smoke test for
+the retrieval path. Its scores were previously quoted here as "LoCoMo recall
+quality", which read as a result on the LoCoMo benchmark and was not one.
 
 ### Reflection cost
 

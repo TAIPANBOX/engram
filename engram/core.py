@@ -254,7 +254,7 @@ class Engram:
             Episode(
                 id=ep_id,
                 content=item.content,
-                timestamp=now,
+                timestamp=item.timestamp or now,
                 actors=item.actors,
                 tags=item.tags,
                 salience=item.salience,
@@ -275,7 +275,7 @@ class Engram:
         query: str,
         k: int = 5,
         *,
-        mode: str = "cosine",
+        mode: str = "hybrid",
         depth: int = 2,
         decay: float = 0.5,
         vector_weight: float = 0.7,
@@ -290,8 +290,12 @@ class Engram:
         Args:
             query: Natural-language search query.
             k: Maximum number of results to return.
-            mode: Retrieval strategy — ``"cosine"`` (default), ``"spreading"``
-                for graph-based recall, or ``"hybrid"`` for BM25 + cosine blend.
+            mode: Retrieval strategy — ``"hybrid"`` (default) blends BM25 with
+                cosine, ``"cosine"`` is vector similarity alone, ``"spreading"``
+                walks the entity graph. Hybrid is the default because it wins
+                on LongMemEval-S at every k measured, most clearly on finding
+                the specific turn holding an answer (0.820 against 0.772 at
+                k=5), and it is faster per query. See docs/api-reference.md.
             depth: BFS hops; only used when ``mode="spreading"``.
             decay: Activation decay per hop; only used when ``mode="spreading"``.
             vector_weight: Cosine fraction for hybrid mode (default 0.7).

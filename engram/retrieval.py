@@ -15,7 +15,7 @@ def recall(
     store: Store,
     embedder: Embedder,
     *,
-    mode: str = "cosine",
+    mode: str = "hybrid",
     depth: int = 2,
     decay: float = 0.5,
     alpha: float = 0.6,
@@ -34,8 +34,8 @@ def recall(
         k: Maximum number of results.
         store: Active store instance.
         embedder: Embedder for the query.
-        mode: ``"cosine"`` (default), ``"spreading"`` for graph-based recall,
-            or ``"hybrid"`` for BM25 + cosine blended search.
+        mode: ``"hybrid"`` (default) blends BM25 with cosine, ``"cosine"`` is
+            vector similarity alone, ``"spreading"`` walks the entity graph.
         depth: BFS hops for spreading mode.
         decay: Activation decay per hop for spreading mode.
         alpha: Cosine weight in spreading score.

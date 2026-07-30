@@ -237,3 +237,148 @@ def test_scoped_recall_does_not_scale_with_the_store() -> None:
 
     assert scoped_growth < 3, f"scoped recall grew {scoped_growth:.1f}x for 15x the store"
     assert unscoped_growth > scoped_growth
+
+
+# ------------------------------------------------------------------
+# LongMemEval harness
+# ------------------------------------------------------------------
+
+
+def _fake_longmemeval(tmp_path, n_per_type: int = 4):
+    """A LongMemEval-shaped file small enough to run in a test.
+
+    Grouped by question type, like the real one, so a sampler that slices from
+    the front instead of stratifying shows up here.
+    """
+    import json
+
+    questions = []
+    for qtype in ("type-a", "type-b"):
+        for i in range(n_per_type):
+            qid = f"{qtype}-{i}"
+            questions.append(
+                {
+                    "question_id": qid,
+                    "question_type": qtype,
+                    "question": f"where did the {qid} meeting happen",
+                    "question_date": "2024/03/01 (Fri) 10:00",
+                    "answer": "Berlin",
+                    "answer_session_ids": [f"s-{qid}-1"],
+                    "haystack_session_ids": [f"s-{qid}-0", f"s-{qid}-1"],
+                    "haystack_dates": ["2024/01/02 (Tue) 09:00", "2024/02/03 (Sat) 11:00"],
+                    "haystack_sessions": [
+                        [{"role": "user", "content": f"unrelated chatter about lunch {qid}"}],
+                        [
+                            {
+                                "role": "user",
+                                "content": f"the {qid} meeting happened in Berlin",
+                                "has_answer": True,
+                            }
+                        ],
+                    ],
+                }
+            )
+    path = tmp_path / "fake_lme.json"
+    path.write_text(json.dumps(questions), encoding="utf-8")
+    return path
+
+
+def test_longmemeval_scores_session_and_turn_recall(tmp_path) -> None:
+    from engram.benchmarks.longmemeval import run_longmemeval
+
+    results = run_longmemeval(
+        _fake_longmemeval(tmp_path), k_values=(1, 2), modes=("cosine", "hybrid")
+    )
+    assert set(results) == {"cosine", "hybrid"}
+    result = results["cosine"]
+
+    assert result.n_questions == 8
+    assert result.n_episodes == 16
+    assert not result.sampled
+    # The evidence turn names the question, so it should top a k=1 recall.
+    assert result.session_recall[1] == 1.0
+    assert result.turn_recall[1] == 1.0
+    assert set(result.session_recall_by_type) == {"type-a", "type-b"}
+
+
+def test_longmemeval_sample_is_stratified_and_reproducible(tmp_path) -> None:
+    """The real file is ordered by question type, so a front slice would
+    measure one category and report it as a subsample of all of them."""
+    import json
+
+    from engram.benchmarks.longmemeval import _stratified_sample
+
+    questions = json.loads(_fake_longmemeval(tmp_path, n_per_type=10).read_text())
+    picked = _stratified_sample(questions, 10, seed=0)
+
+    types = [q["question_type"] for q in picked]
+    assert types.count("type-a") == 5
+    assert types.count("type-b") == 5
+    assert [q["question_id"] for q in _stratified_sample(questions, 10, seed=0)] == [
+        q["question_id"] for q in picked
+    ]
+
+
+def test_longmemeval_evidence_tag_is_not_searchable(tmp_path) -> None:
+    """The has_answer flag is carried as a tag. Tags are not embedded and not
+    in the FTS index, so marking evidence cannot help retrieval find it."""
+    import json
+
+    from engram import Engram
+    from engram.benchmarks.longmemeval import _ingest
+
+    question = json.loads(_fake_longmemeval(tmp_path).read_text())[0]
+    with Engram() as mem:
+        _ingest(mem, question)
+        assert mem.recall("__evidence__", k=5, mode="hybrid") != []
+        for r in mem.recall("__evidence__", k=5, mode="hybrid"):
+            assert "__evidence__" not in r.episode.content
+
+
+def test_longmemeval_checkpoint_survives_a_kill(tmp_path) -> None:
+    """A six-hour run that holds its results only in memory loses all of them
+    to one bad record, so every scored question is written as it completes."""
+    import json
+
+    from engram.benchmarks.longmemeval import load_checkpoint, run_longmemeval
+
+    data = _fake_longmemeval(tmp_path)
+    ckpt = tmp_path / "ckpt.jsonl"
+    run_longmemeval(data, k_values=(1,), checkpoint=ckpt)
+
+    records = load_checkpoint(ckpt)
+    assert len(records) == 8
+    assert {r["question_id"] for r in records} == {
+        q["question_id"] for q in json.loads(data.read_text())
+    }
+    assert all("hits" in r and "n_episodes" in r for r in records)
+
+
+def test_longmemeval_resume_skips_finished_questions(tmp_path) -> None:
+    from engram.benchmarks.longmemeval import load_checkpoint, run_longmemeval
+
+    data = _fake_longmemeval(tmp_path)
+    ckpt = tmp_path / "partial.jsonl"
+
+    full = run_longmemeval(data, k_values=(1,), checkpoint=ckpt)
+    done = load_checkpoint(ckpt)
+
+    # Drop the last three records, as a kill mid-run would have.
+    lines = ckpt.read_text().splitlines()[:-3]
+    ckpt.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    resumed = run_longmemeval(data, k_values=(1,), checkpoint=ckpt, resume=True)
+
+    assert len(load_checkpoint(ckpt)) == len(done)
+    assert resumed["cosine"].n_questions == full["cosine"].n_questions
+    assert resumed["cosine"].session_recall == full["cosine"].session_recall
+
+
+def test_longmemeval_tolerates_a_truncated_checkpoint_line(tmp_path) -> None:
+    from engram.benchmarks.longmemeval import load_checkpoint
+
+    ckpt = tmp_path / "torn.jsonl"
+    ckpt.write_text('{"question_id": "a", "hits": {}}\n{"question_id": "b", "hi', encoding="utf-8")
+
+    records = load_checkpoint(ckpt)
+    assert [r["question_id"] for r in records] == ["a"]

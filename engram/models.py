@@ -173,6 +173,9 @@ class ObserveInput:
         tags: Categorical labels.
         salience: Subjective importance at encoding time (0-1).
         emotional_valence: Affective weight (-1 to +1).
+        timestamp: When the event happened. Defaults to now. Set it when
+            loading history, so ``as_of`` places each episode in the period it
+            belongs to rather than the moment the import ran.
     """
 
     content: str
@@ -180,6 +183,7 @@ class ObserveInput:
     tags: list[str] = field(default_factory=list)
     salience: float = 0.5
     emotional_valence: float = 0.0
+    timestamp: datetime | None = None
 
 
 @dataclass
