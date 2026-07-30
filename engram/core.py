@@ -294,7 +294,7 @@ class Engram:
                 cosine, ``"cosine"`` is vector similarity alone, ``"spreading"``
                 walks the entity graph. Hybrid is the default because it wins
                 on LongMemEval-S at every k measured, most clearly on finding
-                the specific turn holding an answer (0.820 against 0.772 at
+                the specific turn holding an answer (0.830 against 0.772 at
                 k=5), and it is faster per query. See docs/api-reference.md.
             depth: BFS hops; only used when ``mode="spreading"``.
             decay: Activation decay per hop; only used when ``mode="spreading"``.

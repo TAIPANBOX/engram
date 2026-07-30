@@ -418,7 +418,7 @@ turn, `bge-small-en-v1.5`:
 
 | mode | session@5 | session@10 | turn@5 | turn@10 |
 |---|---|---|---|---|
-| `hybrid` (default) | 0.968 | 0.982 | 0.820 | 0.892 |
+| `hybrid` (default, `0.5 / 0.5`) | 0.970 | 0.982 | 0.830 | 0.894 |
 | `cosine` | 0.956 | 0.978 | 0.772 | 0.862 |
 
 Session recall finds the right conversation; turn recall finds the specific

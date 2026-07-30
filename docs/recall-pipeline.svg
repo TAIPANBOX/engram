@@ -96,7 +96,7 @@
 <path d="M 1060 382 L 1060 424" fill="none" stroke="#4b5563" stroke-width="1.6" marker-end="url(#arrow)"/>
 <rect x="960" y="430" width="200" height="58" rx="9" fill="#111823" stroke="#2dd4bf" stroke-width="1.5"/>
 <text x="1060" y="455" fill="#e6edf3" font-size="14" font-weight="600" text-anchor="middle">top k episodes</text>
-<text x="1060" y="474" fill="#8b949e" font-size="11.5" text-anchor="middle">12 ms per query</text>
+<text x="1060" y="474" fill="#8b949e" font-size="11.5" text-anchor="middle">10 ms per query</text>
 
 <!-- measured strip -->
 <rect x="48" y="548" width="1184" height="62" rx="9" fill="#0f1620" stroke="#1f2a37" stroke-width="1.2"/>
@@ -104,7 +104,7 @@
 <text x="68" y="594" fill="#6e7681" font-size="11">records in benchmarks/results/</text>
 
 <text x="600" y="571" fill="#6e7681" font-size="11">turn recall @5</text>
-<text x="600" y="594" fill="#2dd4bf" font-size="15" font-weight="600">0.820</text>
+<text x="600" y="594" fill="#2dd4bf" font-size="15" font-weight="600">0.830</text>
 <text x="660" y="594" fill="#6e7681" font-size="11.5">hybrid</text>
 <text x="726" y="594" fill="#8b949e" font-size="15">0.772</text>
 <text x="782" y="594" fill="#6e7681" font-size="11.5">cosine only</text>

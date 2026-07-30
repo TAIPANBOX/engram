@@ -275,7 +275,7 @@ identical decimal places.
 
 Engram ships three retrieval modes behind the same API:
 
-**`mode="hybrid"`** (default) - combines keyword search (BM25) with semantic search, then blends the scores. It is the default because on LongMemEval-S it beats pure vector search at every k measured, by most at the thing that matters to an agent: putting the specific turn that holds the answer in front of it (0.820 against 0.772 at k=5). Questions carry names, places and specifics, and lexical matching catches those exactly where an embedding blurs them into neighbours. It is also faster per query, 12 ms against 15 ms. The blend is configurable:
+**`mode="hybrid"`** (default) - combines keyword search (BM25) with semantic search, then blends the scores. It is the default because on LongMemEval-S it beats pure vector search at every k measured, by most at the thing that matters to an agent: putting the specific turn that holds the answer in front of it (0.830 against 0.772 at k=5). Questions carry names, places and specifics, and lexical matching catches those exactly where an embedding blurs them into neighbours. It is also faster per query, 10 ms against 16 ms. The blend is configurable:
 
 ```python
 # BM25 keyword + cosine vector, weighted blend
@@ -301,8 +301,8 @@ asked against that store. No LLM anywhere in the loop.
 
 | mode | session@5 | session@10 | turn@5 | turn@10 | ms/query |
 |---|---|---|---|---|---|
-| **`hybrid`** (default) | **0.968** | **0.982** | **0.820** | **0.892** | 12 |
-| `cosine` | 0.956 | 0.978 | 0.772 | 0.862 | 15 |
+| **`hybrid`** (default, `0.5 / 0.5`) | **0.970** | **0.982** | **0.830** | **0.894** | 10 |
+| `cosine` | 0.956 | 0.978 | 0.772 | 0.862 | 16 |
 
 The dataset marks both the sessions that hold the evidence and the individual
 turns, so there are two honest numbers, and the second one needs a caveat
