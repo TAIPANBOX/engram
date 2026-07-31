@@ -1,4 +1,4 @@
-"""Engram — cognitive memory layer for AI agents.
+"""Engram, cognitive memory layer for AI agents.
 
 See DESIGN.md for architecture and intended API.
 """
@@ -26,7 +26,7 @@ from engram.models import (
 )
 from engram.working_memory import WorkingMemory, WorkingMemoryItem
 
-__version__ = "2.2.1"
+__version__ = "2.4.1"
 
 __all__ = [
     "AnthropicAdapter",

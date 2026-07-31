@@ -51,6 +51,7 @@ ruff format --check .
 mypy engram
 pytest
 ./scripts/no-network-at-write.sh
+./scripts/readme-numbers.sh
 ```
 
 CI additionally runs the encryption suite on its own
@@ -77,7 +78,7 @@ an absent invariant.
    blend weights one release after they stopped being the default, and nobody
    could have caught that from the table alone. If you change a default, a
    weight, or an algorithm, **the numbers describing it are part of the same
-   change**, not a follow-up. *(not enforced)*
+   change**, not a follow-up. *(gate: `scripts/readme-numbers.sh`)*
 3. **Recall is measured on the full public benchmark, not on a fixture we
    wrote.** A benchmark we author ourselves measures agreement with our own
    assumptions. Where a metric is knowingly an upper or lower bound, say so
@@ -97,18 +98,27 @@ an absent invariant.
 
 This list is debt, and it is here to stay visible rather than to be tidy.
 
-**Held by this file alone: invariants 2, 3, 4, 5, 7 and 8.**
+**Held by this file alone: invariants 3, 4, 5, 7 and 8.**
 
-**Invariant 2 is the one to automate, and it is worth more here than anywhere
-else in the estate**, because this project's history is a sequence of releases
-fixing published numbers. The shape that works is a script that extracts every
-number from the README and the docs which claims to be a measurement, looks it
-up in `VALIDATION.md`, and fails the push when they disagree. The sibling
-project trailryx has one (`scripts/readme-numbers.sh`); copy the idea, not the
-file, since the numbers differ.
+Invariant 2 now has `scripts/readme-numbers.sh`, which recomputes the recall
+table from the committed per-question records, sums the corpus size from the
+same file, takes the test count from the suite, and requires the version to
+agree across `pyproject.toml`, `engram/__init__.py` and the README badge.
 
-Until that exists, invariant 2 is held by attention, and attention is exactly
-what failed the three times it has already failed here.
+It was written against the unfixed repository and found two real defects on the
+first run: the README claimed 424 tests where the suite collects 466, and
+`engram/__init__.py` reported `2.2.1` while `pyproject.toml` declared `2.4.1`,
+so an installed package was lying about its own version two releases running.
+
+It also reproduces the failure that 2.4.1 exists to fix. Change the declared
+default weights in the README without touching the table and it names all four
+numbers that moved. That is the exact bug nobody could catch from the table
+alone.
+
+What it does NOT check: whether the committed records are themselves a true
+measurement. It checks that the published numbers agree with the evidence in
+the repo, not that the evidence is right. Re-running the benchmark is a
+six-hour pass and stays a deliberate act.
 
 Invariant 4 is partly checkable: assert the default install pulls nothing that
 opens a socket. Invariants 3, 5, 7 and 8 are judgement.
