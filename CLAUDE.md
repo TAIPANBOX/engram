@@ -131,6 +131,15 @@ default weights in the README without touching the table and it names all four
 numbers that moved. That is the exact bug nobody could catch from the table
 alone.
 
+**One thing it got wrong, worth keeping.** The test count depends on the
+environment: `tests/test_encryption.py` skips at module level without
+`sqlcipher3`, so its 7 tests are not collected at all. The first version
+compared a measured environment to a single fixed number and failed in CI on
+the very run that first wired it into a workflow, in the one job that installs
+the encryption extra. The README now states both counts and the check asks which
+environment it is in. Anything that measures the environment must either be
+environment-independent or know what it is running on.
+
 What it does NOT check: whether the committed records are themselves a true
 measurement. It checks that the published numbers agree with the evidence in
 the repo, not that the evidence is right. Re-running the benchmark is a

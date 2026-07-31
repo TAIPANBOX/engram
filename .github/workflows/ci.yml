@@ -85,6 +85,10 @@ jobs:
 
       - name: Run encryption tests
         run: pytest tests/test_encryption.py -v
+      - name: no network client imported at module level
+        run: ./scripts/no-network-at-write.sh
+      - name: published numbers match the repository
+        run: ./scripts/readme-numbers.sh
 
   security:
     runs-on: ubuntu-latest
