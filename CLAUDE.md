@@ -88,17 +88,33 @@ an absent invariant.
    embedding path that requires a network round trip, breaks the one sentence
    that describes this project. *(not enforced)*
 5. **No global state.** Pass the `Engram` instance explicitly. Two stores in
-   one process must not be able to see each other. *(not enforced)*
+   one process must not be able to see each other.
+   *(test: `test_pool_isolates_different_agents`,
+   `test_recall_does_not_see_other_agents_episodes`,
+   `test_episode_count_scoped_per_agent`, and the rest of
+   `tests/test_multiagent.py`, which is the observable form of this claim)*
 6. **Public APIs are strictly typed and `mypy --strict` passes.**
    *(gate: `mypy engram` in CI and in the gate list above)*
 7. **One module, one concern.** No grab-bag files. *(not enforced)*
-8. **Every new function gets a test.** *(not enforced)*
+8. **Every new function gets a test.** A process rule, not a property of the
+   code: nothing can tell a function that should have had a test from one that
+   should not. *(not enforced, and not enforceable)*
 
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
 
-**Held by this file alone: invariants 3, 4, 5, 7 and 8.**
+**Held by this file alone: invariants 3, 4 and 7.**
+
+A correction: invariant 5 was listed here and is in fact covered by the whole
+of `tests/test_multiagent.py`, which is the observable form of "two stores in
+one process must not see each other". The claim was made by reading the code
+and never opening the suite. Set a marker from evidence, both ways: before
+writing `(not enforced)`, grep the suite; before writing `(test: ...)`, open
+the test and check it asserts what the invariant claims.
+
+Invariant 8, "every new function gets a test", is a process rule rather than a
+property of the code, so it has no marker of its own and is enforced by review.
 
 Invariant 2 now has `scripts/readme-numbers.sh`, which recomputes the recall
 table from the committed per-question records, sums the corpus size from the
