@@ -1,4 +1,4 @@
-"""Engram — cognitive memory layer for AI agents.
+"""Engram, cognitive memory layer for AI agents.
 
 See DESIGN.md for architecture and intended API.
 """
