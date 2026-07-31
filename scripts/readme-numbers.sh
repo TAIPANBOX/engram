@@ -126,6 +126,18 @@ else:
 
 # ---------------------------------------------------------------------- 3
 # The test count, from the suite, not from anything that quotes it.
+#
+# THIS NUMBER DEPENDS ON THE ENVIRONMENT, and the first version of this check
+# did not know that. tests/test_encryption.py skips at module level when
+# sqlcipher3 is absent, so its 7 tests are not collected at all: 466 on a plain
+# install, 473 with the encryption extra. Comparing a measured environment to a
+# single fixed number fails on whichever machine is not the one the number came
+# from, and it did, in CI, on the very run that first wired this into a
+# workflow.
+#
+# So the README states both, and this asks which environment it is in rather
+# than assuming. Anything that measures the environment must either be
+# environment-independent or know what it is running on.
 proc = subprocess.run(
     [sys.executable, "-m", "pytest", "--collect-only", "-q"],
     capture_output=True,
@@ -139,11 +151,35 @@ if not m:
     )
 else:
     total = int(m.group(1))
-    quoted = re.search(r"### Test coverage \((\d+) tests\)", readme)
+    quoted = re.search(
+        r"### Test coverage \((\d+) tests, (\d+) with the encryption extra\)",
+        readme,
+    )
     if not quoted:
-        note("could not find the test-coverage heading in the README")
-    elif int(quoted.group(1)) != total:
-        note(f"README says {quoted.group(1)} tests and the suite collects {total}")
+        note(
+            "could not read the test-coverage heading in the README. It must "
+            "state both counts, because the number depends on whether the "
+            "encryption extra is installed."
+        )
+    else:
+        base, with_extra = int(quoted.group(1)), int(quoted.group(2))
+        try:
+            import sqlcipher3  # noqa: F401
+
+            expected, which = with_extra, "with the encryption extra"
+        except ImportError:
+            expected, which = base, "on a plain install"
+        if expected != total:
+            note(
+                f"README says {expected} tests {which} and the suite collects "
+                f"{total} here"
+            )
+        if with_extra <= base:
+            note(
+                f"the README claims {with_extra} tests with the encryption "
+                f"extra and {base} without, which cannot be right: the extra "
+                f"only adds tests"
+            )
 
 # ---------------------------------------------------------------------- 4
 # The version, in all three places that state it.
