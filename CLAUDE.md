@@ -135,6 +135,15 @@ Stop and tell the user, then wait, when a task hits any of these:
 Routine work: tests, docs, new deterministic helpers, refactors that keep the
 public API and every published number identical.
 
+## Known pitfalls
+
+- **`core.fileMode` is `false` in this repo, so git does not record an
+  executable bit.** `chmod +x` succeeds on disk, git ignores it, and a new
+  script lands as `100644`. Anyone who clones then gets permission denied,
+  which for a gate means it silently does not run. Add executables with
+  `git update-index --chmod=+x <path>`. This bit
+  `scripts/no-network-at-write.sh` on the commit that introduced it.
+
 ## Style
 
 Be critical, not sycophantic. If a proposal contradicts `DESIGN.md`, breaks an
