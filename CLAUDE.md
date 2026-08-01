@@ -52,6 +52,7 @@ mypy engram
 pytest
 ./scripts/no-network-at-write.sh
 ./scripts/readme-numbers.sh
+./scripts/local-first.sh
 ```
 
 CI additionally runs the encryption suite on its own
@@ -84,9 +85,12 @@ an absent invariant.
    assumptions. Where a metric is knowingly an upper or lower bound, say so
    next to it rather than rounding the caveat away. *(not enforced)*
 4. **Local-first is a constraint, not a preference.** A single file you can
-   copy, with no service to run. A dependency that needs a server, or an
-   embedding path that requires a network round trip, breaks the one sentence
-   that describes this project. *(not enforced)*
+   copy, with no service to run. A dependency that needs a running server
+   breaks the one sentence that describes this project. The embedding model is
+   the one exception and it is bounded: `fastembed` fetches it once, on first
+   use, and never again. After that a full write-and-recall cycle opens no
+   socket, and the size of that one fetch is published.
+   *(gate: `scripts/local-first.sh`)*
 5. **No global state.** Pass the `Engram` instance explicitly. Two stores in
    one process must not be able to see each other.
    *(test: `test_pool_isolates_different_agents`,
@@ -104,7 +108,7 @@ an absent invariant.
 
 This list is debt, and it is here to stay visible rather than to be tidy.
 
-**Held by this file alone: invariants 3, 4 and 7.**
+**Held by this file alone: invariants 3 and 7.**
 
 A correction: invariant 5 was listed here and is in fact covered by the whole
 of `tests/test_multiagent.py`, which is the observable form of "two stores in
@@ -145,8 +149,41 @@ measurement. It checks that the published numbers agree with the evidence in
 the repo, not that the evidence is right. Re-running the benchmark is a
 six-hour pass and stays a deliberate act.
 
-Invariant 4 is partly checkable: assert the default install pulls nothing that
-opens a socket. Invariants 3, 5, 7 and 8 are judgement.
+Invariant 4 now has `scripts/local-first.sh`, and writing it changed the
+invariant. The old wording said an embedding path requiring a network round
+trip breaks the project. Run with a cold cache and the network blocked,
+`observe()` fails: `fastembed` fetches the ONNX model on first use. So the
+invariant as written was violated by the default install, on every fresh
+machine, and had been since the embedder was chosen. The README already said so
+plainly in its Requirements line; the invariant had simply never caught up with
+it. Rather than pretend, invariant 4 now states the promise that is actually
+kept: one fetch, then never again.
+
+**It found a second, user-facing defect on its first run.** The README said the
+first-use download is ~23 MB. It is 64.1 MB, effectively all of it
+`model_optimized.onnx`. That sentence is the first thing a stranger reads about
+what installing costs them, and it was understating by nearly three times.
+
+The check holds three things: the default dependency list is an allow-list of
+three local packages, so a new runtime dependency has to be argued for rather
+than merely fail to match a denylist somebody wrote in 2026; a full
+observe-and-recall cycle opens zero sockets once the model is present, verified
+by making socket creation raise rather than by watching traffic, so a call that
+would have connected fails loudly instead of passing on a machine with no
+route; and the published download size matches the bytes on disk.
+
+It runs in CI rather than in a hook, deliberately. Parts two and three need the
+model, and on a cold machine that is a 64 MB fetch. CI is the machine that can
+afford it, and it says out loud when it is downloading rather than appearing to
+do nothing for a minute.
+
+Two of the five break tests initially reported nothing, and both times the
+mutation had not landed: `dependencies = [` is followed by comment lines, and
+`def observe(` has a multi-line signature. A mutation that did not apply looks
+exactly like a check that passed. Verify the break is in the file before
+believing the verdict.
+
+Invariants 3, 7 and 8 are judgement.
 
 ## Standing rule
 

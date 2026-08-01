@@ -89,6 +89,8 @@ jobs:
         run: ./scripts/no-network-at-write.sh
       - name: published numbers match the repository
         run: ./scripts/readme-numbers.sh
+      - name: local-first holds for the default install
+        run: ./scripts/local-first.sh
 
   security:
     runs-on: ubuntu-latest
