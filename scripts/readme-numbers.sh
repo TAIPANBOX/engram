@@ -116,6 +116,30 @@ else:
                             f"README {name} {lab} says {pub}, the records give {exp}"
                         )
 
+    # The gap between the two recalls, wherever prose states it.
+    #
+    # This is the first DERIVED number the check holds, and it is here because
+    # both places that stated it were wrong: the README said 15 points and the
+    # API reference said 18, while the table directly above each of them gives
+    # 0.970 and 0.830. Neither was a typo of the other, and neither could have
+    # been caught by checking the table, because the table was right. A number
+    # computed from two published numbers is exactly as unowned as they are,
+    # and cheaper to check than either.
+    if recs and m and mode in recs[0]["hits"]:
+        d = agg(mode)
+        gap = round((d["session@5"] - d["turn@5"]) * 100)
+        for path in ("README.md", "docs/api-reference.md"):
+            p = pathlib.Path(path)
+            if not p.exists():
+                continue
+            text = p.read_text()
+            for mt in re.finditer(r"it is (\d+)\s+points\s+lower", text):
+                if int(mt.group(1)) != gap:
+                    note(
+                        f"{path} says turn recall is {mt.group(1)} points lower; "
+                        f"{d['session@5']:.3f} minus {d['turn@5']:.3f} is {gap}"
+                    )
+
     if recs:
         episodes = sum(r["n_episodes"] for r in recs)
         # The README writes it with a thin space between thousands.
