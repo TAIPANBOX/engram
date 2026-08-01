@@ -310,7 +310,7 @@ spelled out in the [API reference](docs/api-reference.md#recall-accuracy):
 59% of questions flag more than one evidence turn, so counting a hit when
 any of them is retrieved is an upper bound on what the model was handed. **Session recall** says the right
 conversation came back. **Turn recall** says one of the 896 flagged turns did,
-out of 246 738 - that is what the agent actually reads, and it is 15 points
+out of 246 738 - that is what the agent actually reads, and it is 14 points
 lower. A memory system quoting one unqualified "R@k" is quoting the first;
 ask which.
 

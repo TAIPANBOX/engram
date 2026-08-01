@@ -728,7 +728,7 @@ turns, so there are two honest numbers and they are not interchangeable:
   this says the right conversation was found.
 - **turn recall** counts a hit only when a retrieved episode is one of the
   896 turns flagged `has_answer` out of 246 738. This says the answer itself
-  was put in front of the agent, and it is 18 points lower at k=5.
+  was put in front of the agent, and it is 14 points lower at k=5.
 
 A memory system quoting one unqualified "R@k" is almost certainly quoting the
 first. Ask which.
