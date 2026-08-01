@@ -457,7 +457,7 @@ pip install 'engdbram[anthropic,mcp,langchain,llamaindex]'
 
 > The distribution name on PyPI is **`engdbram`** (the `engram` name is squatted). The import name is still `engram`, so application code is unaffected: `from engram import Engram`.
 
-**Requirements:** Python 3.11+, no system dependencies. `fastembed` downloads the ONNX embedding model (~23 MB) on first use; all subsequent calls are local.
+**Requirements:** Python 3.11+, no system dependencies. `fastembed` downloads the ONNX embedding model (~64 MB) on first use; all subsequent calls are local, including with the network unplugged.
 
 ---
 
