@@ -5,6 +5,38 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Episodes written before v2.1 are indexed for full-text search on the next
+  open.** They never were. The backfill that was supposed to do it filtered on
+  `rowid NOT IN (SELECT rowid FROM fts_episodes)`, and `fts_episodes` is an
+  external-content table, so an unqualified scan of it reads through to
+  `episodes` and returns every rowid whether or not it is indexed. The
+  predicate excluded everything; the INSERT reported 0 rows on every store it
+  has ever run on. Nothing looked wrong from the SQL, and the suite did not
+  catch it because it checked the index only after `observe()` and
+  `observe_many()`, which populate it by a different path and always worked.
+
+  Since 2.3.0 made `hybrid` the default this has been a silent ranking loss
+  rather than an error. An unindexed episode is not missing: it scores 0.0 on
+  the BM25 half of every recall and sits below anything written after the
+  upgrade. The store looks healthy and quietly answers with its newest
+  memories, which is the failure mode that does not get reported.
+
+  The repair is `INSERT INTO fts_episodes(fts_episodes) VALUES('rebuild')`, the
+  FTS5 idiom for exactly this. It reindexes the whole table, so it is gated on
+  `PRAGMA user_version` (previously unused, so 0 on every existing store) and
+  runs once rather than on every open. Counting the index to decide instead is
+  the same trap: `SELECT count(*) FROM fts_episodes` returns the episode count
+  even when nothing at all is indexed, and `tests/test_schema.py` now asserts
+  that, so the next person to reach for it finds out from a test rather than
+  from a store that ranks its oldest memories last.
+
+  Measured locally rather than in a committed benchmark, on 100 000 synthetic
+  episodes under Python 3.14.6 with SQLite 3.53.4: the rebuild takes 0.20 s and
+  the `PRAGMA user_version` read that now guards it takes 5.4 microseconds.
+
 ## [2.4.1] - 2026-07-30
 
 ### Added

@@ -22,6 +22,15 @@ except ImportError:
 # Embedding dimension for bge-small-en-v1.5
 DEFAULT_DIM: int = 384
 
+# Schema generation, stamped into the file header (PRAGMA user_version, which
+# nothing else in engram uses and SQLite leaves at 0). It answers one question
+# in constant time: has this store already been through the migrations below?
+#
+# Generation 1 is the FTS rebuild. A store sitting at 0 is either new or was
+# last opened by a version whose FTS backfill silently did nothing, and both
+# want the same treatment: one rebuild.
+_SCHEMA_VERSION = 1
+
 # vec0 preallocates one chunk per partition, so the value trades scan speed
 # against wasted space in stores with many small agents. Measured at 50k
 # vectors / 384 dim: chunk_size=128 scans ~4% slower than the 1024 default,
@@ -173,6 +182,43 @@ def _repartition_vec_episodes(conn: sqlite3.Connection, dim: int) -> None:
     conn.commit()
 
 
+def _rebuild_fts_once(conn: sqlite3.Connection) -> None:
+    """Index the episodes that predate the FTS table, once per store.
+
+    The backfill this replaces read:
+
+        INSERT INTO fts_episodes(rowid, content)
+        SELECT rowid, content FROM episodes
+        WHERE rowid NOT IN (SELECT rowid FROM fts_episodes)
+
+    which looks like it indexes whatever is missing and in fact indexes
+    nothing, on any store, ever. ``fts_episodes`` is an external-content table
+    (``content='episodes'``), so an unqualified scan of it reads THROUGH to the
+    content table: ``SELECT rowid FROM fts_episodes`` returns every episode
+    rowid whether or not it is indexed, and ``NOT IN`` therefore excludes every
+    row. Counting the index the same way gives the same wrong answer, so it is
+    not a safe way to detect the state either, and the same trap is waiting for
+    the next person who tries. Only the ``fts_episodes_docsize`` shadow table
+    holds a true count, and reading FTS5 internals to decide whether to call a
+    documented FTS5 command is a worse bargain than a header field.
+
+    ``'rebuild'`` is the FTS5 idiom for this and it does work, but it reindexes
+    the whole table. This store is documented to hold 100k episodes, where a
+    rebuild measured 0.20 s against 5.4 microseconds for the PRAGMA read, so it
+    is gated rather than run on every open.
+
+    The rebuild lands before the stamp deliberately. Both statements normally
+    commit together with the rest of the migration, but if that is ever untrue
+    the surviving order is the safe one: an interrupted run leaves the marker
+    unset and rebuilds again next time, which costs a pass. The reverse would
+    mark a half-built index as done, which costs the index.
+    """
+    if int(conn.execute("PRAGMA user_version").fetchone()[0]) >= _SCHEMA_VERSION:
+        return
+    conn.execute("INSERT INTO fts_episodes(fts_episodes) VALUES('rebuild')")
+    conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION:d}")
+
+
 def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
     """Create all tables and the vector index. Idempotent — safe to call repeatedly."""
     conn.enable_load_extension(True)
@@ -233,10 +279,6 @@ def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
         "CREATE VIRTUAL TABLE IF NOT EXISTS fts_episodes "
         "USING fts5(content, content='episodes', content_rowid='rowid')"
     )
-    # Populate FTS for any pre-existing episodes that predate this migration.
-    conn.execute(
-        "INSERT INTO fts_episodes(rowid, content) "
-        "SELECT rowid, content FROM episodes "
-        "WHERE rowid NOT IN (SELECT rowid FROM fts_episodes)"
-    )
+    # Index any pre-existing episodes that predate this migration.
+    _rebuild_fts_once(conn)
     conn.commit()
