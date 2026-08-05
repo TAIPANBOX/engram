@@ -240,6 +240,31 @@ class EventLog:
         self.path = Path(self.path)
         self._next_hash = _tail_chain_hash(self.path)
 
+    def _envelope(
+        self,
+        event_type: str,
+        agent_id: str,
+        data: dict[str, Any],
+        run_id: str | None,
+    ) -> dict[str, Any]:
+        """Build one SPEC.md §6 envelope, without the chain link.
+
+        Shared by :meth:`emit` and :meth:`emit_many` so a single write and a
+        batched one cannot drift into two different envelopes.
+        """
+        envelope: dict[str, Any] = {
+            "schema": SCHEMA,
+            "ts": _now_rfc3339(),
+            "source": SOURCE,
+            "type": event_type,
+            "severity": EVENT_SEVERITY.get(event_type, "info"),
+            "agent_id": agent_id,
+            "data": data,
+        }
+        if run_id is not None:
+            envelope["run_id"] = run_id
+        return envelope
+
     def emit(
         self,
         event_type: str,
@@ -277,17 +302,7 @@ class EventLog:
             return
 
         try:
-            envelope: dict[str, Any] = {
-                "schema": SCHEMA,
-                "ts": _now_rfc3339(),
-                "source": SOURCE,
-                "type": event_type,
-                "severity": EVENT_SEVERITY.get(event_type, "info"),
-                "agent_id": agent_id,
-                "data": data,
-            }
-            if run_id is not None:
-                envelope["run_id"] = run_id
+            envelope = self._envelope(event_type, agent_id, data, run_id)
 
             with self._lock:
                 if self._next_hash:
@@ -299,6 +314,71 @@ class EventLog:
         except OSError:
             logger.warning(
                 "engram.events: failed to write %r event to %s (event dropped)",
+                event_type,
+                self.path,
+                exc_info=True,
+            )
+
+    def emit_many(
+        self,
+        event_type: str,
+        agent_id: str | None,
+        data_items: list[dict[str, Any]],
+        *,
+        run_id: str | None = None,
+    ) -> None:
+        """Append one event per entry in *data_items*, in a single open.
+
+        Same envelope, same chain and the same fail-open contract as
+        :meth:`emit`: this is a loop over :meth:`emit` with the file opened
+        once and the lock taken once, not a different kind of event. A batch
+        of N memories costs one open and one write rather than N of each,
+        which is what lets a bulk path stay a bulk path.
+
+        One line per memory, deliberately, rather than one summary line per
+        batch. The envelope carries one ``memory_id`` per event (SPEC.md
+        §6.2), so a batched payload would be a second data shape under an
+        existing type and every consumer would have to learn it. It also
+        keeps each line far inside the :data:`_RESUME_WINDOW` that
+        :func:`_tail_chain_hash` reads when resuming a chain, which a single
+        line carrying an unbounded id array would not.
+
+        The lines are built before anything is written, so the peak memory is
+        the serialized batch (a few hundred bytes per memory, against the
+        1.5 KB per embedding the caller is already holding).
+
+        Args:
+            event_type: As :meth:`emit`.
+            agent_id: As :meth:`emit`. When absent, every item is skipped and
+                counted, exactly as one :meth:`emit` call per item would.
+            data_items: One payload per event. An empty list writes nothing
+                and does not create the file.
+            run_id: Optional task-execution correlation id, applied to every
+                event in the batch.
+        """
+        if not agent_id:
+            self.skipped_empty_agent_id += len(data_items)
+            return
+        if not data_items:
+            return
+
+        try:
+            with self._lock:
+                lines: list[str] = []
+                next_hash = self._next_hash
+                for data in data_items:
+                    envelope = self._envelope(event_type, agent_id, data, run_id)
+                    if next_hash:
+                        envelope["prev_hash"] = next_hash
+                    lines.append(json.dumps(envelope, separators=(",", ":")) + "\n")
+                    next_hash = chain_hash(envelope)
+                with self.path.open("a", encoding="utf-8") as fh:
+                    fh.write("".join(lines))
+                self._next_hash = next_hash
+        except OSError:
+            logger.warning(
+                "engram.events: failed to write %d %r events to %s (events dropped)",
+                len(data_items),
                 event_type,
                 self.path,
                 exc_info=True,

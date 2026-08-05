@@ -683,10 +683,12 @@ coder.close()
 ### Backup and export
 
 ```python
-# Hot backup - safe to call while the store is open
+# Hot backup - safe to call while the store is open. It copies the whole file,
+# so it is refused on an instance scoped to an agent_id; open the file unscoped.
 mem.backup("./agent_backup.engram")
 
-# Portable JSON export (episodes, facts, entities, edges)
+# Portable JSON export (episodes, facts, entities, edges). A scoped instance
+# exports its own episodes and edges; facts and entities are shared by design.
 doc = mem.export_json("./agent_dump.json")
 print(f"Exported {doc['counts']['episodes']} episodes, {doc['counts']['facts']} facts")
 
@@ -792,7 +794,7 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (470 tests, 477 with the encryption extra)
+### Test coverage (484 tests, 491 with the encryption extra)
 
 ```
 tests/
@@ -811,8 +813,10 @@ tests/
   test_cli.py            all CLI subcommands + --agent-id + --cross-agent
   test_multiagent.py     agent_id scoping, shared facts, cross-agent recall
   test_performance.py    observe_many correctness + batch decay + LRU cache
-  test_export.py         export_json / import_json round-trip + merge mode
-  test_backup.py         backup() - hot copy, openable as Engram
+  test_export.py         export_json / import_json round-trip, merge mode,
+                          agent-scoped export
+  test_backup.py         backup() - hot copy, openable as Engram, refused on a
+                          scoped instance
   test_working_memory.py WorkingMemory LRU, eviction, flush, spillover
   test_async_engram.py   AsyncEngram - all async methods + concurrency safety
   test_compress.py       compress() - LLM summarisation, batching, no-op paths
@@ -822,7 +826,8 @@ tests/
   test_mcp_server.py     MCP server (engram-mcp): remember/recall/why/forget/stats,
                           agent pooling, procedural rejection, reflect() not exposed
   test_events.py         Agent Passport NDJSON event exporter: schema validation,
-                          fail-open on I/O error, skip-on-empty agent_id, off-by-default
+                          fail-open on I/O error, skip-on-empty agent_id, off-by-default,
+                          bulk and cascade paths (observe_many, forget_entity, compress)
   test_benchmarks.py     benchmark infrastructure
 ```
 

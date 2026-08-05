@@ -14,11 +14,22 @@ if TYPE_CHECKING:
 
 
 def export_json(mem: Engram, dest: str | Path) -> dict[str, Any]:
-    """Export the full store to a JSON file and return the document.
+    """Export the store to a JSON file and return the document.
 
     The export contains episodes, facts, entities, and graph edges. It is
     suitable for backup, migration between stores, or offline inspection.
     Access log and reflection run records are not exported (operational data).
+
+    Scoped to *mem*'s ``agent_id``, so an export can never carry more than the
+    instance can already read. Episodes and edges carry an ``agent_id`` and are
+    filtered to it; both are scoped on every other read path (``get_episode``,
+    ``recall``, ``prune_episodes``, ``decay``, ``get_neighbors``), and export
+    was the one path that was not. Facts and entities have no ``agent_id``
+    column: they are shared across the agents in one file by design (see
+    CHANGELOG 2.2.0 and 2.2.1), every fact and entity read path is already
+    cross-agent, and so they are exported whole rather than "fixed" into a
+    scoping the store never had. An unscoped instance exports everything, which
+    is what an operator taking a whole-store dump opens.
 
     Args:
         mem: Open Engram instance to export from.
@@ -30,12 +41,17 @@ def export_json(mem: Engram, dest: str | Path) -> dict[str, Any]:
     mem._store.flush_access_log()
     conn = mem._store._conn
 
+    agent_id = mem._agent_id
+    scope = "WHERE agent_id = ?" if agent_id is not None else ""
+    scope_params: tuple[Any, ...] = (agent_id,) if agent_id is not None else ()
+
     episodes = [
         dict(row)
         for row in conn.execute(
             "SELECT id, content, timestamp, actors, tags, salience, "
             "emotional_valence, summary_of, importance_score, agent_id "
-            "FROM episodes ORDER BY timestamp ASC"
+            f"FROM episodes {scope} ORDER BY timestamp ASC",
+            scope_params,
         ).fetchall()
     ]
 
@@ -59,7 +75,8 @@ def export_json(mem: Engram, dest: str | Path) -> dict[str, Any]:
         dict(row)
         for row in conn.execute(
             "SELECT src_id, dst_id, relation, weight, created_at, agent_id "
-            "FROM edges ORDER BY created_at ASC"
+            f"FROM edges {scope} ORDER BY created_at ASC",
+            scope_params,
         ).fetchall()
     ]
 
@@ -84,6 +101,12 @@ def export_json(mem: Engram, dest: str | Path) -> dict[str, Any]:
 
 def import_json(mem: Engram, src: str | Path, *, merge: bool = False) -> dict[str, int]:
     """Import episodes, facts, entities, and edges from a JSON export file.
+
+    Rows keep the ``agent_id`` recorded in the document rather than being
+    re-stamped with *mem*'s own scope, which is what makes a migration between
+    stores preserve who wrote what. The consequence is worth knowing: importing
+    a document that names another agent writes rows this instance cannot then
+    read back through its own scoped recall.
 
     Args:
         mem: Open Engram instance to import into.

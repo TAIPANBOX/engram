@@ -9,6 +9,7 @@ contract should never depend on a live network call.
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 from pathlib import Path
@@ -16,7 +17,7 @@ from pathlib import Path
 import jsonschema
 import pytest
 
-from engram import Engram, StubLLMAdapter
+from engram import Engram, ObserveInput, StubLLMAdapter
 from engram.events import EventLog, canonicalize, chain_hash, resolve_events_path
 
 _SCHEMA_PATH = Path(__file__).parent / "fixtures" / "agent-event.schema.json"
@@ -31,6 +32,16 @@ def _read_ndjson(path: Path) -> list[dict[str, object]]:
 
 def _validate(event: dict[str, object]) -> None:
     jsonschema.validate(instance=event, schema=_SCHEMA)
+
+
+def _assert_chain(events: list[dict[str, object]]) -> None:
+    """Every event validates, and the prev_hash chain links head to tail."""
+    assert events, "no events to check"
+    assert "prev_hash" not in events[0]
+    for event in events:
+        _validate(event)
+    for previous, current in itertools.pairwise(events):
+        assert current["prev_hash"] == chain_hash(previous)
 
 
 # ------------------------------------------------------------------
@@ -278,6 +289,125 @@ def test_no_llm_reflect_emits_no_contradiction_event(tmp_path) -> None:
 
     events = _read_ndjson(events_path)
     assert all(e["type"] != "contradiction_found" for e in events)
+
+
+# ------------------------------------------------------------------
+# Bulk and cascade paths: the ones a governance consumer most needs and the
+# ones that emitted nothing at all before.
+# ------------------------------------------------------------------
+
+
+def test_observe_many_emits_one_memory_written_per_episode(tmp_path) -> None:
+    events_path = tmp_path / "events.ndjson"
+    with Engram(path=":memory:", agent_id=_AGENT_ID, events_path=events_path) as mem:
+        ids = mem.observe_many(
+            [
+                ObserveInput(content="first turn"),
+                ObserveInput(content="second turn"),
+                ObserveInput(content="third turn"),
+            ]
+        )
+
+    events = _read_ndjson(events_path)
+    assert len(events) == 3
+    _assert_chain(events)
+    assert [e["type"] for e in events] == ["memory_written"] * 3
+    assert [e["data"] for e in events] == [
+        {"memory_id": ep_id, "kind": "episodic"} for ep_id in ids
+    ]
+
+
+def test_observe_many_continues_the_chain_from_earlier_events(tmp_path) -> None:
+    events_path = tmp_path / "events.ndjson"
+    with Engram(path=":memory:", agent_id=_AGENT_ID, events_path=events_path) as mem:
+        mem.observe("a single write first")
+        mem.observe_many([ObserveInput(content="then a batch"), ObserveInput(content="of two")])
+        mem.observe("and a single write after")
+
+    events = _read_ndjson(events_path)
+    assert len(events) == 4
+    _assert_chain(events)
+
+
+def test_observe_many_of_nothing_emits_nothing(tmp_path) -> None:
+    events_path = tmp_path / "events.ndjson"
+    with Engram(path=":memory:", agent_id=_AGENT_ID, events_path=events_path) as mem:
+        assert mem.observe_many([]) == []
+    assert not events_path.exists()
+
+
+def test_forget_entity_emits_memory_forgotten_for_every_erased_memory(tmp_path) -> None:
+    events_path = tmp_path / "events.ndjson"
+    with Engram(path=":memory:", agent_id=_AGENT_ID, events_path=events_path) as mem:
+        ep_one = mem.observe("Ivan joined Globex", actors=["Ivan"])
+        ep_two = mem.observe("Ivan moved to Initech", actors=["Ivan"])
+        mem.observe("nothing to do with the erasure", actors=["Alice"])
+        fact_id = mem.assert_fact("Ivan", "works_at", "Globex")
+        result = mem.forget_entity("Ivan")
+
+    events = _read_ndjson(events_path)
+    _assert_chain(events)
+    forgotten = [e for e in events if e["type"] == "memory_forgotten"]
+    assert len(forgotten) == result.episodes_deleted + result.facts_deleted
+    episodic = [e["data"]["memory_id"] for e in forgotten if e["data"]["kind"] == "episodic"]
+    semantic = [e["data"]["memory_id"] for e in forgotten if e["data"]["kind"] == "semantic"]
+    assert set(episodic) == {ep_one, ep_two}
+    assert semantic == [fact_id]
+    # Every erasure names the subject request that caused it.
+    assert all(e["data"]["entity"] == "Ivan" for e in forgotten)
+
+
+def test_forget_entity_with_nothing_to_erase_emits_nothing(tmp_path) -> None:
+    events_path = tmp_path / "events.ndjson"
+    with Engram(path=":memory:", agent_id=_AGENT_ID, events_path=events_path) as mem:
+        mem.observe("Alice signed off", actors=["Alice"])
+        result = mem.forget_entity("Ivan")
+
+    assert result.episodes_deleted == 0
+    assert result.facts_deleted == 0
+    events = _read_ndjson(events_path)
+    assert all(e["type"] != "memory_forgotten" for e in events)
+
+
+def test_compress_emits_memory_forgotten_for_every_source_it_deletes(tmp_path) -> None:
+    events_path = tmp_path / "events.ndjson"
+    stub = StubLLMAdapter(summary="Four small events, summarised.")
+    with Engram(path=":memory:", agent_id=_AGENT_ID, llm=stub, events_path=events_path) as mem:
+        source_ids = mem.observe_many([ObserveInput(content=f"Event number {i}") for i in range(4)])
+        for ep in mem._store.get_episodes_below_importance(1.1):
+            mem._store.update_importance(ep.id, 0.1)
+        result = mem.compress(max_episodes=0, importance_threshold=0.3, batch_size=4)
+
+    assert result.episodes_removed == 4
+    assert result.summaries_created == 1
+
+    events = _read_ndjson(events_path)
+    _assert_chain(events)
+    forgotten = [e for e in events if e["type"] == "memory_forgotten"]
+    assert len(forgotten) == result.episodes_removed
+    assert {e["data"]["memory_id"] for e in forgotten} == set(source_ids)
+    assert all(e["data"]["kind"] == "episodic" for e in forgotten)
+
+
+def test_compress_names_the_summary_that_replaced_each_deleted_episode(tmp_path) -> None:
+    """A compression run is a deletion and a creation in one operation, so the
+    log has to say which summary each erased episode was folded into."""
+    events_path = tmp_path / "events.ndjson"
+    stub = StubLLMAdapter(summary="Four small events, summarised.")
+    with Engram(path=":memory:", agent_id=_AGENT_ID, llm=stub, events_path=events_path) as mem:
+        mem.observe_many([ObserveInput(content=f"Event number {i}") for i in range(4)])
+        for ep in mem._store.get_episodes_below_importance(1.1):
+            mem._store.update_importance(ep.id, 0.1)
+        mem.compress(max_episodes=0, importance_threshold=0.3, batch_size=4)
+
+    events = _read_ndjson(events_path)
+    written = [e for e in events if e["type"] == "memory_written"]
+    forgotten = [e for e in events if e["type"] == "memory_forgotten"]
+    # 4 originals plus 1 summary written, and no more: a compression run must
+    # not look like more creation than happened.
+    assert len(written) == 5
+    summary_id = written[-1]["data"]["memory_id"]
+    assert {e["data"]["replaced_by"] for e in forgotten} == {summary_id}
 
 
 # ------------------------------------------------------------------

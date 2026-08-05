@@ -41,8 +41,13 @@ with Engram(path=":memory:") as mem:
 > `ENGRAM_EVENTS_PATH`) to opt in to an NDJSON event log conforming to the
 > [Agent Passport](https://github.com/TAIPANBOX/agent-passport) `agent-event`
 > envelope (SPEC.md §6). Off by default - no file is written unless
-> configured. `observe()`, `assert_fact()`, `forget()`, and `forget_fact()`
-> each emit a `memory_written`/`memory_forgotten` event (`info`); `reflect()`
+> configured. `observe()`, `observe_many()`, `assert_fact()`, `forget()`,
+> `forget_fact()` and `forget_entity()` each emit one
+> `memory_written`/`memory_forgotten` event per memory written or erased
+> (`info`), so a bulk write of N episodes is N events and an entity erasure is
+> one per episode and fact it removes; `compress()` emits a `memory_written`
+> for each summary it creates and a `memory_forgotten` for each source episode
+> it deletes, each naming the summary that replaced it; `reflect()`
 > emits one `reflection_run` event (`info`) plus one `contradiction_found`
 > event (`medium`) per fact it supersedes with a differing object (a
 > same-object re-extraction supersedes silently, as agreement). Events with no `agent_id` set on
@@ -263,6 +268,8 @@ print(f"Removed {result.episodes_removed} → {result.summaries_created} summari
 
 Hot backup using SQLite's built-in online backup API. Safe to call while the store is open and actively written to.
 
+A backup copies the whole file and cannot be filtered, so it raises `ValueError` on an instance scoped to an `agent_id`. Open the store without one for a whole-file backup, or use `export_json()` for a single agent's data.
+
 ```python
 mem.backup("./agent_backup.engram")  # str or Path
 ```
@@ -286,7 +293,9 @@ mem.rekey(None)           # drop encryption
 
 ### `export_json(dest) → dict`
 
-Export the full store (episodes, facts, entities, edges) to a JSON file. Returns the document dict.
+Export the store (episodes, facts, entities, edges) to a JSON file. Returns the document dict.
+
+Scoped to the instance's `agent_id`: episodes and edges are filtered to it, as on every other read path. Facts and entities carry no `agent_id` and stay shared across agents by design, so they are exported whole. An unscoped instance exports the entire store.
 
 ```python
 doc = mem.export_json("./agent_dump.json")
