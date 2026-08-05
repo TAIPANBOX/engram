@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
@@ -180,3 +181,86 @@ def test_export_empty_store(tmp_path):
         doc = mem.export_json(dest)
     assert doc["counts"]["episodes"] == 0
     assert doc["counts"]["facts"] == 0
+
+
+# ------------------------------------------------------------------
+# export_json is scoped to the instance's agent_id
+#
+# Every other read path was scoped in 2.2.0 / 2.2.1 (get_episode,
+# delete_episode, recall, prune_episodes, decay, get_neighbors). Export was
+# the one left, so a scoped instance could dump another agent's raw episode
+# text into a plaintext JSON file.
+# ------------------------------------------------------------------
+
+
+@pytest.fixture()
+def two_agent_store(tmp_path):
+    """A shared file holding one episode per agent, plus one edge each."""
+    path = str(tmp_path / "team.engram")
+    now = datetime.now(tz=UTC)
+    with (
+        Engram(path=path, agent_id="coder") as coder,
+        Engram(path=path, agent_id="planner") as planner,
+    ):
+        coder.observe("coder wrote the retry loop", actors=["Ivan"])
+        planner.observe("planner drafted the Q3 roadmap", actors=["Ivan"])
+        coder.assert_fact("Ivan", "role", "engineer")
+        planner.assert_fact("Ivan", "team", "platform")
+        entity = coder._store.find_or_create_entity("Ivan", "person", now)
+        coder._store.insert_edge("ep-coder", entity.id, "mentions", weight=1.0, created_at=now)
+        planner._store.insert_edge("ep-planner", entity.id, "mentions", weight=1.0, created_at=now)
+    return path
+
+
+def test_scoped_export_contains_only_its_own_episodes(two_agent_store, tmp_path):
+    dest = tmp_path / "coder.json"
+    with Engram(path=two_agent_store, agent_id="coder") as coder:
+        doc = coder.export_json(str(dest))
+
+    assert doc["counts"]["episodes"] == 1
+    assert [ep["agent_id"] for ep in doc["episodes"]] == ["coder"]
+    # The point of the defect is plaintext leakage, so check the bytes on disk
+    # rather than only the returned document.
+    assert "roadmap" not in dest.read_text()
+
+
+def test_scoped_export_contains_only_its_own_edges(two_agent_store, tmp_path):
+    dest = str(tmp_path / "coder.json")
+    with Engram(path=two_agent_store, agent_id="coder") as coder:
+        doc = coder.export_json(dest)
+
+    assert doc["counts"]["edges"] == 1
+    assert [edge["src_id"] for edge in doc["edges"]] == ["ep-coder"]
+
+
+def test_scoped_export_keeps_facts_and_entities_shared(two_agent_store, tmp_path):
+    """Facts and entities are shared across agents by design (CHANGELOG 2.2.0
+    and 2.2.1), so scoping export must not quietly turn that into a bug."""
+    dest = str(tmp_path / "coder.json")
+    with Engram(path=two_agent_store, agent_id="coder") as coder:
+        doc = coder.export_json(dest)
+
+    assert doc["counts"]["facts"] == 2
+    assert doc["counts"]["entities"] == 1
+
+
+def test_unscoped_export_still_contains_every_agents_data(two_agent_store, tmp_path):
+    """The documented whole-store export is unchanged for an unscoped instance."""
+    dest = str(tmp_path / "all.json")
+    with Engram(path=two_agent_store) as everything:
+        doc = everything.export_json(dest)
+
+    assert doc["counts"]["episodes"] == 2
+    assert doc["counts"]["edges"] == 2
+    assert {ep["agent_id"] for ep in doc["episodes"]} == {"coder", "planner"}
+
+
+def test_scoped_export_round_trips_into_a_fresh_store(two_agent_store, tmp_path):
+    dest = str(tmp_path / "coder.json")
+    target = str(tmp_path / "coder-copy.engram")
+    with Engram(path=two_agent_store, agent_id="coder") as coder:
+        coder.export_json(dest)
+    with Engram(path=target, agent_id="coder") as restored:
+        counts = restored.import_json(dest)
+        assert counts["episodes"] == 1
+        assert restored._store.episode_count() == 1

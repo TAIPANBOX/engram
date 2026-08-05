@@ -594,10 +594,16 @@ class Engram:
     # ------------------------------------------------------------------
 
     def export_json(self, dest: str) -> dict[str, Any]:
-        """Export the full store to a JSON file.
+        """Export the store to a JSON file.
 
         Exports episodes, facts, entities, and graph edges. Access log and
         reflection records are omitted (operational data, not portable).
+
+        Scoped to this instance's ``agent_id``: episodes and edges are filtered
+        to it, matching every other read path. Facts and entities are shared
+        across agents by design and are exported whole. An unscoped instance
+        exports the entire store, so open the file without an ``agent_id`` to
+        dump everything.
 
         Args:
             dest: File path to write. Extension ``.json`` recommended.
@@ -632,10 +638,26 @@ class Engram:
         is created (or overwritten) as a complete, self-contained copy of the
         current database, including all WAL frames.
 
+        A backup is a copy of the whole file and cannot be filtered, so an
+        agent-scoped instance is refused rather than handed every other agent's
+        raw episodes. Open the store without an ``agent_id`` for a whole-file
+        backup, or use :meth:`export_json` for this agent's own data.
+
         Args:
             dest: File path for the backup. Parent directory must exist.
                   Use a ``.engram`` extension by convention.
+
+        Raises:
+            ValueError: If this instance is scoped to an ``agent_id``.
         """
+        if self._agent_id is not None:
+            raise ValueError(
+                f"backup() copies the whole file, including every other agent's "
+                f"data, so it is refused on an instance scoped to "
+                f"agent_id={self._agent_id!r}. Open the store without an "
+                f"agent_id to back up the file, or use export_json() to write "
+                f"this agent's own episodes and edges."
+            )
         self._store.flush_access_log()
         _mod: Any = _sqlite_module(self._key)
         raw = _mod.connect(str(dest))

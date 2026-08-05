@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **`export_json()` is scoped to the calling instance's `agent_id`.** It was
+  the read path 2.2.0 and 2.2.1 left open. `Engram(path="./team.engram",
+  agent_id="coder").export_json("dump.json")` wrote every other agent's raw
+  episode text into a plaintext file, while `get_episode()`, `recall()`,
+  `forget()`, `prune_episodes()`, `decay()` and `get_neighbors()` had all been
+  closed against exactly that, and the export path was never covered by a test
+  that used a scoped instance at all.
+
+  Episodes and edges carry an `agent_id` and are now filtered to it. Facts and
+  entities are not, and that is the deliberate half: they have no `agent_id`
+  column, 2.2.0 and 2.2.1 both record that they stay shared across the agents
+  in one file, and every fact and entity read path is already cross-agent. An
+  export that hid them would have turned a decision into a bug and hidden
+  nothing, since the same instance can read them through `timeline()` and
+  `contradictions()`. The rule the fix follows is narrower than "scope
+  everything": an export must not carry more than the instance can already
+  read. An unscoped instance still exports the whole store.
+- **`backup()` refuses on an agent-scoped instance**, with a `ValueError`
+  naming both alternatives. It copies the whole file through SQLite's online
+  backup API, so unlike an export it cannot be filtered: the choice was
+  between a copy that hands over every agent's data and a refusal. Proceeding
+  with a warning was the other candidate and loses on the only question that
+  matters here, because the file is delivered either way. Open the store
+  without an `agent_id` to back up the file, or use `export_json()` for one
+  agent's own data. This is a behaviour change for anyone who called
+  `backup()` from a scoped instance; nothing in this repo did, and the CLI
+  exposes no backup command.
+
+  Not changed, and stated here rather than left to be rediscovered:
+  `import_json()` keeps the `agent_id` recorded in the document instead of
+  re-stamping rows with the importing instance's scope. That is what makes a
+  migration preserve who wrote what, and 2.2.0 added edge `agent_id`
+  round-tripping for the same reason, but it does mean a scoped instance can
+  write rows outside its own scope from a hand-edited document, which the read
+  side no longer permits. The asymmetry is known, not overlooked.
+
 ### Fixed
 - **Episodes written before v2.1 are indexed for full-text search on the next
   open.** They never were. The backfill that was supposed to do it filtered on
