@@ -792,7 +792,7 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (466 tests, 473 with the encryption extra)
+### Test coverage (470 tests, 477 with the encryption extra)
 
 ```
 tests/
