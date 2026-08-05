@@ -237,6 +237,11 @@ class Engram:
         linear throughput independent of batch size rather than paying per-call
         overhead for each observation.
 
+        Emits one ``memory_written`` event per episode, the same envelope
+        :meth:`observe` emits, written in a single append (see
+        :meth:`~engram.events.EventLog.emit_many`). Bulk ingestion is the path
+        that most needs to be in the log, since it is how a store is loaded.
+
         Args:
             items: Observations to record; each is an :class:`ObserveInput` instance.
 
@@ -264,6 +269,12 @@ class Engram:
         ]
         embeddings = self._embedder.embed_batch([item.content for item in items])
         self._store.insert_episode_batch(episodes, embeddings)
+        if self._events is not None:
+            self._events.emit_many(
+                "memory_written",
+                self._agent_id,
+                [{"memory_id": ep_id, "kind": "episodic"} for ep_id in episode_ids],
+            )
         return episode_ids
 
     # ------------------------------------------------------------------
@@ -566,13 +577,44 @@ class Engram:
 
         This operation is irreversible.
 
+        Emits one ``memory_forgotten`` event per erased memory, episodes and
+        facts alike, each naming the entity whose erasure caused it. Per
+        memory rather than one event for the run, because that is the shape
+        :meth:`forget` and :meth:`forget_fact` already emit and the only one
+        an auditor can reconcile against the ``memory_written`` events that
+        created those memories: a count cannot be checked against anything.
+
         Args:
             entity_name: Canonical name of the entity to erase (e.g. ``"Ivan"``).
 
         Returns:
             :class:`ForgetResult` with counts of deleted episodes and facts.
         """
-        return self._store.forget_entity(entity_name)
+        if self._events is None:
+            return self._store.forget_entity(entity_name)
+
+        # The ids are read inside the same transaction that erases them.
+        # Store.transaction() holds the store lock for the whole block, so
+        # this list is exactly what forget_entity goes on to delete, and the
+        # log can name every erased memory instead of reporting a count.
+        with self._store.transaction():
+            episode_ids = [ep.id for ep in self._store.get_episodes_by_actor(entity_name)]
+            fact_ids = [fact.id for fact in self._store.get_facts_by_entity(entity_name)]
+            result = self._store.forget_entity(entity_name)
+
+        self._events.emit_many(
+            "memory_forgotten",
+            self._agent_id,
+            [
+                {"memory_id": memory_id, "kind": "episodic", "entity": entity_name}
+                for memory_id in episode_ids
+            ]
+            + [
+                {"memory_id": memory_id, "kind": "semantic", "entity": entity_name}
+                for memory_id in fact_ids
+            ],
+        )
+        return result
 
     # ------------------------------------------------------------------
     # Multi-agent
@@ -720,6 +762,10 @@ class Engram:
         No-op if no LLM adapter was provided or the store has fewer than
         *max_episodes* episodes.
 
+        Emits one ``memory_written`` for each summary (through
+        :meth:`observe`) and one ``memory_forgotten`` for each source episode
+        it hard-deletes, the latter naming the summary that replaced it.
+
         Args:
             max_episodes: Only compress when the store exceeds this count.
                 Protects small stores from premature lossy compression.
@@ -766,9 +812,26 @@ class Engram:
             batch_ids = [ep.id for ep in batch]
             self._store.set_summary_of(summary_ep_id, batch_ids)
 
+            # A compression run is a deletion and a creation in one step. The
+            # creation is already in the log (self.observe above emitted a
+            # memory_written for the summary); without these the run reads as
+            # pure creation and the erasures are invisible. Each one names the
+            # summary that replaced it, which is the only link between the two
+            # halves once the source episode is gone.
+            deleted_ids: list[str] = []
             for ep in batch:
-                self._store.delete_episode(ep.id)
+                if self._store.delete_episode(ep.id):
+                    deleted_ids.append(ep.id)
                 removed += 1
+            if self._events is not None:
+                self._events.emit_many(
+                    "memory_forgotten",
+                    self._agent_id,
+                    [
+                        {"memory_id": ep_id, "kind": "episodic", "replaced_by": summary_ep_id}
+                        for ep_id in deleted_ids
+                    ],
+                )
             created += 1
 
         return CompressionRun(

@@ -45,6 +45,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   side no longer permits. The asymmetry is known, not overlooked.
 
 ### Fixed
+- **The three write paths that most needed an audit trail emitted nothing.**
+  `observe_many()`, `forget_entity()` and the deletion half of `compress()`
+  wrote to the store without writing to the event log, while the single-item
+  paths beside each of them emitted. None of the three had a test in
+  `tests/test_events.py`, which is why all three could be missed at once.
+
+  `observe_many()` now emits one `memory_written` per episode, the same
+  envelope `observe()` emits. One event per memory rather than one summary
+  event per batch: the envelope carries one `memory_id` (SPEC.md §6.2), so a
+  batched payload would be a second data shape under an existing type that
+  every consumer would have to learn, and a single line holding an unbounded
+  id array would outgrow the 1 MiB window the chain reader uses to resume a
+  file. The batch is written in one append instead of one per event, through
+  a new `EventLog.emit_many`. Measured locally rather than in a committed
+  benchmark, on 246 738 payloads (the LongMemEval-S turn count) in the
+  500-item batches `engram/benchmarks/longmemeval.py` loads with, Python
+  3.14.6: 4.97 s and 81.7 MiB of NDJSON, against 15.14 s for the same events
+  one `emit()` call each. Events stay off unless a path is configured, so
+  nothing pays this by default.
+
+  `forget_entity()`, the documented right-to-be-forgotten path, now emits one
+  `memory_forgotten` per erased memory, episodes and facts alike, each naming
+  the entity whose erasure caused it. Per memory rather than one event for the
+  run, because a count cannot be reconciled against anything: the point of an
+  erasure record is that an auditor can pair it with the `memory_written` that
+  created that memory. The ids are read inside the same transaction that
+  erases them, so the log lists what was actually deleted rather than what was
+  there a moment earlier.
+
+  `compress()` hard-deleted every source episode through the store, bypassing
+  the event-emitting `forget()`, while emitting a `memory_written` for each
+  summary it created. A run therefore appeared in the log as pure creation,
+  with the deletions invisible, which is the one direction an audit log must
+  not be wrong in. Each deleted source now emits a `memory_forgotten` naming
+  the summary that replaced it, which is the only link left between the two
+  halves once the original is gone.
+
+  No new event type. Compression is genuinely "N memories replaced by one" and
+  none of the four types engram is registered for names that, but a creation
+  plus N deletions that point at it describes the run without inventing a
+  fifth type, and the registry in agent-passport SPEC.md §6.2 is not this
+  repo's to change.
 - **Episodes written before v2.1 are indexed for full-text search on the next
   open.** They never were. The backfill that was supposed to do it filtered on
   `rowid NOT IN (SELECT rowid FROM fts_episodes)`, and `fts_episodes` is an

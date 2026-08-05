@@ -794,7 +794,7 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (477 tests, 484 with the encryption extra)
+### Test coverage (484 tests, 491 with the encryption extra)
 
 ```
 tests/
@@ -826,7 +826,8 @@ tests/
   test_mcp_server.py     MCP server (engram-mcp): remember/recall/why/forget/stats,
                           agent pooling, procedural rejection, reflect() not exposed
   test_events.py         Agent Passport NDJSON event exporter: schema validation,
-                          fail-open on I/O error, skip-on-empty agent_id, off-by-default
+                          fail-open on I/O error, skip-on-empty agent_id, off-by-default,
+                          bulk and cascade paths (observe_many, forget_entity, compress)
   test_benchmarks.py     benchmark infrastructure
 ```
 
