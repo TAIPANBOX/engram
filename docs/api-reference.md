@@ -23,7 +23,7 @@ mem = Engram(
         threshold=0.1, # Prune memories below this importance during reflect().
     ),
     llm=AnthropicAdapter(),  # optional; used by reflect() and compress()
-    agent_id="my-agent",     # optional; scopes writes and reads to this agent
+    agent_id="agent://acme.example/my-agent",  # optional; scopes writes and reads
     key="passphrase",        # optional; enables SQLCipher encryption-at-rest
     events_path="./agent.events.ndjson",  # optional; see Agent Passport events below
 )
@@ -51,7 +51,10 @@ with Engram(path=":memory:") as mem:
 > emits one `reflection_run` event (`info`) plus one `contradiction_found`
 > event (`medium`) per fact it supersedes with a differing object (a
 > same-object re-extraction supersedes silently, as agreement). Events with no `agent_id` set on
-> the instance are skipped, never fabricated. A local file append is not a
+> the instance are skipped, never fabricated; an `agent_id` that is not an
+> `agent://<trust-domain>/<name>` URI is written, warned about once and counted
+> (`EventLog.nonconforming_agent_id`), because a consumer validating the shared
+> envelope will reject those lines. A local file append is not a
 > network call, so this does not violate Engram's write-time invariant - see
 > `engram/events.py` for the full reasoning. Failures to write an event are
 > logged as a warning and never raised into the memory operation. Each event
@@ -451,11 +454,11 @@ any other MCP host:
 
 ```bash
 engram-mcp --db ./agent.engram
-engram-mcp --db ./agent.engram --agent-id my-agent   # scope the default agent
+engram-mcp --db ./agent.engram --agent-id agent://acme.example/my-agent   # scope the default agent
 engram-mcp --db ./agent.engram --events ./agent.events.ndjson  # opt in to Agent Passport events
 
 # equivalently, via environment variables
-ENGRAM_MCP_DB=./agent.engram ENGRAM_MCP_AGENT_ID=my-agent ENGRAM_MCP_EVENTS=./agent.events.ndjson engram-mcp
+ENGRAM_MCP_DB=./agent.engram ENGRAM_MCP_AGENT_ID=agent://acme.example/my-agent ENGRAM_MCP_EVENTS=./agent.events.ndjson engram-mcp
 ```
 
 If `--db`/`ENGRAM_MCP_DB` is omitted, the server falls back to an in-memory
@@ -483,7 +486,7 @@ A few things worth calling out:
   server and would break the "no network calls at write time" guarantee every
   other tool here upholds. Run reflection out-of-band - `engram reflect` (CLI)
   or `mem.reflect_async()` (library) - against the same `.engram` file.
-- **`agent_id` is an opaque string.** Agent Passport `agent://...` URIs are accepted as-is and used verbatim as the scoping key - Engram does not parse, resolve, or validate them.
+- **`agent_id` is an opaque string to the store, and a shape to the event log.** Any string is accepted and used verbatim as the scoping key: Engram does not parse or resolve it, and never refuses a store over it. With `--events` on, an id that is not an `agent://<trust-domain>/<name>` URI (the envelope schema's own `agent_id` pattern) produces lines a validating consumer rejects, so it is warned about once per id and counted in `EventLog.nonconforming_agent_id`. The events are still written: a wire mismatch you can see beats an event log that silently stopped.
 
 Add to your MCP client's config (e.g. `claude_desktop_config.json`):
 

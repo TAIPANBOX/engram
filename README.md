@@ -659,9 +659,11 @@ Multiple agents can read and write to the same `.engram` file. Episodes are scop
 ```python
 from engram import Engram
 
-# Each agent has its own episode scope
-planner = Engram(path="./team.engram", agent_id="planner")
-coder   = Engram(path="./team.engram", agent_id="coder")
+# Each agent has its own episode scope. The id is an opaque key to the store,
+# and an `agent://<trust-domain>/<name>` identifier is what the Agent Passport
+# event log needs, so writing it that way from the start costs nothing.
+planner = Engram(path="./team.engram", agent_id="agent://acme.example/planner")
+coder   = Engram(path="./team.engram", agent_id="agent://acme.example/coder")
 
 planner.observe("Decided to migrate to PostgreSQL", tags=["arch"])
 coder.observe("Started migration branch: feat/pg-migration", tags=["dev"])
@@ -674,7 +676,8 @@ all_results = planner.recall("migration", k=10, cross_agent=True)
 
 # Inspect who's written to the shared file
 with Engram(path="./team.engram") as global_view:
-    print(global_view.list_agents())  # ['coder', 'planner']
+    # ['agent://acme.example/coder', 'agent://acme.example/planner']
+    print(global_view.list_agents())
 
 planner.close()
 coder.close()
@@ -762,7 +765,7 @@ engram forget ./agent.engram --entity Ivan
 engram list-agents ./team.engram
 
 # Recall scoped to one agent
-engram recall ./team.engram "migration" --agent-id coder
+engram recall ./team.engram "migration" --agent-id agent://acme.example/coder
 ```
 
 ---
@@ -794,7 +797,7 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (484 tests, 491 with the encryption extra)
+### Test coverage (492 tests, 499 with the encryption extra)
 
 ```
 tests/
@@ -826,8 +829,9 @@ tests/
   test_mcp_server.py     MCP server (engram-mcp): remember/recall/why/forget/stats,
                           agent pooling, procedural rejection, reflect() not exposed
   test_events.py         Agent Passport NDJSON event exporter: schema validation,
-                          fail-open on I/O error, skip-on-empty agent_id, off-by-default,
-                          bulk and cascade paths (observe_many, forget_entity, compress)
+                          fail-open on I/O error, skip-on-empty agent_id, warn-on-
+                          nonconforming agent_id, off-by-default, bulk and cascade
+                          paths (observe_many, forget_entity, compress)
   test_benchmarks.py     benchmark infrastructure
 ```
 

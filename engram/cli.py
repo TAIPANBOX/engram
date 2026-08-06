@@ -263,7 +263,12 @@ def _build_parser() -> argparse.ArgumentParser:
             default=None,
             metavar="ID",
             dest="agent_id",
-            help="scope this operation to a named agent",
+            help=(
+                "scope this operation to a named agent. Any string works as a "
+                "scoping key; use an agent://<trust-domain>/<name> identifier "
+                "if this store also writes an Agent Passport event log, whose "
+                "schema requires that shape"
+            ),
         )
 
     # inspect

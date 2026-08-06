@@ -8,7 +8,7 @@ and ``stats``.
 
 Run with::
 
-    engram-mcp --db ./agent.engram --agent-id my-agent
+    engram-mcp --db ./agent.engram --agent-id agent://acme.example/my-agent
     ENGRAM_MCP_DB=./agent.engram python -m engram.mcp_server
 
 Pass ``--events ./events.ndjson`` (or set ``ENGRAM_MCP_EVENTS``) to opt in to
@@ -448,9 +448,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         metavar="AGENT_ID",
         dest="agent_id",
         help=(
-            "default agent scope for this server. Any string is accepted, "
-            "including Agent Passport 'agent://...' URIs, which are treated "
-            "as opaque identifiers (env: ENGRAM_MCP_AGENT_ID)"
+            "default agent scope for this server. Any string is accepted and "
+            "used as an opaque scoping key, but with --events on, an id that "
+            "is not an 'agent://<trust-domain>/<name>' URI produces event "
+            "lines the shared envelope's own schema rejects, and is warned "
+            "about once (env: ENGRAM_MCP_AGENT_ID)"
         ),
     )
     parser.add_argument(
