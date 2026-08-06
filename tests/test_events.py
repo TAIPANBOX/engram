@@ -1,10 +1,16 @@
 """Tests for engram.events and its wiring into Engram's write/reflect paths.
 
 Schema validation uses a vendored copy of the Agent Passport
-``agent-event.schema.json`` (see ``tests/fixtures/agent-event.schema.json``,
-copied from ``TAIPANBOX/agent-passport`` -- SPEC.md §6). Vendored rather than
-fetched at test time: CI checks out only this repo, and validating a wire
-contract should never depend on a live network call.
+``agent-event.v0.2.schema.json`` (see
+``tests/fixtures/agent-event.v0.2.schema.json``, copied byte for byte from
+``TAIPANBOX/agent-passport`` -- SPEC.md §6). Vendored rather than fetched at
+test time: CI checks out only this repo, and validating a wire contract should
+never depend on a live network call.
+
+The copy carries the canonical file's NAME as well as its bytes, because
+agent-passport owns two of them: ``agent-event.schema.json`` is v0.1 and
+``agent-event.v0.2.schema.json`` is v0.2. A copy of the second under the name
+of the first is a file that can never be compared with its original.
 """
 
 from __future__ import annotations
@@ -19,9 +25,9 @@ import jsonschema
 import pytest
 
 from engram import Engram, ObserveInput, StubLLMAdapter
-from engram.events import EventLog, canonicalize, chain_hash, resolve_events_path
+from engram.events import SCHEMA, EventLog, canonicalize, chain_hash, resolve_events_path
 
-_SCHEMA_PATH = Path(__file__).parent / "fixtures" / "agent-event.schema.json"
+_SCHEMA_PATH = Path(__file__).parent / "fixtures" / "agent-event.v0.2.schema.json"
 _SCHEMA = json.loads(_SCHEMA_PATH.read_text())
 
 _AGENT_ID = "agent://acme-bank.example/support/tier1-bot"
@@ -149,7 +155,7 @@ def test_observe_emits_valid_memory_written_episodic(tmp_path) -> None:
     assert event["type"] == "memory_written"
     assert event["severity"] == "info"
     assert event["source"] == "engram"
-    assert event["schema"] == "taipanbox.dev/agent-event/v0.1"
+    assert event["schema"] == "taipanbox.dev/agent-event/v0.2"
     assert event["agent_id"] == _AGENT_ID
     assert event["data"] == {"memory_id": episode_id, "kind": "episodic"}
     assert "prev_hash" not in event
@@ -290,6 +296,84 @@ def test_no_llm_reflect_emits_no_contradiction_event(tmp_path) -> None:
 
     events = _read_ndjson(events_path)
     assert all(e["type"] != "contradiction_found" for e in events)
+
+
+# ------------------------------------------------------------------
+# The envelope version this build speaks (SPEC.md §6.4)
+# ------------------------------------------------------------------
+#
+# Engram was the last emitter on v0.1; heraldyx, agent-stack-go, mockryx,
+# verdryx and genaryx were already on v0.2. SPEC.md §6.4 permits an existing
+# emitter to stay on v0.1 forever, so this is not a violation being fixed. It
+# is one dialect instead of two.
+
+#: v0.1's ``agent_id`` constraints, as literals. v0.1 is published and frozen,
+#: and this repo no longer vendors it, so the only honest way to compare the
+#: two versions is to write the older one down.
+_V0_1_AGENT_ID_PATTERN = "^agent://[a-z0-9.-]+/[a-z0-9._/-]+$"
+_V0_1_AGENT_ID_MAX_LENGTH = 255
+
+
+def test_the_vendored_schema_is_the_v0_2_contract_engram_now_speaks() -> None:
+    """The module constant and the contract file are two statements of one
+    fact, so hold them equal rather than trusting a reader to notice."""
+    assert SCHEMA == "taipanbox.dev/agent-event/v0.2"
+    assert _SCHEMA["properties"]["schema"]["const"] == SCHEMA
+    assert "/v0.2/" in _SCHEMA["$id"]
+    # SPEC.md §6.4: the versions differ in exactly one field. v0.1 closed
+    # `source` to four names; v0.2 opens it. A vendored file still carrying the
+    # enum is a v0.1 schema wearing a v0.2 const.
+    assert "enum" not in _SCHEMA["properties"]["source"]
+
+
+def test_the_agent_id_rule_is_the_same_under_v0_2_as_it_was_under_v0_1() -> None:
+    """Why the version move does not reopen the warn-rather-than-refuse
+    decision. That decision was made against a rule, and this is the check
+    that the rule did not move underneath it: an id v0.1 rejected, v0.2
+    rejects, by the same pattern and the same cap. A later version that
+    tightens either fails here, which is where it should be argued again.
+    """
+    agent_id = _SCHEMA["properties"]["agent_id"]
+    assert agent_id["pattern"] == _V0_1_AGENT_ID_PATTERN
+    assert agent_id["maxLength"] == _V0_1_AGENT_ID_MAX_LENGTH
+
+
+def test_every_envelope_version_this_project_documents_is_the_one_it_emits() -> None:
+    """A consumer reads the docs to learn which version arrives, and SPEC.md
+    §6.4 makes that a real question rather than a formality: both versions are
+    valid on the wire, so a stale sentence here is not obviously wrong to
+    anybody. It fails on the next bump instead of in somebody's ingest.
+
+    Refuses when it finds nothing, because a check that goes green once its
+    subject has vanished is worse than no check at all.
+
+    A sentence about an OLDER version names it as v0.1 rather than spelling the
+    whole identifier out, so the only full ``taipanbox.dev/agent-event/...``
+    string in the docs stays the one this build actually writes.
+    """
+    stated = re.compile(r"taipanbox\.dev/agent-event/v[0-9.]+")
+    documented = ("README.md", "docs/api-reference.md", "GETTING_STARTED.md", "DATA_FLOW.md")
+
+    found: list[str] = []
+    offenders: list[str] = []
+    for doc in documented:
+        path = Path(doc)
+        if not path.exists():
+            continue
+        for version in stated.findall(path.read_text()):
+            found.append(f"{doc}: {version}")
+            if version != SCHEMA:
+                offenders.append(f"{doc}: {version}")
+
+    assert found, (
+        "no documented file names the envelope version, so this check measured "
+        f"nothing. One of {', '.join(documented)} must say which version a "
+        "consumer receives."
+    )
+    assert not offenders, (
+        f"these say engram emits an envelope version it does not emit ({SCHEMA}): "
+        + "; ".join(offenders)
+    )
 
 
 # ------------------------------------------------------------------
@@ -518,6 +602,54 @@ def test_reopened_event_log_resumes_the_chain(tmp_path) -> None:
     events = _read_ndjson(events_path)
     assert len(events) == 3
     assert events[2]["prev_hash"] == chain_hash(events[1])
+
+
+def test_a_chain_written_under_v0_1_continues_under_v0_2(tmp_path) -> None:
+    """The upgrade case, and the reason it is a continuation rather than a
+    restart.
+
+    ``schema`` sits inside the envelope, so it sits inside the canonical bytes
+    and therefore inside the hash. What it does NOT sit inside is the rule:
+    line N's ``prev_hash`` is the hash of line N-1 whatever either line
+    declares, so the link across the version boundary verifies like any other.
+
+    Restarting instead would mean writing a head line at exactly the point an
+    upgrade happened, and a head line is where a verifier stops being able to
+    tell a legal restart from a truncation (agent-stack-go's ``VerifyChain``
+    reports them separately and calls neither a break). Deleting evidence at
+    the one moment somebody might want it is a strange way to keep an audit
+    log, and nothing is gained: the old lines stay valid, v0.1 and v0.2 are
+    both accepted by every consumer in the estate (SPEC.md §6.4), and one file
+    stays one chain.
+
+    The v0.1 line is deliberately not schema-validated here. This repo vendors
+    only the version it emits, and validating the older half of a mixed file is
+    the consumer's job, which is what makes it a consumer's job to accept both.
+    """
+    events_path = tmp_path / "events.ndjson"
+    v0_1_line = {
+        "schema": "taipanbox.dev/agent-event/v0.1",
+        "ts": "2026-08-06T12:00:00.000Z",
+        "source": "engram",
+        "type": "memory_written",
+        "severity": "info",
+        "agent_id": _AGENT_ID,
+        "data": {"memory_id": "written-before-the-upgrade", "kind": "episodic"},
+    }
+    events_path.write_text(json.dumps(v0_1_line, separators=(",", ":")) + "\n")
+
+    EventLog(events_path).emit("memory_written", _AGENT_ID, {"memory_id": "b", "kind": "episodic"})
+
+    events = _read_ndjson(events_path)
+    assert len(events) == 2
+    assert events[0]["schema"] == "taipanbox.dev/agent-event/v0.1"
+    assert events[1]["schema"] == "taipanbox.dev/agent-event/v0.2"
+    _validate(events[1])
+    # A continuation, not a restart: the new line carries a prev_hash at all,
+    # and it is the hash of the v0.1 line that precedes it.
+    assert "prev_hash" in events[1]
+    assert events[1]["prev_hash"] == chain_hash(events[0])
+    assert events[1]["prev_hash"] == chain_hash(v0_1_line)
 
 
 def test_malformed_tail_starts_a_fresh_chain(tmp_path) -> None:

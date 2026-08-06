@@ -43,6 +43,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GETTING_STARTED.md, docs/api-reference.md, `engram/cli.py` and
   `engram/mcp_server.py` for the next one, so an example added later with a
   bare name fails here rather than in somebody's ingest.
+- **Events are emitted as `taipanbox.dev/agent-event/v0.2`, so the estate
+  speaks one envelope version.** Engram was the last emitter still writing
+  v0.1; heraldyx, agent-stack-go, mockryx, verdryx and genaryx were all on
+  v0.2. Nothing was broken: SPEC.md §6.4 explicitly permits an emitter already
+  on v0.1 to stay there, and both versions remain valid on the wire. Two
+  dialects were simply being kept alive for no reason anybody could state.
+
+  The versions differ in exactly one field. v0.1 closed `source` to four
+  names, v0.2 opens it to any non-empty string; every other field, including
+  `severity` and the `agent_id` pattern, is identical. Engram's `source` is
+  the constant `"engram"`, so no line this project writes changes shape. The
+  vendored copy of the contract moves with it: what was
+  `tests/fixtures/agent-event.schema.json` is now
+  `tests/fixtures/agent-event.v0.2.schema.json`, agent-passport's
+  `schemas/agent-event.v0.2.schema.json` byte for byte. It carries the
+  canonical file's name as well as its bytes, because agent-passport owns two
+  of them and a copy of one under the name of the other can never be compared
+  with its original.
+
+  **An existing events file continues its chain across the change, it does not
+  restart.** `schema` sits inside the envelope, so it sits inside the RFC 8785
+  canonical bytes and inside every hash; what it does not sit inside is the
+  rule. A `prev_hash` is the hash of the line before it whatever version
+  either line declares, so the first v0.2 line links to the last v0.1 line and
+  verifies like any other pair, and `EventLog` resumes from the tail exactly
+  as it always did. Restarting instead would write a chain head at precisely
+  the moment of an upgrade, and a head is where a verifier stops being able to
+  tell a legal restart from a truncation, so it would spend evidence and buy
+  nothing. Measured rather than reasoned: a real file with a v0.1 tail and two
+  v0.2 lines appended by this build passes `agent-conform -chain` with
+  "2 chained, 1 head(s)" and no break, on 2026-08-06. `agent-conform` was
+  built from agent-stack-go at `03b67eb`, offline, with
+  `GOPROXY=off go build ./cmd/agent-conform`.
+  `test_a_chain_written_under_v0_1_continues_under_v0_2` holds the same
+  property in the suite.
+
+  **The pinned cross-language vectors did not move, and that is worth stating
+  because it is the thing a reader assumes did.**
+  `agent-stack-go/event/testdata/chain-vectors.json`, copied as literal
+  constants into this repo's tests and into verdryx's and tokenfuse's, already
+  carried v0.2 events before this change. Canonicalization and chaining are
+  version-agnostic anyway: they hash whatever object they are handed. So no
+  vector changed here and no other repository has to change with this one.
+
+  **The `agent_id` decision above is unchanged, and this is why.** That
+  decision, to warn rather than refuse, was made against a rule, and the rule
+  did not move: v0.1 and v0.2 carry the same
+  `^agent://[a-z0-9.-]+/[a-z0-9._/-]+$` pattern and the same 255-character
+  cap, so an id rejected before is rejected now, in the same place, for the
+  same reason. Nothing about the version makes an empty event log a better
+  outcome for the caller who needs to see the problem.
+  `test_the_agent_id_rule_is_the_same_under_v0_2_as_it_was_under_v0_1`
+  compares the vendored schema with v0.1's published values, so a later
+  version that tightens either one has to be argued for rather than absorbed.
+
+  The README and `docs/api-reference.md` now name the version a consumer
+  receives, and
+  `test_every_envelope_version_this_project_documents_is_the_one_it_emits`
+  holds them to it and refuses if it finds no version stated at all, since a
+  check that goes green once its subject has vanished is worse than no check.
+
+  One thing this change found and did not fix: the previously vendored v0.1
+  fixture had already drifted from agent-passport's copy of the same file. It
+  was missing the `"maxItems": 32` bound on `on_behalf_of` and most of that
+  field's description, both added upstream on 2026-08-06. Nothing in this
+  repository compares a vendored schema with the canonical one, which is why
+  the drift was invisible; agent-stack-go holds the same property with
+  `scripts/schemas-in-sync.sh` against a sibling checkout, and doing that here
+  is a CI decision rather than an edit.
 
 ### Fixed
 - **The MCP `stats` tool mixed two scopes in one response and said nothing

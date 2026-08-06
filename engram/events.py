@@ -1,11 +1,21 @@
 """Opt-in NDJSON exporter for Agent Passport events.
 
-See ``agent-passport/SPEC.md`` §6 and ``schemas/agent-event.schema.json`` in
-the sibling ``TAIPANBOX/agent-passport`` repo for the wire format this module
-implements. Engram is the ``source: "engram"`` emitter in that shared
+See ``agent-passport/SPEC.md`` §6 and ``schemas/agent-event.v0.2.schema.json``
+in the sibling ``TAIPANBOX/agent-passport`` repo for the wire format this
+module implements. Engram is the ``source: "engram"`` emitter in that shared
 envelope: every event written here lets the surrounding governance stack
 (TokenFuse / Idryx / Qryx) observe what Engram remembered, forgot, or
 flagged, without any of those products depending on Engram's internals.
+
+Envelope version: v0.2 (SPEC.md §6.4)
+--------------------------------------
+This module emitted v0.1 until 2026-08-06 and now emits v0.2, which is what
+every other emitter in the estate already spoke. §6.4 permits a v0.1 emitter
+to stay on v0.1 indefinitely, so nothing here was broken; two dialects were
+simply being maintained for no reason. The versions differ in exactly one
+field: ``source`` was a closed four-name enum in v0.1 and is an open string in
+v0.2. Engram's own ``source`` is a constant, so nothing this module writes
+changes shape, and consumers MUST accept both versions either way.
 
 Why this does not violate "no network calls at write time"
 ------------------------------------------------------------
@@ -50,6 +60,15 @@ stores that have worked for two releases over a rule that belongs to the wire
 rather than to the file. Losing fidelity in an event log a consumer rejects is
 recoverable; a caller who cannot open their own store is not.
 
+The move to v0.2 does not reopen that. v0.1 and v0.2 carry the SAME
+``agent_id`` pattern and the same 255-character cap, so an id that failed
+validation before fails it now, in the same place, for the same reason, and
+every argument made against refusing is untouched by the version. Held rather
+than remembered:
+``test_the_agent_id_rule_is_the_same_under_v0_2_as_it_was_under_v0_1``
+compares the vendored schema against v0.1's published values, so a later
+version that tightens either one has to be argued for here again.
+
 Event types and severities (fixed mapping, per SPEC.md §6.2 "engram" row)
 ---------------------------------------------------------------------------
 =====================  ========  ==============================================
@@ -73,6 +92,15 @@ starting a new one, so one file stays one chain across process restarts.
 Resuming is fail-open like the rest of this module: an absent, empty, or
 malformed tail starts a fresh chain rather than blocking construction.
 
+``schema`` is a field of the envelope, so it is part of the canonical bytes
+and part of every hash. The rule is not: line N's ``prev_hash`` is the hash of
+line N-1 whatever version either line declares, so a v0.2 event appended to a
+file whose tail is v0.1 links to it and verifies exactly like any other pair.
+An existing file therefore CONTINUES across the version change rather than
+restarting. Restarting would write a head line at precisely the moment of an
+upgrade, and a head line is where a verifier stops being able to distinguish a
+legal restart from a truncation, so it would cost evidence and buy nothing.
+
 This is tamper-EVIDENCE, not tamper-proof: it makes a dropped or edited
 line detectable, not impossible for an attacker who can rewrite the whole
 file. Verify a file with ``agent-conform -chain <file>``.
@@ -95,8 +123,10 @@ import rfc8785
 
 logger = logging.getLogger(__name__)
 
-#: Schema identifier for the envelope this module emits. See SPEC.md §6.
-SCHEMA = "taipanbox.dev/agent-event/v0.1"
+#: Schema identifier for the envelope this module emits. See SPEC.md §6 and,
+#: for why this is v0.2 and what that did and did not change, §6.4 and the
+#: module docstring above.
+SCHEMA = "taipanbox.dev/agent-event/v0.2"
 
 #: This module's fixed ``source`` value in the shared envelope.
 SOURCE = "engram"
@@ -116,11 +146,12 @@ EVENT_SEVERITY: dict[str, Severity] = {
 ENV_EVENTS_PATH = "ENGRAM_EVENTS_PATH"
 
 #: SPEC.md §3.1 grammar for a canonical agent identifier, and the envelope
-#: schema's own ``agent_id`` constraints (``agent-event.schema.json``:
-#: ``pattern`` plus ``maxLength``). Written here as well as in the schema
-#: because this module needs it at runtime and the schema is a vendored copy
-#: of somebody else's file; ``test_the_grammar_here_is_the_one_in_the_schema``
-#: holds the two equal so they cannot drift.
+#: schema's own ``agent_id`` constraints (``agent-event.v0.2.schema.json``:
+#: ``pattern`` plus ``maxLength``, unchanged from v0.1). Written here as well
+#: as in the schema because this module needs it at runtime and the schema is
+#: a vendored copy of somebody else's file;
+#: ``test_the_grammar_here_is_the_one_in_the_schema`` holds the two equal so
+#: they cannot drift.
 AGENT_ID_PATTERN = re.compile(r"^agent://[a-z0-9.-]+/[a-z0-9._/-]+$")
 AGENT_ID_MAX_LENGTH = 255
 
@@ -131,7 +162,9 @@ def is_canonical_agent_id(agent_id: str) -> bool:
     This is a question about the WIRE, not about the store. Engram scopes
     rows in a local SQLite file by this string and does not care what shape
     it has; a consumer reading the NDJSON event log validates it against
-    ``agent-event.schema.json`` and rejects the line if it does not match.
+    ``agent-event.v0.2.schema.json`` and rejects the line if it does not
+    match. The answer is the same under either schema version: v0.1 and v0.2
+    carry the identical pattern and cap.
     """
     return len(agent_id) <= AGENT_ID_MAX_LENGTH and AGENT_ID_PATTERN.match(agent_id) is not None
 

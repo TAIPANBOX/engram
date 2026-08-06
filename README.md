@@ -117,7 +117,7 @@ flowchart TB
 ```
 
 - **Consumes**: agent observations (`observe()`).
-- **Produces**: `source: engram` events and `why()` provenance, opt-in via the Agent Passport `agent-event` envelope.
+- **Produces**: `source: engram` events and `why()` provenance, opt-in via the Agent Passport `agent-event` envelope, schema `taipanbox.dev/agent-event/v0.2`.
 - **Talks to**: **TokenFuse** (reflection's LLM adapter can point `base_url` at TokenFuse); governed by the **agent-passport** `agent://` scope.
 
 The full stack is TokenFuse (spend), Wardryx (policy), Engram (memory), Idryx (access), Qryx (crypto), Verdryx (quality), Mockryx (pre-prod) and heraldyx (the mail out), on the shared Agent Passport + agent-event contract (agent-stack-go / agent-passport), configured via terraform-provider-taipan and driven from Genaryx, the console over all of it. Trailryx, the record plane, is built and not wired into this yet.
@@ -797,7 +797,7 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (506 tests, 513 with the encryption extra)
+### Test coverage (510 tests, 517 with the encryption extra)
 
 ```
 tests/
@@ -831,7 +831,8 @@ tests/
   test_events.py         Agent Passport NDJSON event exporter: schema validation,
                           fail-open on I/O error, skip-on-empty agent_id, warn-on-
                           nonconforming agent_id, off-by-default, bulk and cascade
-                          paths (observe_many, forget_entity, compress)
+                          paths (observe_many, forget_entity, compress), the v0.2
+                          envelope version and a chain that continues across it
   test_gates_are_wired.py  the gate scripts run in the workflows that ship
   test_benchmarks.py     benchmark infrastructure
 ```
