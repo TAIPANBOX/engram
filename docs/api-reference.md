@@ -40,7 +40,8 @@ with Engram(path=":memory:") as mem:
 > **Agent Passport events:** pass `events_path="..."` (or set
 > `ENGRAM_EVENTS_PATH`) to opt in to an NDJSON event log conforming to the
 > [Agent Passport](https://github.com/TAIPANBOX/agent-passport) `agent-event`
-> envelope (SPEC.md §6). Off by default - no file is written unless
+> envelope (SPEC.md §6), schema `taipanbox.dev/agent-event/v0.2`. Off by
+> default - no file is written unless
 > configured. `observe()`, `observe_many()`, `assert_fact()`, `forget()`,
 > `forget_fact()` and `forget_entity()` each emit one
 > `memory_written`/`memory_forgotten` event per memory written or erased
@@ -60,6 +61,9 @@ with Engram(path=":memory:") as mem:
 > logged as a warning and never raised into the memory operation. Each event
 > also carries a SPEC.md §6.5 `prev_hash` chain (one file, one chain,
 > resumed across restarts) - verify with `agent-conform -chain <file>`.
+> An events file written by an earlier release keeps its v0.1 lines and is
+> appended to, never restarted: the chain links across the version change like
+> any other line, and a consumer accepts both versions (SPEC.md §6.4).
 
 ---
 
