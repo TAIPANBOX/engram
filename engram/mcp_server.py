@@ -309,6 +309,24 @@ def _stats(pool: _EngramPool, agent_id: str | None = None) -> dict[str, Any]:
         "facts_superseded": facts_total - facts_active,
         "entities": store.entity_count(),
         "reflections": store.reflection_count(),
+        # Which numbers above are about THIS agent and which are about the
+        # file. Both kinds are correct and they read identically, which is
+        # how a caller passing agent_id came away thinking the whole store
+        # was theirs: episodes were scoped and everything beside them was
+        # not. The scoped ones are now scoped (see Store.vec_count and
+        # Store.reflection_count); facts and entities carry no agent_id and
+        # are shared by design (CHANGELOG 2.2.0, 2.2.1), so they are named
+        # here rather than quietly left to be misread.
+        "scope": {
+            "scoped_to_agent": ["episodic", "vector_index_size", "reflections"],
+            "shared_across_agents": [
+                "semantic",
+                "facts_total",
+                "facts_active",
+                "facts_superseded",
+                "entities",
+            ],
+        },
         "db_path": pool.db_path,
         "db_size_bytes": db_size_bytes,
     }
@@ -359,7 +377,12 @@ _FORGET_DESCRIPTION = (
 _STATS_DESCRIPTION = (
     "Return store statistics: memory counts per kind (episodic, semantic, "
     "procedural), fact validity breakdown (active vs superseded), entity "
-    "and reflection-run counts, and the database file size in bytes."
+    "and reflection-run counts, and the database file size in bytes. "
+    "The response's 'scope' object says which of those numbers are about "
+    "the requested agent (episodic, vector_index_size, reflections) and "
+    "which are about the whole file, shared across every agent in it "
+    "(semantic, facts_total, facts_active, facts_superseded, entities). "
+    "Do not report a shared number as if it belonged to one agent."
 )
 
 

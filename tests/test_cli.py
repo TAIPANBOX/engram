@@ -276,3 +276,26 @@ def test_help_flag(capsys):
     assert "timeline" in out
     assert "reflect" in out
     assert "forget" in out
+
+
+def test_inspect_says_which_numbers_are_the_agents_own(tmp_path, capsys):
+    """`inspect --agent-id` prints a mix of scoped and shared numbers, and
+    said nothing about which was which until 2026-08-05."""
+    from engram import Engram
+
+    path = str(tmp_path / "team.engram")
+    with Engram(path=path, agent_id="agent://acme.example/planner") as planner:
+        planner.observe("planned the migration")
+        planner.assert_fact("Ivan", "works_at", "Globex")
+    with Engram(path=path, agent_id="agent://acme.example/coder") as coder:
+        coder.observe("started the branch")
+        coder.observe("opened the pull request")
+
+    main(["inspect", path, "--agent-id", "agent://acme.example/coder"])
+    out = capsys.readouterr().out
+
+    assert "Agent: agent://acme.example/coder" in out
+    assert "shared by every agent in the file" in out
+    # Two episodes and two vectors, this agent's; one fact, everybody's.
+    assert "Episodes:            2   (vec index: 2)" in out
+    assert "Facts:               1" in out

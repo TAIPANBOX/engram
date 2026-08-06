@@ -44,6 +44,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `engram/mcp_server.py` for the next one, so an example added later with a
   bare name fails here rather than in somebody's ingest.
 
+### Fixed
+- **The MCP `stats` tool mixed two scopes in one response and said nothing
+  about it.** `episode_count()` is scoped to the instance's `agent_id`;
+  `vec_count()`, `fact_count()`, `active_fact_count()`, `entity_count()` and
+  `reflection_count()` were not. A caller passing `agent_id` got its own
+  episode count next to the whole file's vector index size, fact count, entity
+  count and reflection count, with nothing distinguishing them, and the two
+  kinds read identically.
+
+  Two of those are scopable and are now scoped. `vec_episodes` has `agent_id`
+  as a partition key and is written with the instance's scope, so the index
+  over the episodes now answers at the same scope the episodes do.
+  `reflections` carries an `agent_id`, `insert_reflection()` writes it, and
+  `get_last_reflection()` and `get_last_finished_reflection()` have always
+  filtered on it: the count was the one reflection read that did not, so
+  `stats` could report another agent's runs beside this agent's "last run".
+
+  Facts and entities stay shared, which is the deliberate half. They carry no
+  `agent_id`, 2.2.0 and 2.2.1 both record that they are shared across the
+  agents in one file, and every fact and entity read path is cross-agent, so
+  scoping the counts would disagree with what the same instance can read
+  through `timeline()` and `contradictions()`. Instead the response now
+  carries a `scope` object naming which numbers are the agent's and which are
+  the file's, the tool description tells a model not to report one as the
+  other, and `engram inspect --agent-id` prints the same distinction, since it
+  reads the same counts. A test asserts that every number in the response is
+  classified, so a count added later without a scope fails rather than
+  arriving unlabelled.
 ### Security
 - **`export_json()` is scoped to the calling instance's `agent_id`.** It was
   the read path 2.2.0 and 2.2.1 left open. `Engram(path="./team.engram",

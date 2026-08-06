@@ -165,7 +165,17 @@ def test_repartition_preserves_orphan_vectors(tmp_path) -> None:
     _downgrade_to_flat_vec(path)
 
     with Engram(path=path, agent_id="a") as mem:
-        assert mem._store.vec_count() == 2
+        # Asserted against the table rather than through `vec_count()`, which
+        # is scoped to the instance's agent since 2026-08-05 and would report
+        # 1 here: the orphan is precisely the vector that has NO agent. That
+        # is this test's subject, so it is now named directly instead of
+        # arriving as a side effect of a count that ignored the scope.
+        rows = mem._conn.execute(
+            "SELECT COUNT(*) FROM vec_episodes WHERE agent_id IS NULL"
+        ).fetchone()
+        assert rows[0] == 1, "the orphan lost its NULL partition in the rebuild"
+        assert mem._store.vec_count() == 1
+        assert mem._conn.execute("SELECT COUNT(*) FROM vec_episodes").fetchone()[0] == 2
         assert len(mem.recall("survives", k=5)) == 1
 
 

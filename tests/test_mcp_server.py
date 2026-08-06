@@ -453,3 +453,78 @@ def test_importing_module_does_not_require_mcp_installed(monkeypatch):
 
     module = importlib.import_module("engram.mcp_server")
     assert hasattr(module, "main")
+
+
+# ------------------------------------------------------------------
+# stats: which numbers are about this agent, and which are about the file
+# ------------------------------------------------------------------
+#
+# The defect, found in a read-only audit on 2026-08-05: episode_count() is
+# scoped to the instance's agent_id and vec_count(), fact_count(),
+# active_fact_count(), entity_count() and reflection_count() were not, so one
+# response mixed "yours" and "everybody's" with nothing saying which was
+# which. Facts and entities are shared BY DESIGN (CHANGELOG 2.2.0, 2.2.1) and
+# stay that way; the vector index and the reflection log are per-agent
+# everywhere else in the store and were store-wide only here.
+
+
+def test_stats_vector_index_size_is_about_this_agent(pool):
+    _remember(pool, "for agent a", kind="episodic", agent_id="agent://acme.example/a")
+    for i in range(3):
+        _remember(pool, f"for agent b {i}", kind="episodic", agent_id="agent://acme.example/b")
+
+    stats_a = _stats(pool, agent_id="agent://acme.example/a")
+    stats_b = _stats(pool, agent_id="agent://acme.example/b")
+
+    assert stats_a["vector_index_size"] == stats_a["counts"]["episodic"] == 1
+    assert stats_b["vector_index_size"] == stats_b["counts"]["episodic"] == 3
+
+
+def test_stats_reflections_are_about_this_agent(pool):
+    from engram import StubLLMAdapter
+
+    mem_a = pool.get("agent://acme.example/a")
+    mem_a._llm = StubLLMAdapter(
+        facts=[{"subject": "Alice", "predicate": "role", "object": "CTO", "confidence": 0.9}]
+    )
+    mem_a.observe("Alice is the CTO")
+    mem_a.reflect()
+
+    assert _stats(pool, agent_id="agent://acme.example/a")["reflections"] == 1
+    assert _stats(pool, agent_id="agent://acme.example/b")["reflections"] == 0
+
+
+def test_stats_says_which_numbers_are_shared_and_which_are_not(pool):
+    """Scoping what can be scoped is half of it. The rest of the response is
+    shared on purpose, and a caller cannot tell one from the other by looking
+    at the numbers, so the response says so itself."""
+    _remember(pool, "an episode", kind="episodic", agent_id="agent://acme.example/a")
+    result = _stats(pool, agent_id="agent://acme.example/a")
+
+    scope = result["scope"]
+    assert set(scope["scoped_to_agent"]) == {"episodic", "vector_index_size", "reflections"}
+    assert set(scope["shared_across_agents"]) == {
+        "semantic",
+        "facts_total",
+        "facts_active",
+        "facts_superseded",
+        "entities",
+    }
+
+    # Every number in the response is classified. A count added later without
+    # a scope is exactly the defect this fixes, so it fails here.
+    numbers = {k for k, v in result.items() if isinstance(v, int) and k != "db_size_bytes"}
+    numbers |= set(result["counts"])
+    numbers -= {"procedural"}
+    assert numbers == set(scope["scoped_to_agent"]) | set(scope["shared_across_agents"])
+
+
+def test_an_unscoped_stats_call_still_sees_the_whole_file(pool):
+    """The other direction: scoping the counts must not hide the store from an
+    instance that was never scoped in the first place."""
+    _remember(pool, "for agent a", kind="episodic", agent_id="agent://acme.example/a")
+    _remember(pool, "for agent b", kind="episodic", agent_id="agent://acme.example/b")
+
+    everyone = _stats(pool)
+    assert everyone["counts"]["episodic"] == 2
+    assert everyone["vector_index_size"] == 2

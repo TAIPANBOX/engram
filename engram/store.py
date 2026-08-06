@@ -869,25 +869,66 @@ class Store:
         self._conn.commit()
 
     def vec_count(self) -> int:
-        row: Any = self._conn.execute("SELECT COUNT(*) FROM vec_episodes").fetchone()
+        """Vectors for this instance's agent, or all of them when unscoped.
+
+        The index over the episodes, so it answers at the same scope
+        :meth:`episode_count` does. It counted the whole file until
+        2026-08-05, which put one agent's episode count beside every agent's
+        vector count in the same response with nothing saying so.
+
+        ``agent_id`` is a vec0 partition key, so the filter is resolved
+        inside the scan. Note the partition trap documented on
+        :func:`engram.schema._vec_ddl`: vectors written without an agent live
+        in the NULL partition and are reached by omitting the constraint,
+        which is what an unscoped store does here.
+        """
+        if self._agent_id is not None:
+            row: Any = self._conn.execute(
+                "SELECT COUNT(*) FROM vec_episodes WHERE agent_id = ?", (self._agent_id,)
+            ).fetchone()
+        else:
+            row = self._conn.execute("SELECT COUNT(*) FROM vec_episodes").fetchone()
         return int(row[0])
 
     def fact_count(self) -> int:
+        """Every fact in the file, deliberately.
+
+        Facts carry no ``agent_id`` and are shared across the agents in one
+        store by design (CHANGELOG 2.2.0 and 2.2.1). Scoping this would not
+        be a fix, it would be a different product: every fact read path is
+        cross-agent, and a count that hid them would disagree with what the
+        same instance can read through ``timeline()`` and ``contradictions()``.
+        """
         row: Any = self._conn.execute("SELECT COUNT(*) FROM facts").fetchone()
         return int(row[0])
 
     def active_fact_count(self) -> int:
+        """Facts still in force, across the whole file. See :meth:`fact_count`."""
         row: Any = self._conn.execute(
             "SELECT COUNT(*) FROM facts WHERE valid_to IS NULL AND superseded_at IS NULL"
         ).fetchone()
         return int(row[0])
 
     def entity_count(self) -> int:
+        """Every entity in the file, deliberately. See :meth:`fact_count`."""
         row: Any = self._conn.execute("SELECT COUNT(*) FROM entities").fetchone()
         return int(row[0])
 
     def reflection_count(self) -> int:
-        row: Any = self._conn.execute("SELECT COUNT(*) FROM reflections").fetchone()
+        """Reflection runs by this instance's agent, or all when unscoped.
+
+        The runs table carries an ``agent_id``, :meth:`insert_reflection`
+        writes it, and :meth:`get_last_reflection` and
+        :meth:`get_last_finished_reflection` have always filtered on it. This
+        count was the one reflection read that did not, so ``stats`` could
+        report another agent's runs next to this agent's "last run" line.
+        """
+        if self._agent_id is not None:
+            row: Any = self._conn.execute(
+                "SELECT COUNT(*) FROM reflections WHERE agent_id = ?", (self._agent_id,)
+            ).fetchone()
+        else:
+            row = self._conn.execute("SELECT COUNT(*) FROM reflections").fetchone()
         return int(row[0])
 
     # ------------------------------------------------------------------
