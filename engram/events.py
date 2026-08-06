@@ -34,6 +34,22 @@ logged as a warning, and swallowed. Losing an event is acceptable; losing or
 delaying the memory operation the event describes is not. ``emit`` therefore
 never raises.
 
+``agent_id`` shape: warned about, never refused
+-----------------------------------------------
+The shared envelope requires ``agent_id`` to match SPEC.md §3.1's
+``agent://<trust-domain>/<name>`` grammar (see :func:`is_canonical_agent_id`),
+and Engram's own ``agent_id`` is an opaque scoping key that has never had to
+be one. So an id like ``"planner"`` produces a store that works and lines that
+a consumer validating the envelope rejects.
+
+An id that cannot validate is WARNED about, once per id, counted in
+:attr:`EventLog.nonconforming_agent_id`, and written anyway. Refusing to emit
+would make the event log silently empty for exactly the caller who needs to
+see the problem, and validating in ``Engram.__init__`` would refuse to open
+stores that have worked for two releases over a rule that belongs to the wire
+rather than to the file. Losing fidelity in an event log a consumer rejects is
+recoverable; a caller who cannot open their own store is not.
+
 Event types and severities (fixed mapping, per SPEC.md §6.2 "engram" row)
 ---------------------------------------------------------------------------
 =====================  ========  ==============================================
@@ -68,6 +84,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -97,6 +114,26 @@ EVENT_SEVERITY: dict[str, Severity] = {
 
 #: Environment variable fallback for ``Engram(events_path=...)``.
 ENV_EVENTS_PATH = "ENGRAM_EVENTS_PATH"
+
+#: SPEC.md §3.1 grammar for a canonical agent identifier, and the envelope
+#: schema's own ``agent_id`` constraints (``agent-event.schema.json``:
+#: ``pattern`` plus ``maxLength``). Written here as well as in the schema
+#: because this module needs it at runtime and the schema is a vendored copy
+#: of somebody else's file; ``test_the_grammar_here_is_the_one_in_the_schema``
+#: holds the two equal so they cannot drift.
+AGENT_ID_PATTERN = re.compile(r"^agent://[a-z0-9.-]+/[a-z0-9._/-]+$")
+AGENT_ID_MAX_LENGTH = 255
+
+
+def is_canonical_agent_id(agent_id: str) -> bool:
+    """Report whether *agent_id* is one the shared envelope schema accepts.
+
+    This is a question about the WIRE, not about the store. Engram scopes
+    rows in a local SQLite file by this string and does not care what shape
+    it has; a consumer reading the NDJSON event log validates it against
+    ``agent-event.schema.json`` and rejects the line if it does not match.
+    """
+    return len(agent_id) <= AGENT_ID_MAX_LENGTH and AGENT_ID_PATTERN.match(agent_id) is not None
 
 
 def resolve_events_path(explicit: str | Path | None) -> Path | None:
@@ -234,11 +271,53 @@ class EventLog:
     path: Path
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     skipped_empty_agent_id: int = field(default=0, init=False)
+    #: How many events were written under an ``agent_id`` the envelope schema
+    #: will reject (see :func:`is_canonical_agent_id`). Counted for callers
+    #: that want the number; what an operator actually sees is the warning
+    #: logged the first time each such id is used, not this field.
+    nonconforming_agent_id: int = field(default=0, init=False)
+    _warned_agent_ids: set[str] = field(default_factory=set, init=False, repr=False)
     _next_hash: str | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.path = Path(self.path)
         self._next_hash = _tail_chain_hash(self.path)
+
+    def _note_agent_id(self, agent_id: str, events: int = 1) -> None:
+        """Warn once, count every time, and write the event regardless.
+
+        Refusing to emit was the other candidate and loses on the question
+        that decides it: a caller whose id is the wrong shape has a store
+        that works and an event log that would then be permanently empty,
+        which is the "nobody checked" failure with a second one on top. The
+        line is written, the consumer's own validator is what rejects it, and
+        this is where somebody is told before that happens.
+
+        Once per distinct id, because a write loop must not turn one
+        misconfigured id into a log flood, and the count is what keeps the
+        number true after the warning has been said.
+        """
+        if is_canonical_agent_id(agent_id):
+            return
+        self.nonconforming_agent_id += events
+        if agent_id in self._warned_agent_ids:
+            return
+        # Bounded: this is normally one id per log, but ``emit`` takes the id
+        # per call, so a caller with many of them must not grow this set
+        # without limit. Past the cap the count stays true and the warning
+        # stops repeating, which is the same trade the cap exists for.
+        if len(self._warned_agent_ids) < 64:
+            self._warned_agent_ids.add(agent_id)
+        logger.warning(
+            "engram.events: agent_id %r does not match the Agent Passport grammar "
+            "%s (max %d chars), so consumers that validate the shared envelope will "
+            "reject these lines. The events are still written. Use an "
+            "agent://<trust-domain>/<name> identifier, e.g. "
+            "agent://acme.example/planner.",
+            agent_id,
+            AGENT_ID_PATTERN.pattern,
+            AGENT_ID_MAX_LENGTH,
+        )
 
     def _envelope(
         self,
@@ -293,13 +372,17 @@ class EventLog:
                 Agent Passport ``agent://...`` URI). If ``None`` or empty,
                 the event is skipped and counted in
                 :attr:`skipped_empty_agent_id` -- Engram never fabricates an
-                agent_id to satisfy the envelope's required field.
+                agent_id to satisfy the envelope's required field. If present
+                but not a canonical ``agent://`` identifier, the event is
+                still written, and warned about once and counted in
+                :attr:`nonconforming_agent_id` (see :meth:`_note_agent_id`).
             data: Free-form event payload, owned by the caller.
             run_id: Optional task-execution correlation id.
         """
         if not agent_id:
             self.skipped_empty_agent_id += 1
             return
+        self._note_agent_id(agent_id)
 
         try:
             envelope = self._envelope(event_type, agent_id, data, run_id)
@@ -361,6 +444,7 @@ class EventLog:
             return
         if not data_items:
             return
+        self._note_agent_id(agent_id, events=len(data_items))
 
         try:
             with self._lock:

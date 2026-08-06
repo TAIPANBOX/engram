@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **An `agent_id` the shared envelope cannot accept is warned about, once, and
+  still written.** The vendored `agent-event.schema.json` requires `agent_id`
+  to match `^agent://[a-z0-9.-]+/[a-z0-9._/-]+$` (SPEC.md §3.1) and
+  `EventLog.emit` took any non-empty string and wrote it verbatim, while this
+  README's multi-agent example used `agent_id="planner"`, the CLI advertised
+  `--agent-id ID`, and `engram-mcp --agent-id` accepted anything. So the
+  documented way to use the feature produced lines that fail validation where
+  they are consumed, which is somewhere else, by somebody else, quietly:
+  `docs/api-reference.md` stated the non-validation as deliberate, which made
+  it a contract mismatch rather than an oversight, and left it a mismatch.
+
+  Emitting it and saying so is the strongest thing consistent with what this
+  module is. Refusing to emit would make the event log permanently empty for
+  exactly the caller who needs to see the problem, which is the "nobody
+  checked" failure with a second one on top, and validating in
+  `Engram.__init__` would refuse to open stores that have worked since v1.3
+  over a rule that belongs to the wire and not to the file: `agent_id` is an
+  opaque scoping key for a local SQLite store and has never had to be a URI.
+  Breaking somebody's store is worse than emitting a line a consumer rejects.
+
+  So: the event is written, the id is warned about once per distinct id (a
+  write loop must not turn one misconfigured id into a log flood), and every
+  affected event is counted in `EventLog.nonconforming_agent_id`, beside the
+  `skipped_empty_agent_id` counter that already existed for the empty case.
+  `engram.events.is_canonical_agent_id` is public for callers who want to ask
+  first, and `test_the_grammar_here_is_the_one_in_the_schema` holds the
+  pattern and the 255-character cap equal to the vendored schema's own, so the
+  two copies cannot drift.
+
+  Every documented example now uses an id that validates
+  (`agent://acme.example/planner`), and
+  `test_every_agent_id_this_project_documents_can_validate` scans README.md,
+  GETTING_STARTED.md, docs/api-reference.md, `engram/cli.py` and
+  `engram/mcp_server.py` for the next one, so an example added later with a
+  bare name fails here rather than in somebody's ingest.
+
+### Fixed
+- **The MCP `stats` tool mixed two scopes in one response and said nothing
+  about it.** `episode_count()` is scoped to the instance's `agent_id`;
+  `vec_count()`, `fact_count()`, `active_fact_count()`, `entity_count()` and
+  `reflection_count()` were not. A caller passing `agent_id` got its own
+  episode count next to the whole file's vector index size, fact count, entity
+  count and reflection count, with nothing distinguishing them, and the two
+  kinds read identically.
+
+  Two of those are scopable and are now scoped. `vec_episodes` has `agent_id`
+  as a partition key and is written with the instance's scope, so the index
+  over the episodes now answers at the same scope the episodes do.
+  `reflections` carries an `agent_id`, `insert_reflection()` writes it, and
+  `get_last_reflection()` and `get_last_finished_reflection()` have always
+  filtered on it: the count was the one reflection read that did not, so
+  `stats` could report another agent's runs beside this agent's "last run".
+
+  Facts and entities stay shared, which is the deliberate half. They carry no
+  `agent_id`, 2.2.0 and 2.2.1 both record that they are shared across the
+  agents in one file, and every fact and entity read path is cross-agent, so
+  scoping the counts would disagree with what the same instance can read
+  through `timeline()` and `contradictions()`. Instead the response now
+  carries a `scope` object naming which numbers are the agent's and which are
+  the file's, the tool description tells a model not to report one as the
+  other, and `engram inspect --agent-id` prints the same distinction, since it
+  reads the same counts. A test asserts that every number in the response is
+  classified, so a count added later without a scope fails rather than
+  arriving unlabelled.
+- **`scripts/local-first.sh` could not be run as written on a machine with a
+  virtualenv.** It hardcoded `python3` while `scripts/readme-numbers.sh`
+  prefers `.venv/bin/python`, so the gate ran the system interpreter and died
+  with `ModuleNotFoundError: No module named 'rfc8785'`, reporting "could not
+  warm the embedder, so parts 2 and 3 measured nothing". It passed in CI only
+  because CI installs into the system interpreter and has no `.venv`: green
+  everywhere it was watched, unrunnable everywhere it was written down, and
+  one of the seven gates CLAUDE.md tells a contributor to run. It now uses the
+  same two-line resolution `readme-numbers.sh` uses, verified both ways: with
+  a `.venv` present, and in a checkout without one where `python3` carries the
+  dependencies, which is CI's shape.
+- **The release workflow did not run the gate scripts.** `.github/workflows/
+  release.yml` ran ruff, mypy and pytest before publishing to PyPI and invoked
+  none of `scripts/no-network-at-write.sh`, `scripts/readme-numbers.sh` or
+  `scripts/local-first.sh`. Those three run only in `ci.yml`'s `encryption`
+  job, and `ci.yml` triggers on pushes to main/master and on pull requests,
+  which a tag push is neither. The checks holding invariants 1, 2 and 4,
+  including the one CLAUDE.md calls the invariant engram has paid for most,
+  were absent from the one workflow that ships bytes to users, so a tag could
+  publish a release whose README numbers no longer matched the repository:
+  the exact failure 2.4.1 exists to correct. They now run in the build job,
+  before the distributions are built and therefore before anything is
+  published. No new job, no matrix, no larger runner: on a public repository
+  these runner minutes are free. `tests/test_gates_are_wired.py` holds it,
+  and holds the other direction too, that CI keeps running them.
+
 ### Security
 - **`export_json()` is scoped to the calling instance's `agent_id`.** It was
   the read path 2.2.0 and 2.2.1 left open. `Engram(path="./team.engram",

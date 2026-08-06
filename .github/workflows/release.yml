@@ -2,7 +2,7 @@ name: Release
 
 # Publishes engdbram to PyPI when a v* tag is pushed and validated by CI.
 #
-# This workflow uses PyPI trusted publishing (OIDC) — no long-lived API tokens.
+# This workflow uses PyPI trusted publishing (OIDC), no long-lived API tokens.
 # Configure once at https://pypi.org/manage/account/publishing/ with:
 #   PyPI project:      engdbram
 #   Owner:             TAIPANBOX
@@ -60,6 +60,22 @@ jobs:
           ruff format --check .
           mypy engram
           pytest
+
+      - name: Run the gates before publishing
+        # The three gate scripts ran only in ci.yml's `encryption` job, which a
+        # tag push does not trigger, so the checks holding invariants 1, 2 and 4
+        # (including the one CLAUDE.md calls the invariant engram has paid for
+        # most) were absent from the one workflow that ships bytes to users. A
+        # release could publish a README whose numbers no longer matched the
+        # repository, which is the exact failure 2.4.1 exists to correct.
+        #
+        # local-first.sh downloads the 64 MB embedding model once on a cold
+        # runner and says so. Standard ubuntu-latest runner, no matrix: on a
+        # public repository these minutes are free.
+        run: |
+          ./scripts/no-network-at-write.sh
+          ./scripts/readme-numbers.sh
+          ./scripts/local-first.sh
 
       - name: Build distributions
         run: python -m build

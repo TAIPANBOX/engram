@@ -12,6 +12,7 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import re
 from pathlib import Path
 
 import jsonschema
@@ -532,3 +533,156 @@ def test_malformed_tail_starts_a_fresh_chain(tmp_path) -> None:
     assert len(lines) == 2
     new_event = json.loads(lines[1])
     assert "prev_hash" not in new_event
+
+
+# ------------------------------------------------------------------
+# agent_id shape at the seam
+# ------------------------------------------------------------------
+#
+# The defect, found in a read-only audit on 2026-08-05: the envelope's own
+# schema requires agent_id to match ^agent://[a-z0-9.-]+/[a-z0-9._/-]+$ and
+# emit() accepted any non-empty string and wrote it verbatim, while the
+# README, the CLI and engram-mcp all demonstrated ids that cannot validate.
+# The lines are rejected where they are consumed, which is somewhere else,
+# by somebody else, silently.
+
+
+def test_a_nonconforming_agent_id_is_still_written(tmp_path, caplog) -> None:
+    """The event is not dropped. Refusing to emit would turn a wire-contract
+    mismatch into an empty log for exactly the caller who needs to see it,
+    which is a worse failure than a line a consumer rejects."""
+    events_path = tmp_path / "events.ndjson"
+    log = EventLog(events_path)
+
+    with caplog.at_level(logging.WARNING, logger="engram.events"):
+        log.emit("memory_written", "planner", {"memory_id": "a", "kind": "episodic"})
+
+    events = _read_ndjson(events_path)
+    assert len(events) == 1
+    assert events[0]["agent_id"] == "planner"
+
+
+def test_a_nonconforming_agent_id_is_warned_about_and_counted(tmp_path, caplog) -> None:
+    """Emitting it quietly is what made this invisible. The warning names the
+    id and the grammar, and a counter carries the number for callers."""
+    events_path = tmp_path / "events.ndjson"
+    log = EventLog(events_path)
+
+    with caplog.at_level(logging.WARNING, logger="engram.events"):
+        log.emit("memory_written", "planner", {"memory_id": "a", "kind": "episodic"})
+
+    assert log.nonconforming_agent_id == 1
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings, "a non-conforming agent_id was written with nothing said about it"
+    said = "\n".join(r.getMessage() for r in warnings)
+    assert "planner" in said
+    assert "agent://" in said
+
+
+def test_the_warning_is_said_once_per_id_and_counted_every_time(tmp_path, caplog) -> None:
+    """A write loop must not turn one misconfigured id into a log flood, and
+    the count must still be the truth about how many lines are affected."""
+    events_path = tmp_path / "events.ndjson"
+    log = EventLog(events_path)
+
+    with caplog.at_level(logging.WARNING, logger="engram.events"):
+        for i in range(5):
+            log.emit("memory_written", "planner", {"memory_id": str(i), "kind": "episodic"})
+
+    assert log.nonconforming_agent_id == 5
+    assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
+
+
+def test_emit_many_counts_every_item_it_wrote(tmp_path, caplog) -> None:
+    events_path = tmp_path / "events.ndjson"
+    log = EventLog(events_path)
+
+    with caplog.at_level(logging.WARNING, logger="engram.events"):
+        log.emit_many(
+            "memory_written",
+            "planner",
+            [{"memory_id": str(i), "kind": "episodic"} for i in range(3)],
+        )
+
+    assert log.nonconforming_agent_id == 3
+    assert len(_read_ndjson(events_path)) == 3
+
+
+def test_a_canonical_agent_id_is_neither_warned_about_nor_counted(tmp_path, caplog) -> None:
+    """The guard against a fix that shouts at everybody. This one passed before
+    the change too: nothing was ever wrong with the conforming path."""
+    events_path = tmp_path / "events.ndjson"
+    log = EventLog(events_path)
+
+    with caplog.at_level(logging.WARNING, logger="engram.events"):
+        log.emit("memory_written", _AGENT_ID, {"memory_id": "a", "kind": "episodic"})
+
+    assert log.nonconforming_agent_id == 0
+    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
+
+def test_the_grammar_here_is_the_one_in_the_schema(tmp_path) -> None:
+    """Two copies of a pattern drift. This one is written down twice on
+    purpose (the vendored schema is the contract, the module needs it at
+    runtime), so the test holds them equal rather than trusting them to be."""
+    from engram.events import AGENT_ID_MAX_LENGTH, AGENT_ID_PATTERN
+
+    schema_agent_id = _SCHEMA["properties"]["agent_id"]
+    assert AGENT_ID_PATTERN.pattern == schema_agent_id["pattern"]
+    assert schema_agent_id["maxLength"] == AGENT_ID_MAX_LENGTH
+
+
+def test_a_nonconforming_line_is_rejected_by_the_schema_it_claims_to_speak(tmp_path) -> None:
+    """What the warning is warning about, stated as the consumer states it.
+    The chain is unaffected: the line is well formed, its agent_id is not."""
+    events_path = tmp_path / "events.ndjson"
+    log = EventLog(events_path)
+    log.emit("memory_written", "planner", {"memory_id": "a", "kind": "episodic"})
+
+    event = _read_ndjson(events_path)[0]
+    with pytest.raises(jsonschema.ValidationError):
+        _validate(event)
+    assert chain_hash(event).startswith("sha256:")
+
+
+def test_every_agent_id_this_project_documents_can_validate() -> None:
+    """The examples are the defect's other half: a reader who copies one gets
+    a store that works and an event log nothing downstream will accept.
+
+    Scans the documented ids rather than trusting a sweep to have caught them
+    all, so adding a new example with a bare name fails here rather than in
+    somebody's ingest.
+    """
+    from engram.events import is_canonical_agent_id
+
+    # Quoted literals only, so `agent_id=None`, `agent_id=key` and
+    # `agent_id=getattr(...)` are not mistaken for examples; and command lines
+    # minus their metavars, so `[--agent-id ID]` in a usage string is not read
+    # as somebody's actual id.
+    literals = re.compile(r"""(?<![\w.])agent_id\s*=\s*["']([^"']+)["']""")
+    # An id, not the next word of a sentence about the flag: the character set
+    # here is deliberately wider than the grammar under test, so a bare
+    # "planner" is caught while "(overrides --agent-id scope)" is not.
+    command_lines = re.compile(r"--agent-id[ =]([A-Za-z0-9:/._-]+)(?=[\s,.\]]|$)")
+    documented = (
+        "README.md",
+        "GETTING_STARTED.md",
+        "docs/api-reference.md",
+        "engram/cli.py",
+        "engram/mcp_server.py",
+    )
+
+    offenders: list[str] = []
+    for doc in documented:
+        path = Path(doc)
+        if not path.exists():
+            continue
+        text = path.read_text()
+        found = literals.findall(text) + [c for c in command_lines.findall(text) if not c.isupper()]
+        for candidate in found:
+            if not is_canonical_agent_id(candidate):
+                offenders.append(f"{doc}: {candidate}")
+    assert not offenders, (
+        "these documented agent ids cannot validate against the envelope schema, "
+        "so copying one produces an event log a consumer rejects: " + "; ".join(offenders)
+    )
