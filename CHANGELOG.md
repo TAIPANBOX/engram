@@ -72,6 +72,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads the same counts. A test asserts that every number in the response is
   classified, so a count added later without a scope fails rather than
   arriving unlabelled.
+- **`scripts/local-first.sh` could not be run as written on a machine with a
+  virtualenv.** It hardcoded `python3` while `scripts/readme-numbers.sh`
+  prefers `.venv/bin/python`, so the gate ran the system interpreter and died
+  with `ModuleNotFoundError: No module named 'rfc8785'`, reporting "could not
+  warm the embedder, so parts 2 and 3 measured nothing". It passed in CI only
+  because CI installs into the system interpreter and has no `.venv`: green
+  everywhere it was watched, unrunnable everywhere it was written down, and
+  one of the seven gates CLAUDE.md tells a contributor to run. It now uses the
+  same two-line resolution `readme-numbers.sh` uses, verified both ways: with
+  a `.venv` present, and in a checkout without one where `python3` carries the
+  dependencies, which is CI's shape.
+- **The release workflow did not run the gate scripts.** `.github/workflows/
+  release.yml` ran ruff, mypy and pytest before publishing to PyPI and invoked
+  none of `scripts/no-network-at-write.sh`, `scripts/readme-numbers.sh` or
+  `scripts/local-first.sh`. Those three run only in `ci.yml`'s `encryption`
+  job, and `ci.yml` triggers on pushes to main/master and on pull requests,
+  which a tag push is neither. The checks holding invariants 1, 2 and 4,
+  including the one CLAUDE.md calls the invariant engram has paid for most,
+  were absent from the one workflow that ships bytes to users, so a tag could
+  publish a release whose README numbers no longer matched the repository:
+  the exact failure 2.4.1 exists to correct. They now run in the build job,
+  before the distributions are built and therefore before anything is
+  published. No new job, no matrix, no larger runner: on a public repository
+  these runner minutes are free. `tests/test_gates_are_wired.py` holds it,
+  and holds the other direction too, that CI keeps running them.
+
 ### Security
 - **`export_json()` is scoped to the calling instance's `agent_id`.** It was
   the read path 2.2.0 and 2.2.1 left open. `Engram(path="./team.engram",

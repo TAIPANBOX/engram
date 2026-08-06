@@ -797,7 +797,7 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (497 tests, 504 with the encryption extra)
+### Test coverage (506 tests, 513 with the encryption extra)
 
 ```
 tests/
@@ -832,6 +832,7 @@ tests/
                           fail-open on I/O error, skip-on-empty agent_id, warn-on-
                           nonconforming agent_id, off-by-default, bulk and cascade
                           paths (observe_many, forget_entity, compress)
+  test_gates_are_wired.py  the gate scripts run in the workflows that ship
   test_benchmarks.py     benchmark infrastructure
 ```
 

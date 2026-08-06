@@ -45,7 +45,20 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-python3 - <<'PY'
+# The same interpreter resolution scripts/readme-numbers.sh uses, and for the
+# same reason it needs one: parts 2 and 3 import engram, so they need the
+# interpreter that has its dependencies. Hardcoding `python3` meant that on any
+# machine with a virtualenv this gate ran the SYSTEM interpreter and died with
+# `ModuleNotFoundError: No module named 'rfc8785'`, reporting "could not warm
+# the embedder, so parts 2 and 3 measured nothing". It passed in CI only
+# because CI installs into the system interpreter and has no .venv, so one of
+# the seven gates CLAUDE.md tells a contributor to run could not be run as
+# written on a development machine. Found 2026-08-05, after three agents hit it
+# in one day.
+PY="python3"
+[ -x .venv/bin/python ] && PY=.venv/bin/python
+
+"$PY" - <<'PYEOF'
 import os
 import pathlib
 import re
@@ -204,4 +217,4 @@ if problems:
 print(f"OK: default install is {', '.join(sorted(declared))}, all local;")
 print("    a full observe-and-recall cycle opens no socket once the model is present;")
 print(f"    README's stated first-use download matches the {measured_mb:.0f} MB actually fetched.")
-PY
+PYEOF
