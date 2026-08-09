@@ -53,6 +53,7 @@ pytest
 ./scripts/no-network-at-write.sh
 ./scripts/readme-numbers.sh
 ./scripts/local-first.sh
+./scripts/gates-have-teeth.sh   # invariant 9; needs a clean tree and the package installed
 ```
 
 CI additionally runs the encryption suite on its own
@@ -103,6 +104,29 @@ an absent invariant.
 8. **Every new function gets a test.** A process rule, not a property of the
    code: nothing can tell a function that should have had a test from one that
    should not. *(not enforced, and not enforceable)*
+
+9. **A check must be able to tell "did not fail" from "did not run", and every
+   gate here has been made to fail on purpose to prove it can.** All three
+   gates above already refuse when their subject is absent: the recall sweep
+   missing, the suite reporting no test count, the embedder failing to warm.
+   Every one of those sentences was true, was established by hand once in the
+   session that wrote the script, and nothing re-ran them.
+
+   Two of the three were then observed doing it for real, on 2026-08-09, on a
+   machine with no `pytest` and no `rfc8785`. They said they had measured
+   nothing rather than passing quietly, which is the whole property, seen
+   working on a genuine environment fault rather than on a planted one. The
+   harness now refuses to start in that state for the same reason: it cannot
+   tell a toothless gate from an unequipped machine.
+   *(gate: `scripts/gates-have-teeth.sh`, 8 cases: four real faults each gate
+   must catch, one non-fault they must not, and three subjects taken away
+   entirely. The non-fault case is the one worth keeping: an import INSIDE a
+   function is exactly what invariant 1 allows, and a gate that fired on it
+   would be deleted by whoever is unblocking CI.)*
+
+   **What it does not cover.** It cannot test itself. It proves each gate
+   catches the faults named in it, not every fault of that kind. It found no
+   hole in any of the three.
 
 ## Decisions that have no gate yet
 
