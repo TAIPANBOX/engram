@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **The vendored `agent-event` v0.2 contract is agent-passport's file again,
+  and it now carries `delegation_proof`.** agent-passport `7cd296c` added an
+  optional `delegation_proof` object to the v0.2 and v0.3 envelopes (SPEC.md
+  §5.2): `jti`, `jkt`, `iss` and `exp`, recording that an `on_behalf_of` chain
+  was proved by an RFC 8693 token without carrying the token, since a
+  delegation token is a live credential and an event stream is a replicated,
+  hash-chained record. `tests/fixtures/agent-event.v0.2.schema.json` is that
+  file byte for byte again, sha256
+  `43328da3b3b782d8e9ae772cd05e2814fa34ba402ee20cda22bc0cacf65f3f40`.
+
+  **Engram accepts a proof and cannot produce one.** `EventLog._envelope`
+  writes a fixed set of keys and `on_behalf_of` is not among them, so there is
+  no delegation chain here to prove and nothing to attach a proof to. The
+  addition is optional, so every line this project has written is still valid
+  under the newer contract and no emitted event changes shape; what changed is
+  only what a consumer validating with this file will now accept from
+  somebody else.
+
+  `test_a_delegation_proof_is_accepted_but_engram_never_writes_one` holds both
+  halves, and holds them in a form that can go red: it rejects a proof missing
+  its `jkt` key binding, and a proof smuggling the token in beside it, both of
+  which the previous copy of the schema accepted as unknown keys under the
+  envelope's own `additionalProperties: true`. Validating a well-formed proof
+  alone would have passed against either copy and proved nothing about the
+  one that is here.
+
+  Nothing in this repository compares a vendored schema with the canonical
+  one, so the gap between the two was invisible until somebody looked, exactly
+  as the v0.1 fixture's missing `maxItems` bound was. agent-stack-go holds
+  that property with `scripts/schemas-in-sync.sh` against a sibling checkout;
+  doing it here is still a CI decision rather than an edit.
 - **An `agent_id` the shared envelope cannot accept is warned about, once, and
   still written.** The vendored `agent-event.schema.json` requires `agent_id`
   to match `^agent://[a-z0-9.-]+/[a-z0-9._/-]+$` (SPEC.md §3.1) and
@@ -50,9 +81,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on v0.1 to stay there, and both versions remain valid on the wire. Two
   dialects were simply being kept alive for no reason anybody could state.
 
-  The versions differ in exactly one field. v0.1 closed `source` to four
-  names, v0.2 opens it to any non-empty string; every other field, including
-  `severity` and the `agent_id` pattern, is identical. Engram's `source` is
+  v0.1 closed `source` to four names, v0.2 opens it to any non-empty string;
+  every field the two versions share, including `severity` and the `agent_id`
+  pattern, is identical. (v0.2 has since gained an optional
+  `delegation_proof` that v0.1 has no place for, which is the entry above
+  this one.) Engram's `source` is
   the constant `"engram"`, so no line this project writes changes shape. The
   vendored copy of the contract moves with it: what was
   `tests/fixtures/agent-event.schema.json` is now
