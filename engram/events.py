@@ -12,10 +12,26 @@ Envelope version: v0.2 (SPEC.md §6.4)
 This module emitted v0.1 until 2026-08-06 and now emits v0.2, which is what
 every other emitter in the estate already spoke. §6.4 permits a v0.1 emitter
 to stay on v0.1 indefinitely, so nothing here was broken; two dialects were
-simply being maintained for no reason. The versions differ in exactly one
-field: ``source`` was a closed four-name enum in v0.1 and is an open string in
-v0.2. Engram's own ``source`` is a constant, so nothing this module writes
-changes shape, and consumers MUST accept both versions either way.
+simply being maintained for no reason. Two fields separate the versions:
+``source`` was a closed four-name enum in v0.1 and is an open string in v0.2,
+and v0.2 carries an optional ``delegation_proof`` object (SPEC.md §5.2) that
+v0.1 has no place for. Engram's own ``source`` is a constant, so nothing this
+module writes changes shape, and consumers MUST accept both versions either
+way.
+
+``delegation_proof``: accepted, never emitted (SPEC.md §5.2)
+-------------------------------------------------------------
+§5.2 records that an ``on_behalf_of`` chain was PROVED by an RFC 8693 token,
+by carrying the token's ``jti``, ``jkt``, ``iss`` and ``exp`` rather than the
+token itself. Absent means not proven, never proven elsewhere.
+
+Engram sets neither field. :meth:`EventLog._envelope` writes a fixed set of
+keys and ``on_behalf_of`` is not among them, so this module has no delegation
+chain to prove and nothing to attach a proof to. The vendored schema accepts
+the field because the contract does; producing one would need a delegation
+token to arrive here first, and none does. Anything read out of an events file
+this module wrote therefore says nothing about delegation, which is exactly
+what §5.2 says an absent proof means.
 
 Why this does not violate "no network calls at write time"
 ------------------------------------------------------------

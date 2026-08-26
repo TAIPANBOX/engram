@@ -320,10 +320,15 @@ def test_the_vendored_schema_is_the_v0_2_contract_engram_now_speaks() -> None:
     assert SCHEMA == "taipanbox.dev/agent-event/v0.2"
     assert _SCHEMA["properties"]["schema"]["const"] == SCHEMA
     assert "/v0.2/" in _SCHEMA["$id"]
-    # SPEC.md §6.4: the versions differ in exactly one field. v0.1 closed
-    # `source` to four names; v0.2 opens it. A vendored file still carrying the
-    # enum is a v0.1 schema wearing a v0.2 const.
+    # Two fields separate the versions, and each names a different way for a
+    # vendored copy to be the wrong file. v0.1 closed `source` to four names
+    # and v0.2 opens it (SPEC.md §6.4), so a copy still carrying the enum is a
+    # v0.1 schema wearing a v0.2 const. v0.2 also carries `delegation_proof`
+    # (SPEC.md §5.2), so a copy without it is a v0.2 file taken before
+    # agent-passport added the field, which is a version of the contract that
+    # accepts a proved chain and a proof it will not read.
     assert "enum" not in _SCHEMA["properties"]["source"]
+    assert "delegation_proof" in _SCHEMA["properties"]
 
 
 def test_the_agent_id_rule_is_the_same_under_v0_2_as_it_was_under_v0_1() -> None:
@@ -336,6 +341,62 @@ def test_the_agent_id_rule_is_the_same_under_v0_2_as_it_was_under_v0_1() -> None
     agent_id = _SCHEMA["properties"]["agent_id"]
     assert agent_id["pattern"] == _V0_1_AGENT_ID_PATTERN
     assert agent_id["maxLength"] == _V0_1_AGENT_ID_MAX_LENGTH
+
+
+def test_a_delegation_proof_is_accepted_but_engram_never_writes_one(tmp_path) -> None:
+    """SPEC.md §5.2, and the two halves of it this repo actually holds.
+
+    ACCEPTED, and enforced rather than waved through. The envelope's own
+    ``additionalProperties`` is ``true``, so a schema that had never heard of
+    ``delegation_proof`` accepts any object at all under that name. A check
+    that only validated a well-formed proof would therefore pass against the
+    copy this one replaced, and prove nothing about either.
+
+    NEVER WRITTEN. ``_envelope`` writes a fixed set of keys and
+    ``on_behalf_of`` is not among them, so there is no delegation chain here to
+    prove and nothing to attach a proof to. Absent means NOT proven, which is
+    the honest reading of every line this module has ever written.
+    """
+    proved = {
+        "schema": SCHEMA,
+        "ts": "2026-08-26T12:00:00Z",
+        "source": "engram",
+        "type": "memory_written",
+        "agent_id": _AGENT_ID,
+        "severity": "info",
+        "on_behalf_of": ["user://acme-bank.example/alice"],
+        "delegation_proof": {
+            "jti": "01K3S4V6QZ0000000000000000",
+            "jkt": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+            "iss": "https://idryx.acme-bank.example",
+            "exp": 1787836800,
+        },
+        "data": {"memory_id": "m-1", "kind": "episodic"},
+    }
+    _validate(proved)
+
+    # A proof missing the key binding is the one that matters: without `jkt` it
+    # names a token but not who was holding it, which is the whole thing a
+    # chain of names cannot say.
+    unbound = json.loads(json.dumps(proved))
+    del unbound["delegation_proof"]["jkt"]
+    with pytest.raises(jsonschema.ValidationError):
+        _validate(unbound)
+
+    # And the live credential may not ride along inside the record: the proof
+    # is closed, so a token smuggled in beside it is rejected here rather than
+    # replicated down a hash-chained stream.
+    carrying_the_token = json.loads(json.dumps(proved))
+    carrying_the_token["delegation_proof"]["token"] = "eyJhbGciOiJFZERTQSJ9.e30.sig"
+    with pytest.raises(jsonschema.ValidationError):
+        _validate(carrying_the_token)
+
+    events_path = tmp_path / "events.ndjson"
+    EventLog(events_path).emit("memory_written", _AGENT_ID, {"memory_id": "a", "kind": "episodic"})
+    written = _read_ndjson(events_path)[0]
+    _validate(written)
+    assert "delegation_proof" not in written
+    assert "on_behalf_of" not in written
 
 
 def test_every_envelope_version_this_project_documents_is_the_one_it_emits() -> None:
