@@ -1,0 +1,101 @@
+{
+  "$comment": [
+    "What this repository contributes to a running stack, and what a check may",
+    "believe about it. `checked` is proved against this repository by",
+    "tests/test_manifest.py in this repository's own CI; `declared` is a statement",
+    "nobody can verify and carries its own `why`.",
+    "",
+    "THE DISTRIBUTION IS NOT CALLED WHAT ANYTHING ELSE HERE IS CALLED. The",
+    "repository is `engram`, the import is `engram`, and the thing you `pip",
+    "install` is `engdbram`. CHANGELOG records the rename from `engram-ai`",
+    "because the plain name was taken. Three names for one component is the sort",
+    "of fact that costs somebody an afternoon, and it is checked against",
+    "pyproject rather than restated.",
+    "",
+    "THREE CONSOLE SCRIPTS, AND estate.json DECLARES ONE. That is correct rather",
+    "than an omission: `engram-mcp` is what the deployments spawn, and the other",
+    "two are a CLI a person runs and a benchmark harness. The registry records",
+    "what a deployment installs and this records what the package installs, and",
+    "the difference between the two lists is exactly the information neither file",
+    "holds alone.",
+    "",
+    "`[project.scripts]` IS ALREADY A CROSS-REPOSITORY CONTRACT. stack-k8s's",
+    "console.Dockerfile installs the Python tools by reading it and says so in a",
+    "comment; stack-up's `install_py_tool engram engram-mcp \"[mcp]\"` names the",
+    "script and the extra. A script added here without a manifest entry is a",
+    "component the console image would install and nothing would have declared.",
+    "",
+    "WHAT COULD NOT BE RUN HERE, SAID PLAINLY. This repository has no virtualenv",
+    "on the machine this was written on, its suite pulls fastembed and that",
+    "downloads ONNX models, and the system interpreter is EXTERNALLY-MANAGED.",
+    "Nothing was installed to work around that. So the parsing half of the test",
+    "was run against a sibling repository's pytest, and the half that invokes the",
+    "console scripts SKIPS when the package is not importable and runs in this",
+    "repository's own CI, where it is."
+  ],
+  "schema": "taipanbox.dev/components/v1",
+  "repo": "TAIPANBOX/engram",
+  "distribution": "engdbram",
+  "components": [
+    {
+      "name": "engram-mcp",
+      "class": "tool",
+      "checked": {
+        "console_script": "engram-mcp",
+        "entry_point": "engram.mcp_server:main",
+        "env": {
+          "ENGRAM_EVENTS_PATH": {
+            "required": false
+          },
+          "ENGRAM_MCP_AGENT_ID": {
+            "required": false
+          },
+          "ENGRAM_MCP_DB": {
+            "required": false
+          },
+          "ENGRAM_MCP_EVENTS": {
+            "required": false
+          }
+        }
+      },
+      "declared": {
+        "it_is_spawned_not_served": {
+          "value": "stdio",
+          "why": "An MCP server over stdio: no network listener and no port to guard, which is why no launcher polls it and why this declares no health path. The console spawns it as a child process."
+        },
+        "the_mcp_extra_is_how_it_is_installed": {
+          "value": "engdbram[mcp]",
+          "why": "stack-up runs `install_py_tool engram engram-mcp \"[mcp]\" mcp`. The extra is not in [project.scripts] and cannot be checked from it, so it is declared."
+        }
+      }
+    },
+    {
+      "name": "engram",
+      "class": "tool",
+      "checked": {
+        "console_script": "engram",
+        "entry_point": "engram.cli:main"
+      },
+      "declared": {
+        "no_deployment_installs_it": {
+          "value": "a person's CLI",
+          "why": "The command somebody uses against their own store. Not in estate.json's `runs` because nothing schedules or supervises it."
+        }
+      }
+    },
+    {
+      "name": "engram-bench",
+      "class": "dev-tool",
+      "checked": {
+        "console_script": "engram-bench",
+        "entry_point": "engram.benchmarks.cli:main"
+      },
+      "declared": {
+        "nothing_should_install_it": {
+          "value": "dev-tool",
+          "why": "The benchmark harness, in the sense trailryx's seven dev-tools are: its absence from every deployment is the answer rather than a question."
+        }
+      }
+    }
+  ]
+}
