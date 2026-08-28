@@ -182,44 +182,30 @@ Engram is a **cognitive memory layer** for AI agents - a single local file (`age
 
 ---
 
-## Why not just use a vector database?
+## What the memory actually holds
 
-Vector databases (Pinecone, Chroma, Qdrant) store text and find similar text. That is useful, but it is a fraction of what memory requires.
+A vector store answers one question: what text looks like this text. Engram answers
+the questions an agent asks after that one.
 
-They cannot tell you *when* something was true. They cannot explain *why* the agent believes something. They have no concept of facts becoming outdated, of contradictions, or of some memories mattering more than others. And they run as separate servers - you need Docker, a network connection, and an API call just to write a sentence.
+| Capability | What it is here |
+|---|---|
+| **Hybrid recall** | BM25 over FTS5 and cosine over sqlite-vec, blended, so an exact term and a paraphrase both find the episode. The blend was swept rather than guessed |
+| **Bitemporal facts** | Every fact carries when it was true and when it was recorded, so `as_of` answers what was believed in March, not only what is believed now |
+| **Spreading activation** | Recall walks Hebbian-weighted edges out from what matched, so a query reaches what the match is connected to and not only what it resembles |
+| **Importance and decay** | An Ebbinghaus curve with Hebbian reinforcement: what is used stays sharp, what is untouched fades, and reflection prunes the bottom. The store stays useful instead of growing |
+| **Working memory** | A 7±2 scratchpad, Miller's number, for what the agent is holding right now as opposed to what it knows |
+| **Provenance** | `why()` answers where a belief came from, episode by episode, so a wrong answer can be traced to what produced it |
+| **Contradiction** | Reflection finds facts that disagree and records the disagreement rather than overwriting one with the other |
+| **Erasure** | `forget()` at episode, entity or fact level, and `compress()` burns the raw text on a schedule while the extracted facts stay, so a person can be removed without the history losing its shape |
+| **Many agents, one file** | `agent_id` is a partition key: each agent keeps its own episodes, all of them share extracted facts, and a scoped recall stays flat as the store grows |
 
-Engram is not a replacement for a vector database - it includes one, built in, with no separate process. On top of it, Engram adds time, structure, importance, and provenance that vector DBs do not have.
+Everything above is one file. `pip install`, open it in two lines, no server, no
+Docker, no API key for the store itself, and no LLM call on the write path: writes land
+immediately and reflection runs later, in the background, when you ask for it.
 
-Every other solution forces a trade-off. Engram doesn't.
-
-| Capability | Pinecone / Chroma / Qdrant | Mem0 | Zep / Graphiti | Letta (MemGPT) | LangChain memory | **Engram** |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Vector similarity search | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ |
-| **Hybrid BM25 + vector recall** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Semantic fact triples (s, p, o) | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ |
-| **Bitemporal validity** (`as_of` time travel) | ❌ | ❌ | ⚠️ | ❌ | ❌ | ✅ |
-| **Spreading-activation retrieval** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Importance decay (Ebbinghaus) | ❌ | ❌ | ✅ | ⚠️ | ❌ | ✅ |
-| **Working memory (7±2 scratchpad)** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| **Memory compression via LLM** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| **Async API** | ❌ | ❌ | ⚠️ | ❌ | ❌ | ✅ |
-| **Provenance tracking** (`why()`) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| GDPR right-to-be-forgotten | ❌ | ⚠️ | ⚠️ | ❌ | ❌ | ✅ |
-| **Multi-agent shared store** | ❌ | ❌ | ⚠️ | ❌ | ❌ | ✅ |
-| Embeddable (no server) | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Zero config (single file) | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| MCP-native | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| LLM required at write time | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Contradiction detection | ❌ | ⚠️ | ✅ | ⚠️ | ❌ | ✅ |
-| Fully local (no cloud) | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
-
-**Key advantages over each competitor:**
-
-- **vs. Pinecone / Chroma / Qdrant** - Vector DBs are just similarity search. Engram adds time, graph, importance, and provenance on top. They require a separate server process; Engram is a file you open in two lines.
-- **vs. Mem0** - Mem0 calls an LLM on *every write* (slow, costly, requires API key at write time). Engram writes instantly; reflection runs async in the background. Mem0 has no temporal validity - it cannot tell you what was true in March.
-- **vs. Zep / Graphiti** - Server-based runtimes with operational overhead. Engram is a Python library you `pip install`. No Docker, no API keys for the store itself, no migration scripts.
-- **vs. Letta / MemGPT** - Tied to their own agent runtime and hosting model. Engram plugs into *any* framework: LangChain, LlamaIndex, raw API, or your own loop.
-- **vs. LangChain memory** - LangChain memory is toy-grade: an in-process list or a Redis key. No decay, no graph, no temporal queries, not production-ready for long-running agents.
+It speaks MCP natively, so Claude Code, Claude Desktop or Cursor can `remember`,
+`recall`, `why` and `forget` against the same file with no integration code, and it
+plugs into LangChain and LlamaIndex where those are already in use.
 
 ---
 
