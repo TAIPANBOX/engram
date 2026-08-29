@@ -85,8 +85,14 @@ flowchart TB
   WX -.->|"allow / deny / hold"| TF
   TF -->|"cheapest model, budget OK"| LLM[("LLM provider")]
   TF -->|"CallRecords"| CL["TokenFuse Cloud: control plane, incidents, replay, evidence, kill-switch"]
+  VCX["Vouchryx: delegation proved, and endable"] -->|"short-lived token: act + cnf"| TF
+  TF -.->|"polls /v1/revocations"| VCX
+  VCX ==> BUS
   TF ==>|"agent-event NDJSON"| BUS{{"agent-event bus + Agent Passport"}}
   WX ==> BUS
+  Agent -->|"web fetch"| SCX["Scopyx: governed web egress"]
+  SCX -->|"POST /v1/decide"| WX
+  SCX ==> BUS
   ENG["Engram: memory"] -->|"reflect via base_url"| TF
   ENG ==> BUS
   BUS ==> IDX["Idryx: identity graph, detectors, Agent-BOM"]
@@ -96,6 +102,9 @@ flowchart TB
   TF -->|"outcome-tagged traces"| VX
   MX["Mockryx: pre-prod safety rehearsal"] -->|"hostile scenarios"| TF
   MX ==>|"sim events"| BUS
+  BILL[("cloud, SaaS and model bills")] --> CC["CostCrew: the bill, worked by a crew of agents"]
+  CC ==> BUS
+  BUS ==> TRX["Trailryx: the record plane, sealed and packed"]
   BUS ==> HX["heraldyx: reads the log, mails you"]
   HX -->|"one mail, a view and never an action"| OPS["your mailbox"]
   YOU(["you, in a browser over your own tunnel"]) --> GX[["Genaryx: the console over all of it"]]
@@ -106,6 +115,8 @@ flowchart TB
   GX -.->|"reads it"| VX
   GX -.->|"reads it"| MX
   GX -.->|"reads it"| ENG
+  GX -.->|"reads it"| SCX
+  GX -.->|"reads it"| CC
   TFP["terraform-provider-taipan"] -->|"budgets + passports as code"| CL
   ASG[["agent-stack-go: shared Go contract"]] -.->|imported by| IDX
   ASG -.->|imported by| WX
@@ -120,7 +131,7 @@ flowchart TB
 - **Produces**: `source: engram` events and `why()` provenance, opt-in via the Agent Passport `agent-event` envelope, schema `taipanbox.dev/agent-event/v0.2`.
 - **Talks to**: **TokenFuse** (reflection's LLM adapter can point `base_url` at TokenFuse); governed by the **agent-passport** `agent://` scope.
 
-The full stack is TokenFuse (spend), Wardryx (policy), Engram (memory), Idryx (access), Qryx (crypto), Verdryx (quality), Mockryx (pre-prod), heraldyx (the mail out) and scopyx (governed web egress), on the shared Agent Passport + agent-event contract (agent-stack-go / agent-passport), configured via terraform-provider-taipan and driven from Genaryx, the console over all of it. Trailryx, the record plane, is built and not wired into this yet.
+The full stack is TokenFuse (spend), Wardryx (policy), Vouchryx (delegation), Engram (memory), Idryx (access), Qryx (crypto), Verdryx (quality), Mockryx (pre-prod), scopyx (governed web egress), CostCrew (the bill), Trailryx (the record) and heraldyx (the mail out), on the shared Agent Passport + agent-event contract (agent-stack-go / agent-passport), configured via terraform-provider-taipan and driven from Genaryx, the console over all of it.
 
 Run the whole open stack locally with one command via [**stack-up**](https://github.com/TAIPANBOX/stack-up); the stack's home on the web is [**it-rat.com**](https://it-rat.com).
 
