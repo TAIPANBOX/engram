@@ -18,6 +18,15 @@ on:
   push:
     tags:
       - "v*"
+  # The build job runs on a pull request that touches THIS file, and nothing
+  # else does: pypi-publish stays off (see its `if`), so a pull request builds
+  # the wheel and sdist and publishes nothing. Added 2026-09-02 after
+  # tokenfuse's v0.4.2 failed on both Linux runners the first time its own
+  # tag-only release.yml ever reached its musl leg: a workflow gated on
+  # `push: tags: v*` alone is tested by exactly one event in its whole life,
+  # and that event is the one where a mistake is public.
+  pull_request:
+    paths: [".github/workflows/release.yml"]
 
 permissions:
   contents: read
@@ -42,6 +51,11 @@ jobs:
           pip install build
 
       - name: Assert tag matches pyproject version
+        # Only meaningful on a tag push: GITHUB_REF on a pull request is a
+        # pull ref, never refs/tags/vX.Y.Z, so this would fail every pull
+        # request build for a reason that has nothing to do with the change
+        # under review.
+        if: github.event_name != 'pull_request'
         run: |
           TAG="${GITHUB_REF#refs/tags/v}"
           PROJ=$(python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
@@ -89,6 +103,12 @@ jobs:
   pypi-publish:
     name: Publish to PyPI
     needs: build
+    # Never on a pull request: this job publishes to PyPI through trusted
+    # publishing. TokenFuse's v0.4.2 is the shape of failure a bare
+    # push-tag trigger invites (2026-09-02); this guard is what stops the
+    # pull_request trigger added above from also shipping a package from a
+    # fork's pull request.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: pypi
