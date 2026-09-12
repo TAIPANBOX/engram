@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Vendored agent-passport's SPEC 1.0 `agent-event` contract.**
+  agent-passport reached SPEC 1.0 on 2026-09-12 (tag `v1.0.0`, commit
+  `b371329`). `tests/fixtures/agent-event.v1.0.schema.json` is that file byte
+  for byte, sha256
+  `ff07b5a00f14eb096b9e67c5bc650e87ce66a80ea98d3c191608d8f08de81fb8`. v1.0 is
+  v0.3's shape with the version string changed, plus one widening: SPEC 3.3
+  lets `agent_id` carry an optional `claimed:` subject prefix, so `maxLength`
+  moves from 255 to 263 (the length of `claimed:`). Every other property and
+  the `required` list are unchanged.
+
+  **Engram keeps emitting v0.2.** SPEC 6.4.1 requires a consumer to accept
+  event v0.1, v0.2 and v1.0 from 1.0 onward, and lets a producer move to a
+  new version in its own release, on its own schedule. Nothing on the wire
+  changes here.
+
+  Two new tests hold this.
+  `test_a_v1_0_stamped_event_engram_writes_validates_under_the_vendored_v1_0_contract`
+  takes one real line this module wrote, validates it under v0.2 as before,
+  then re-stamps only the `schema` field and validates the same line under
+  v1.0, which is what makes the eventual move a one-constant edit rather than
+  a reshape.
+  `test_the_v1_0_contract_widens_only_the_subject_and_engram_never_writes_a_claimed_one`
+  holds the two schemas equal everywhere except `agent_id` and `schema`,
+  checks that a `claimed:agent://...` id validates under v1.0 and is refused
+  under v0.2 (a consumer that has not decided what a claim means to it is
+  entitled to refuse rather than guess), and proves behaviourally, by
+  emitting a real event rather than reading the source, that engram's own
+  emitter never writes a claimed subject.
+
 ### Changed
 - **The vendored `agent-event` v0.2 contract is agent-passport's file again,
   and it now carries `delegation_proof`.** agent-passport `7cd296c` added an
