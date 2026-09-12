@@ -30,6 +30,14 @@ from engram.events import SCHEMA, EventLog, canonicalize, chain_hash, resolve_ev
 _SCHEMA_PATH = Path(__file__).parent / "fixtures" / "agent-event.v0.2.schema.json"
 _SCHEMA = json.loads(_SCHEMA_PATH.read_text())
 
+#: agent-passport reached SPEC 1.0 on 2026-09-12 (tag v1.0.0). v0.3's shape
+#: with the version string changed, plus one widening on `agent_id` (SPEC
+#: 3.3). Vendored here only to prove the eventual producer move and the
+#: consumer-side widening; engram itself stays on v0.2 (see the section below
+#: on the envelope version this build speaks).
+_SCHEMA_V1_0_PATH = Path(__file__).parent / "fixtures" / "agent-event.v1.0.schema.json"
+_SCHEMA_V1_0 = json.loads(_SCHEMA_V1_0_PATH.read_text())
+
 _AGENT_ID = "agent://acme-bank.example/support/tier1-bot"
 
 
@@ -341,6 +349,90 @@ def test_the_agent_id_rule_is_the_same_under_v0_2_as_it_was_under_v0_1() -> None
     agent_id = _SCHEMA["properties"]["agent_id"]
     assert agent_id["pattern"] == _V0_1_AGENT_ID_PATTERN
     assert agent_id["maxLength"] == _V0_1_AGENT_ID_MAX_LENGTH
+
+
+# ------------------------------------------------------------------
+# agent-passport SPEC 1.0 (tag v1.0.0, 2026-09-12): vendored to prove the
+# eventual move, not to make it. Engram keeps emitting v0.2 until its own
+# release (SPEC 6.4.1: a consumer must accept v1.0 first, a producer moves on
+# its own schedule).
+# ------------------------------------------------------------------
+
+
+def test_a_v1_0_stamped_event_engram_writes_validates_under_the_vendored_v1_0_contract(
+    tmp_path,
+) -> None:
+    """SPEC 6.4.1: from 1.0 a consumer MUST accept event v0.1, v0.2 and v1.0,
+    and a producer moves to v1.0 in its own release, on its own schedule.
+    Engram stays on v0.2 in this change. Taking one real line this module
+    wrote, validating it under the contract engram actually speaks today, and
+    then re-stamping only the ``schema`` field to validate the same line
+    under v1.0, proves the eventual move is a one-constant edit rather than a
+    reshape.
+    """
+    events_path = tmp_path / "events.ndjson"
+    EventLog(events_path).emit(
+        "memory_written", _AGENT_ID, {"memory_id": "m-1", "kind": "episodic"}
+    )
+
+    event = _read_ndjson(events_path)[0]
+    _validate(event)  # unchanged behaviour: engram still speaks v0.2 today
+
+    stamped = dict(event, schema="taipanbox.dev/agent-event/v1.0")
+    jsonschema.validate(instance=stamped, schema=_SCHEMA_V1_0)
+
+    assert SCHEMA == "taipanbox.dev/agent-event/v0.2"
+
+
+def test_the_v1_0_contract_widens_only_the_subject_and_engram_never_writes_a_claimed_one(
+    tmp_path,
+) -> None:
+    """The one widening v1.0 makes over v0.2 is the claimed-subject prefix on
+    ``agent_id`` (SPEC 3.3): a consumer that has not decided what a claim
+    means to it is entitled to refuse the line rather than guess it (SPEC
+    6.4.1). Engram models no claim of its own and never writes one.
+    """
+    assert "/v1.0/" in _SCHEMA_V1_0["$id"]
+    assert _SCHEMA_V1_0["properties"]["schema"]["const"] == "taipanbox.dev/agent-event/v1.0"
+
+    v1_0_agent_id = _SCHEMA_V1_0["properties"]["agent_id"]
+    assert v1_0_agent_id["pattern"] == "^(claimed:)?agent://[a-z0-9.-]+/[a-z0-9._/-]+$"
+    assert v1_0_agent_id["maxLength"] == 263
+
+    # Every other property, and the required list, are unchanged: the
+    # widening is exactly the one field, not a reshape riding along with it.
+    v0_2_rest = {k: v for k, v in _SCHEMA["properties"].items() if k not in ("agent_id", "schema")}
+    v1_0_rest = {
+        k: v for k, v in _SCHEMA_V1_0["properties"].items() if k not in ("agent_id", "schema")
+    }
+    assert v1_0_rest == v0_2_rest
+    assert _SCHEMA_V1_0["required"] == _SCHEMA["required"]
+
+    claimed_envelope = {
+        "schema": "taipanbox.dev/agent-event/v1.0",
+        "ts": "2026-09-12T12:00:00Z",
+        "source": "engram",
+        "type": "memory_written",
+        "agent_id": "claimed:agent://acme-bank.example/support/tier1-bot",
+        "severity": "info",
+        "data": {"memory_id": "m-1", "kind": "episodic"},
+    }
+    jsonschema.validate(instance=claimed_envelope, schema=_SCHEMA_V1_0)
+
+    # A consumer still on v0.2 has not been told what a claim means, so it
+    # refuses the same line rather than accept a subject it cannot judge.
+    v0_2_envelope = dict(claimed_envelope, schema=SCHEMA)
+    with pytest.raises(jsonschema.ValidationError):
+        _validate(v0_2_envelope)
+
+    # Behaviourally, not by reading the source: engram's own emitter writes
+    # an attested-form id, never a claimed one.
+    events_path = tmp_path / "events.ndjson"
+    EventLog(events_path).emit(
+        "memory_written", _AGENT_ID, {"memory_id": "m-2", "kind": "episodic"}
+    )
+    written = _read_ndjson(events_path)[0]
+    assert written["agent_id"].startswith("agent://")
 
 
 def test_a_delegation_proof_is_accepted_but_engram_never_writes_one(tmp_path) -> None:
