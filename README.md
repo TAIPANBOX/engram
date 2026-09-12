@@ -474,6 +474,24 @@ pip install 'engdbram[anthropic,mcp,langchain,llamaindex]'
 
 ---
 
+## Verify a download
+
+Every release is signed keyless with Sigstore and carries a build-provenance
+attestation and an SBOM. With `cosign` and `gh` installed:
+
+```sh
+tag=<tag>
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity "https://github.com/TAIPANBOX/engram/.github/workflows/release.yml@refs/tags/${tag}" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+sha256sum -c SHA256SUMS
+gh attestation verify engdbram-<version>-py3-none-any.whl -R TAIPANBOX/engram
+```
+
+Releases through v2.4.1 have none of this; the tags say so.
+
+---
+
 ## Quickstart
 
 ### Basic usage

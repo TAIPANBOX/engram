@@ -36,6 +36,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entitled to refuse rather than guess), and proves behaviourally, by
   emitting a real event rather than reading the source, that engram's own
   emitter never writes a claimed subject.
+- **A `release` job publishes signed, attested release assets on every tag.**
+  `release.yml` already built the sdist and wheel and shipped them to PyPI
+  over trusted publishing, which already attaches a PEP 740 attestation;
+  nothing about that path changes. The new job, gated the same way the rest
+  of the file is (`if: github.event_name != 'pull_request'`, so the
+  pull-request run of this file still builds and still publishes nothing),
+  takes the same `dist` artifact, writes a `SHA256SUMS` over the sdist and
+  wheel, signs it keyless with Sigstore, attaches an SPDX and a CycloneDX
+  SBOM, and attests build provenance for the set, then puts all of it on the
+  tag's GitHub Release. Every tagged Release here has so far been created by
+  hand with no assets attached, so the job looks for one before deciding
+  whether to create it or upload into it, rather than assuming either state.
+  The README's new "Verify a download" section is the reader-facing half of
+  this.
 
 ### Changed
 - **The vendored `agent-event` v0.2 contract is agent-passport's file again,
