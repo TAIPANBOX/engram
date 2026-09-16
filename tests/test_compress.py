@@ -130,6 +130,51 @@ def test_compress_mixed_importance(tmp_path) -> None:
 
 
 # ------------------------------------------------------------------
+# Deletion racing candidate selection
+# ------------------------------------------------------------------
+
+
+def test_compress_removed_count_excludes_already_deleted_candidates(tmp_path) -> None:
+    """A candidate can be gone by the time compress() tries to delete it, for
+    example a forget() racing compress() between candidate selection and the
+    delete call. store.delete_episode then reports False for that one id
+    (the row is already gone), and episodes_removed must count only what
+    compress() actually deleted here, matching the number of
+    memory_forgotten events it emits, not the number of candidates handed to
+    the batch."""
+    import json
+
+    events_path = tmp_path / "events.ndjson"
+    agent_id = "agent://acme.example/compress-test"
+    stub = StubLLMAdapter(summary="Summary of several events.")
+    with Engram(path=":memory:", agent_id=agent_id, llm=stub, events_path=events_path) as mem:
+        mem.observe_many([ObserveInput(content=f"Event number {i}") for i in range(5)])
+        for ep in mem._store.get_episodes_below_importance(1.1):
+            mem._store.update_importance(ep.id, 0.1)
+        candidates = mem._store.get_episodes_below_importance(1.1)
+        victim_id = candidates[0].id
+        real_delete = mem._store.delete_episode
+
+        def racing_delete(episode_id: str, agent_id: str | None = None) -> bool:
+            if episode_id == victim_id:
+                # Someone else's forget() already removed this row between
+                # candidate selection and this call: the delete happens
+                # (there is nothing left to delete a second time) but the
+                # store correctly reports it as already gone.
+                real_delete(episode_id, agent_id)
+                return False
+            return real_delete(episode_id, agent_id)
+
+        mem._store.delete_episode = racing_delete  # type: ignore[method-assign]
+        result = mem.compress(max_episodes=0, importance_threshold=1.1, batch_size=5)
+
+    events = [json.loads(line) for line in events_path.read_text().splitlines() if line.strip()]
+    forgotten = [e for e in events if e["type"] == "memory_forgotten"]
+    assert len(forgotten) == 4
+    assert result.episodes_removed == len(forgotten)
+
+
+# ------------------------------------------------------------------
 # Compression and as_of time travel
 # ------------------------------------------------------------------
 

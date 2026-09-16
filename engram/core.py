@@ -822,7 +822,7 @@ class Engram:
             for ep in batch:
                 if self._store.delete_episode(ep.id):
                     deleted_ids.append(ep.id)
-                removed += 1
+                    removed += 1
             if self._events is not None:
                 self._events.emit_many(
                     "memory_forgotten",
