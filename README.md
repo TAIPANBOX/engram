@@ -818,6 +818,14 @@ mypy engram         # type check (strict)
 
 ### Test coverage (519 tests, 526 with the encryption extra)
 
+Statement coverage: **89%** (2679 statements, 293 uncovered on a plain
+install), measured 2026-09-16 with `pytest --cov=engram --cov-report=term-missing`.
+CI's `test` job runs the suite with the same flags and prints the current
+figure on every push; this line is not machine-checked against that output
+(unlike the test count above), so treat CI's own number as current if the
+two ever disagree. No threshold is enforced; the intent is a visible number,
+not a build that fails under one.
+
 ```
 tests/
   test_schema.py         schema + SQLite migrations (incl. backward compat)

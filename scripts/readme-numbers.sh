@@ -205,6 +205,19 @@ else:
                 f"only adds tests"
             )
 
+# Coverage is deliberately NOT recomputed here. This script is meant to be
+# cheap enough to run before every commit (the test count above uses
+# --collect-only for exactly that reason), and pytest-cov's own full-suite
+# run costs about 50 seconds here versus about 1 second for the rest of this
+# script combined. Adding it multiplies that cost 5-6x inside
+# gates-have-teeth.sh, which replays this script once per fault case. The
+# number is printed by CI's own test job (pytest --cov=engram
+# --cov-report=term-missing) on every run instead, where it costs nothing
+# extra: it is the same pytest invocation the job already makes, not a
+# second one. If the README's stated figure is worth gating the same way as
+# the test count, that is a call for the project owner: the cost above is
+# the reason this PR did not make it unilaterally.
+
 # ---------------------------------------------------------------------- 4
 # The version, in all three places that state it.
 pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
