@@ -61,7 +61,7 @@ jobs:
           pip install -e .[dev,langchain,llamaindex]
 
       - name: Run Pytest
-        run: pytest
+        run: pytest --cov=engram --cov-report=term-missing
 
   encryption:
     # SQLCipher needs a system library, so it gets its own job that installs it

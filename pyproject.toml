@@ -40,6 +40,7 @@ encryption = ["sqlcipher3>=0.4.9"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
     "ruff>=0.6",
     "mypy>=1.11",
     "mcp>=1.27.0,<2.0.0",
@@ -116,3 +117,14 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-ra --strict-markers"
+
+[tool.coverage.run]
+source = ["engram"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+# No fail_under here: no threshold that fails CI on its own, only a number
+# that gets measured and printed. Whether to gate on a percentage is a
+# separate decision for later.
+skip_covered = false
+show_missing = true
