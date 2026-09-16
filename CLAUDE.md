@@ -128,6 +128,17 @@ an absent invariant.
    catches the faults named in it, not every fault of that kind. It found no
    hole in any of the three.
 
+10. **`compress()`'s `episodes_removed` counts only episodes it actually
+    deleted, never the candidates it merely selected.** A candidate can be
+    gone by the time the delete call runs, for example a `forget()` racing
+    `compress()` between candidate selection and deletion; `store.py`'s
+    `delete_episode` returns `False` in that case. Confirmed 2026-09-16: the
+    count was incrementing once per candidate regardless of the return
+    value, so a caller (or a downstream governance service reading the
+    `memory_forgotten` events) saw a number larger than what was actually
+    erased. *(test:
+    `tests/test_compress.py::test_compress_removed_count_excludes_already_deleted_candidates`)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
