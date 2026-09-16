@@ -134,6 +134,14 @@ This list is debt, and it is here to stay visible rather than to be tidy.
 
 **Held by this file alone: invariants 3 and 7.**
 
+**The coverage figure in the README is a snapshot, not a gated number.**
+`scripts/readme-numbers.sh` holds the test count, the recall table and the
+version and deliberately not the coverage percentage: recomputing it means
+the whole suite under coverage, 50 to 70 s, inside a gate that runs on every
+push. CI prints the fresh TOTAL on every run; the README states the last one
+measured with its command. Invariant 2's "(gate: scripts/readme-numbers.sh)"
+covers every other number the README states, not this one.
+
 A correction: invariant 5 was listed here and is in fact covered by the whole
 of `tests/test_multiagent.py`, which is the observable form of "two stores in
 one process must not see each other". The claim was made by reading the code
