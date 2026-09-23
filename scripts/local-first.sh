@@ -182,11 +182,15 @@ if not model_dirs:
         f"could not be measured. This check cannot confirm the README's number."
     )
 else:
-    # Sum unique blobs. The snapshot entries are symlinks into blobs/, so
-    # walking everything would count the model twice.
+    # Sum unique files by the real path each entry resolves to. The snapshot
+    # entries are symlinks into blobs/, and since huggingface_hub 1.32.0 a
+    # large blob can itself be a symlink into a store shared across repos at
+    # the cache root, outside this directory. Following every link and keying
+    # on the resolved path counts the model once in either layout; skipping
+    # links once made this measure 0.7 MB of a 64 MB download.
     seen = {}
     for f in model_dirs[0].rglob("*"):
-        if f.is_file() and not f.is_symlink():
+        if f.is_file():
             seen[f.resolve()] = f.stat().st_size
     measured_mb = sum(seen.values()) / 1_048_576
 
