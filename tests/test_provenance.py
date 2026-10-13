@@ -59,7 +59,8 @@ The behaviour, in plain words (the scenarios this module is bound to):
     Scenario: the retrieval ranking is unchanged
         Given the fixed corpus and fixed queries captured before this change
         When I run them against this version
-        Then the ids, the order and the scores are the same
+        Then the same memories come back, in the same order wherever their
+        scores are clearly apart, and each score agrees within platform tolerance
 
 Red first: each scenario above was run against origin/main and failed there
 before the implementation existed, except the ranking scenario, which is a
@@ -83,6 +84,14 @@ from tests.golden_recall import build_store, run_queries
 T1 = datetime(2026, 6, 2, 9, 0, tzinfo=UTC)
 T2 = datetime(2026, 6, 3, 9, 0, tzinfo=UTC)
 GOLDEN = Path(__file__).parent / "fixtures" / "golden_recall.json"
+# Cross-platform score tolerance for the golden. Measured on 2026-10-13 with the
+# same fastembed 0.9.0 and onnxruntime 1.31.0 on both sides: macOS arm64 against
+# Linux x86_64 in a linux/amd64 container, 101 candidates over 9 queries. The
+# largest |score difference| was 3.4e-4 and the median 1.5e-5. 1e-3 is about
+# three times the largest. The ranking mutant "vector_weight 0.5 to 0.55" moves
+# 22 of 37 returned scores by more than 1e-3 (its smallest change is 6.3e-3), so
+# the tolerance still catches it. Linux passes at any tolerance from 5e-4 up.
+GOLDEN_TOLERANCE = 1e-3
 
 _OLD_COLS = (
     "id, content, timestamp, actors, tags, salience, emotional_valence, "
@@ -408,21 +417,45 @@ def test_mcp_remember_refuses_a_provenance_on_a_semantic_fact(pool) -> None:
 def test_recall_matches_the_golden_captured_before_the_change(tmp_path: Path) -> None:
     """Regression guard, captured from origin/main before the provenance change.
 
-    The fixture holds scores and distances rounded to four places, so a
-    different CPU's last float bits cannot fail it. A change that moves a
-    ranking or a score by more than that does.
+    The fixture was captured on macOS (arm64). CI runs Linux (x86_64), where the
+    same model returns scores that differ in the fourth significant digit. So
+    the check is portable by construction:
+
+    * Scores must agree within GOLDEN_TOLERANCE.
+    * The memories returned must agree, except that a memory whose captured
+      score sits within the platform noise of the cutoff may fall out of the
+      top k or drop in. A memory well above the cutoff must be returned, and
+      nothing well below it may appear.
+    * Order is asserted only between two memories whose captured scores differ
+      by more than twice the tolerance.
+
+    Distance is not compared separately: for the hybrid and cosine modes it is
+    1 / score - 1, so the score check already covers it.
     """
     build_store(tmp_path / "golden.engram")
-    got = run_queries(tmp_path / "golden.engram")
-    want = json.loads(GOLDEN.read_text(encoding="utf-8"))
-    assert [(q["mode"], q["query"], q["agent"]) for q in got] == [
-        (q["mode"], q["query"], q["agent"]) for q in want
+    got_all = run_queries(tmp_path / "golden.engram")
+    want_all = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    tol = GOLDEN_TOLERANCE
+    assert [(q["mode"], q["query"], q["agent"]) for q in got_all] == [
+        (q["mode"], q["query"], q["agent"]) for q in want_all
     ]
-    for g, w in zip(got, want, strict=True):
-        assert [r["content"] for r in g["results"]] == [r["content"] for r in w["results"]], (
-            g["mode"],
-            g["query"],
-        )
-        for gr, wr in zip(g["results"], w["results"], strict=True):
-            for key in ("score", "distance", "importance"):
-                assert round(gr[key], 4) == wr[key], (g["query"], key)
+    for got, want in zip(got_all, want_all, strict=True):
+        label = (got["mode"], got["query"])
+        assert len(got["results"]) == len(want["results"]), label
+        got_by = {r["content"]: r for r in got["results"]}
+        want_by = {r["content"]: r for r in want["results"]}
+        cutoff = min(r["score"] for r in want["results"])
+        for content, row in want_by.items():
+            if row["score"] >= cutoff + 2 * tol:
+                assert content in got_by, (label, "missing", content)
+        for content, row in got_by.items():
+            if content not in want_by:
+                assert row["score"] <= cutoff + tol, (label, "unexpected", content)
+                continue
+            assert abs(row["score"] - want_by[content]["score"]) <= tol, (label, content)
+            assert row["importance"] == want_by[content]["importance"], (label, content)
+        position = {r["content"]: i for i, r in enumerate(got["results"])}
+        for a, row_a in want_by.items():
+            for b, row_b in want_by.items():
+                if row_a["score"] - row_b["score"] > 2 * tol and a in position and b in position:
+                    assert position[a] < position[b], (label, a, b)
