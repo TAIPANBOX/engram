@@ -139,6 +139,14 @@ an absent invariant.
     events were built from the deleted ids and were right all along. *(test:
     `tests/test_compress.py::test_compress_removed_count_excludes_already_deleted_candidates`)*
 
+11. **Every observation records where it came from, and recall, `why()` and the
+    adapters return it.** The source is one of `user`, `tool` or `external`. A
+    write that names none is `external`; rows written before the column existed
+    read as `unknown`, never `user`. A fact reports the least trusted source among
+    the episodes it was extracted from. Provenance does not change ranking or
+    scores. *(test: `tests/test_provenance.py`; the ranking half is
+    `test_recall_matches_the_golden_captured_before_the_change`)*
+
 ## Decisions that have no gate yet
 
 This list is debt, and it is here to stay visible rather than to be tidy.
@@ -236,6 +244,14 @@ checked structurally. Until then it is a document, and documents do not stop
 code.
 
 When the user approves a decision, add it here in the same session.
+
+## Approved decisions
+
+- `@decided 2026-10-13`: Engram records where each memory came from and returns
+  it, so an agent framework can treat untrusted memory as untrusted context.
+  Approved as the one on-disk schema change this needs: an additive nullable
+  column, `episodes.provenance`. No default, weight or retrieval algorithm changed.
+  Invariant 11 holds it.
 
 ## Escalate, do not push through
 

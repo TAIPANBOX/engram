@@ -1,0 +1,305 @@
+[
+ {
+  "agent": null,
+  "as_of": null,
+  "k": 5,
+  "mode": "hybrid",
+  "query": "where does Ivan work",
+  "results": [
+   {
+    "content": "Ivan joined Globex as a site reliability engineer",
+    "distance": 0.0,
+    "importance": 1.0,
+    "score": 1.0
+   },
+   {
+    "content": "Ivan moved the payment service to the new Kubernetes cluster",
+    "distance": 1.2716,
+    "importance": 1.0,
+    "score": 0.4402
+   },
+   {
+    "content": "Sourdough starter needs feeding every twelve hours in summer",
+    "distance": 8.5858,
+    "importance": 1.0,
+    "score": 0.1043
+   },
+   {
+    "content": "Escalated the payment incident to the on-call engineer overnight",
+    "distance": 14.6976,
+    "importance": 1.0,
+    "score": 0.0637
+   },
+   {
+    "content": "Globex renewed the support contract for another twelve months",
+    "distance": 14.7944,
+    "importance": 1.0,
+    "score": 0.0633
+   }
+  ]
+ },
+ {
+  "agent": null,
+  "as_of": null,
+  "k": 5,
+  "mode": "hybrid",
+  "query": "payment service incident",
+  "results": [
+   {
+    "content": "The payment service throttled requests during the Friday incident",
+    "distance": 0.0,
+    "importance": 1.0,
+    "score": 1.0
+   },
+   {
+    "content": "Escalated the payment incident to the on-call engineer overnight",
+    "distance": 1.2417,
+    "importance": 1.0,
+    "score": 0.4461
+   },
+   {
+    "content": "Customer Maria reported a duplicate charge on her card",
+    "distance": 2.2859,
+    "importance": 1.0,
+    "score": 0.3043
+   },
+   {
+    "content": "Customer asked whether the rollback changed their saved invoices",
+    "distance": 2.497,
+    "importance": 1.0,
+    "score": 0.286
+   },
+   {
+    "content": "Refund issued to Maria, the duplicate charge came from a retry",
+    "distance": 2.5564,
+    "importance": 1.0,
+    "score": 0.2812
+   }
+  ]
+ },
+ {
+  "agent": "agent://golden.example/planner",
+  "as_of": null,
+  "k": 3,
+  "mode": "hybrid",
+  "query": "payment service incident",
+  "results": [
+   {
+    "content": "The payment service throttled requests during the Friday incident",
+    "distance": 0.0,
+    "importance": 1.0,
+    "score": 1.0
+   },
+   {
+    "content": "Ivan moved the payment service to the new Kubernetes cluster",
+    "distance": 2.8042,
+    "importance": 1.0,
+    "score": 0.2629
+   },
+   {
+    "content": "Rolled back the deployment after the database migration stalled",
+    "distance": 9.7759,
+    "importance": 1.0,
+    "score": 0.0928
+   }
+  ]
+ },
+ {
+  "agent": null,
+  "as_of": null,
+  "k": 4,
+  "mode": "hybrid",
+  "query": "sourdough starter feeding",
+  "results": [
+   {
+    "content": "Sourdough starter needs feeding every twelve hours in summer",
+    "distance": 0.0,
+    "importance": 1.0,
+    "score": 1.0
+   },
+   {
+    "content": "Shared the sourdough recipe with the support team for the bake sale",
+    "distance": 2.2945,
+    "importance": 1.0,
+    "score": 0.3035
+   },
+   {
+    "content": "Anna prefers video calls on Tuesday mornings",
+    "distance": 10.6686,
+    "importance": 1.0,
+    "score": 0.0857
+   },
+   {
+    "content": "Ivan moved the payment service to the new Kubernetes cluster",
+    "distance": 12.28,
+    "importance": 1.0,
+    "score": 0.0753
+   }
+  ]
+ },
+ {
+  "agent": null,
+  "as_of": null,
+  "k": 5,
+  "mode": "cosine",
+  "query": "rollback after the migration",
+  "results": [
+   {
+    "content": "Rolled back the deployment after the database migration stalled",
+    "distance": 0.5044,
+    "importance": 1.0,
+    "score": 0.6647
+   },
+   {
+    "content": "Customer asked whether the rollback changed their saved invoices",
+    "distance": 0.7502,
+    "importance": 1.0,
+    "score": 0.5714
+   },
+   {
+    "content": "Globex renewed the support contract for another twelve months",
+    "distance": 0.8808,
+    "importance": 1.0,
+    "score": 0.5317
+   },
+   {
+    "content": "Refund issued to Maria, the duplicate charge came from a retry",
+    "distance": 0.889,
+    "importance": 1.0,
+    "score": 0.5294
+   },
+   {
+    "content": "Ivan moved the payment service to the new Kubernetes cluster",
+    "distance": 0.8929,
+    "importance": 1.0,
+    "score": 0.5283
+   }
+  ]
+ },
+ {
+  "agent": null,
+  "as_of": null,
+  "k": 4,
+  "mode": "cosine",
+  "query": "customer refund for a duplicate charge",
+  "results": [
+   {
+    "content": "Refund issued to Maria, the duplicate charge came from a retry",
+    "distance": 0.5122,
+    "importance": 1.0,
+    "score": 0.6613
+   },
+   {
+    "content": "Customer Maria reported a duplicate charge on her card",
+    "distance": 0.5515,
+    "importance": 1.0,
+    "score": 0.6445
+   },
+   {
+    "content": "Customer asked whether the rollback changed their saved invoices",
+    "distance": 0.7197,
+    "importance": 1.0,
+    "score": 0.5815
+   },
+   {
+    "content": "The payment service throttled requests during the Friday incident",
+    "distance": 0.8488,
+    "importance": 1.0,
+    "score": 0.5409
+   }
+  ]
+ },
+ {
+  "agent": null,
+  "as_of": "2026-07-01T00:00:00+00:00",
+  "k": 3,
+  "mode": "cosine",
+  "query": "Ivan and the cluster",
+  "results": [
+   {
+    "content": "Ivan moved the payment service to the new Kubernetes cluster",
+    "distance": 0.7606,
+    "importance": 1.0,
+    "score": 0.568
+   },
+   {
+    "content": "Ivan joined Globex as a site reliability engineer",
+    "distance": 0.8508,
+    "importance": 1.0,
+    "score": 0.5403
+   }
+  ]
+ },
+ {
+  "agent": null,
+  "as_of": null,
+  "k": 4,
+  "mode": "spreading",
+  "query": "payment incident escalation",
+  "results": [
+   {
+    "content": "Escalated the payment incident to the on-call engineer overnight",
+    "distance": 0.0,
+    "importance": 1.0,
+    "score": 0.4637
+   },
+   {
+    "content": "The payment service throttled requests during the Friday incident",
+    "distance": 0.0,
+    "importance": 1.0,
+    "score": 0.4534
+   },
+   {
+    "content": "Customer asked whether the rollback changed their saved invoices",
+    "distance": 0.0,
+    "importance": 1.0,
+    "score": 0.4323
+   },
+   {
+    "content": "Refund issued to Maria, the duplicate charge came from a retry",
+    "distance": 0.0,
+    "importance": 1.0,
+    "score": 0.4308
+   }
+  ]
+ },
+ {
+  "agent": "agent://golden.example/planner",
+  "as_of": "2026-08-05T00:00:00+00:00",
+  "k": 5,
+  "mode": "hybrid",
+  "query": "budget review",
+  "results": [
+   {
+    "content": "Quarterly budget review moved to the second week of September",
+    "distance": 0.0,
+    "importance": 1.0,
+    "score": 1.0
+   },
+   {
+    "content": "The payment service throttled requests during the Friday incident",
+    "distance": 5.9196,
+    "importance": 1.0,
+    "score": 0.1445
+   },
+   {
+    "content": "Ivan moved the payment service to the new Kubernetes cluster",
+    "distance": 7.2069,
+    "importance": 1.0,
+    "score": 0.1218
+   },
+   {
+    "content": "Rolled back the deployment after the database migration stalled",
+    "distance": 8.695,
+    "importance": 1.0,
+    "score": 0.1031
+   },
+   {
+    "content": "Sourdough starter needs feeding every twelve hours in summer",
+    "distance": 10.2776,
+    "importance": 1.0,
+    "score": 0.0887
+   }
+  ]
+ }
+]

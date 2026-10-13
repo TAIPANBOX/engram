@@ -3,11 +3,44 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 import numpy as np
+
+# Where a memory came from. A writer declares one of the three; a row written
+# before the field existed has no value, and reads as UNKNOWN_PROVENANCE.
+PROVENANCES: tuple[str, ...] = ("user", "tool", "external")
+UNKNOWN_PROVENANCE = "unknown"
+# What a write records when its caller names no source. A caller who says
+# nothing is not assumed to be the user, so the default is the least trusted
+# of the three declared values.
+DEFAULT_PROVENANCE = "external"
+# Least trusted first. Used to read a fact off the episodes it came from.
+_TRUST_ORDER: tuple[str, ...] = (UNKNOWN_PROVENANCE, "external", "tool", "user")
+
+
+def check_provenance(value: str) -> str:
+    """Return *value* if it is one of the three declared sources, else raise."""
+    if value not in PROVENANCES:
+        raise ValueError(f"provenance must be one of {PROVENANCES}, got {value!r}")
+    return value
+
+
+def least_trusted(values: Iterable[str]) -> str:
+    """The least trusted of *values*. No values at all reads as unknown."""
+    ranked = list(values)
+    if not ranked:
+        return UNKNOWN_PROVENANCE
+
+    def rank(value: str) -> int:
+        # A value outside the known set (a hand-edited row) is treated as the
+        # least trusted, never as trusted.
+        return _TRUST_ORDER.index(value) if value in _TRUST_ORDER else 0
+
+    return min(ranked, key=rank)
 
 
 @dataclass
@@ -24,11 +57,16 @@ class Episode:
     summary_of: list[str] = field(default_factory=list)
     importance_score: float = 1.0
     agent_id: str | None = None
+    provenance: str = UNKNOWN_PROVENANCE
 
     @classmethod
     def from_row(cls, row: tuple[Any, ...]) -> Episode:
         """Construct from a DB row (id, content, timestamp, actors, tags, salience,
-        emotional_valence, summary_of, importance_score[, agent_id])."""
+        emotional_valence, summary_of, importance_score[, agent_id[, provenance]]).
+
+        A NULL provenance is a row written before the column existed, and reads
+        as unknown, never as a trusted source.
+        """
         return cls(
             id=row[0],
             content=row[1],
@@ -40,6 +78,7 @@ class Episode:
             summary_of=json.loads(row[7] or "[]"),
             importance_score=float(row[8]) if row[8] is not None else 1.0,
             agent_id=row[9] if len(row) > 9 else None,
+            provenance=(row[10] if len(row) > 10 and row[10] is not None else UNKNOWN_PROVENANCE),
         )
 
 
@@ -176,6 +215,8 @@ class ObserveInput:
         timestamp: When the event happened. Defaults to now. Set it when
             loading history, so ``as_of`` places each episode in the period it
             belongs to rather than the moment the import ran.
+        provenance: Where the content came from: ``"user"``, ``"tool"`` or
+            ``"external"``. Defaults to ``"external"``.
     """
 
     content: str
@@ -184,6 +225,7 @@ class ObserveInput:
     salience: float = 0.5
     emotional_valence: float = 0.0
     timestamp: datetime | None = None
+    provenance: str = DEFAULT_PROVENANCE
 
 
 @dataclass

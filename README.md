@@ -209,7 +209,7 @@ the questions an agent asks after that one.
 | **Spreading activation** | Recall walks Hebbian-weighted edges out from what matched, so a query reaches what the match is connected to and not only what it resembles |
 | **Importance and decay** | An Ebbinghaus curve with Hebbian reinforcement: what is used stays sharp, what is untouched fades, and reflection prunes the bottom. The store stays useful instead of growing |
 | **Working memory** | A 7±2 scratchpad, Miller's number, for what the agent is holding right now as opposed to what it knows |
-| **Provenance** | `why()` answers where a belief came from, episode by episode, so a wrong answer can be traced to what produced it |
+| **Provenance** | Every observation records where it came from (`user`, `tool` or `external`) and recall returns it. `why()` answers where a belief came from, episode by episode, so a wrong answer can be traced to what produced it |
 | **Contradiction** | Reflection finds facts that disagree and records the disagreement rather than overwriting one with the other |
 | **Erasure** | `forget()` at episode, entity or fact level, and `compress()` burns the raw text on a schedule while the extracted facts stay, so a person can be removed without the history losing its shape |
 | **Many agents, one file** | `agent_id` is a partition key: each agent keeps its own episodes, all of them share extracted facts, and a scoped recall stays flat as the store grows |
@@ -283,6 +283,30 @@ sixteen words; it matched nothing, and the blend quietly reduced to plain
 cosine. Hybrid mode was cosine under another name for any query longer than a
 few words. What exposed it was a benchmark run scoring both modes to three
 identical decimal places.
+
+### Where a memory came from
+
+Every observation records a source: `user` (typed by the person), `tool` (returned by a
+tool), or `external` (anything else, such as a web page or another agent's output). A write
+that names no source is `external`. Engram stores the value the writer declares and does not
+verify it. Rows written before this field existed read as `unknown`, never as `user`.
+
+```python
+mem.observe("Ivan moved from Acme to Globex", provenance="user")
+for r in mem.recall("where does Ivan work"):
+    print(r.episode.provenance, r.episode.content)
+```
+
+`recall()`, `why()`, the `engram-mcp` tools and the LangChain and LlamaIndex adapters all
+return the source with each result. A fact has no source of its own: `why()` reports the least
+trusted source among the episodes it was extracted from, and `unknown` when none is recorded.
+
+**Using provenance with TokenFuse.** TokenFuse tracks where context came from and can refuse
+to let an agent act on untrusted context. Through TokenFuse's MCP broker, Engram's `recall` and
+`why` tools carry the `memory` label, so memory read through a tool is labelled without any
+extra step. A framework that places memory directly into the prompt, without a tool call,
+declares it by sending the request header `x-fuse-taint: memory` whenever that memory is
+`external`, `tool` or `unknown`.
 
 ### Three ways to search
 
@@ -816,10 +840,10 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (520 tests, 527 with the encryption extra)
+### Test coverage (549 tests, 556 with the encryption extra)
 
-Statement coverage: **89%** (2679 statements, 293 uncovered on a plain
-install), measured 2026-09-16 with `pytest --cov=engram --cov-report=term-missing`.
+Statement coverage: **89%** (2709 statements, 292 uncovered on a plain
+install), measured 2026-10-13 with `pytest --cov=engram --cov-report=term-missing`.
 CI's `test` job runs the suite with the same flags and prints the current
 figure on every push; this line is not machine-checked against that output
 (unlike the test count above), so treat CI's own number as current if the
@@ -853,6 +877,9 @@ tests/
   test_encryption.py     SQLCipher encryption-at-rest + rekey()
   test_llm_adapters.py   all LLM adapters + response-parsing edge cases
   test_integrations.py   LangChain, LlamaIndex
+  test_provenance.py     provenance: recorded and returned, legacy rows read unknown,
+                          migration keeps every row, export/import, adapters, MCP,
+                          and a golden recall captured before the change
   test_mcp_server.py     MCP server (engram-mcp): remember/recall/why/forget/stats,
                           agent pooling, procedural rejection, reflect() not exposed
   test_events.py         Agent Passport NDJSON event exporter: schema validation,

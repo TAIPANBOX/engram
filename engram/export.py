@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from engram.models import check_provenance
+
 if TYPE_CHECKING:
     from engram.core import Engram
 
@@ -49,7 +51,7 @@ def export_json(mem: Engram, dest: str | Path) -> dict[str, Any]:
         dict(row)
         for row in conn.execute(
             "SELECT id, content, timestamp, actors, tags, salience, "
-            "emotional_valence, summary_of, importance_score, agent_id "
+            "emotional_valence, summary_of, importance_score, agent_id, provenance "
             f"FROM episodes {scope} ORDER BY timestamp ASC",
             scope_params,
         ).fetchall()
@@ -130,12 +132,17 @@ def import_json(mem: Engram, src: str | Path, *, merge: bool = False) -> dict[st
     on_conflict = "OR IGNORE" if merge else "OR ABORT"
 
     for ep in doc.get("episodes", []):
+        # A document exported before provenance existed has no such key. It
+        # imports as NULL, which reads as unknown, never as a trusted source.
+        ep.setdefault("provenance", None)
+        if ep["provenance"] is not None:
+            check_provenance(ep["provenance"])
         conn.execute(
             f"INSERT {on_conflict} INTO episodes "
             "(id, content, timestamp, actors, tags, salience, emotional_valence, "
-            "summary_of, importance_score, agent_id) "
+            "summary_of, importance_score, agent_id, provenance) "
             "VALUES (:id, :content, :timestamp, :actors, :tags, :salience, "
-            ":emotional_valence, :summary_of, :importance_score, :agent_id)",
+            ":emotional_valence, :summary_of, :importance_score, :agent_id, :provenance)",
             ep,
         )
         if conn.execute("SELECT changes()").fetchone()[0]:

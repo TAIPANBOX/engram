@@ -22,7 +22,7 @@ from typing import Any
 
 from engram.core import Engram
 from engram.importance import DecayConfig
-from engram.models import Fact, ForgetResult, ObserveInput, SearchResult
+from engram.models import DEFAULT_PROVENANCE, Fact, ForgetResult, ObserveInput, SearchResult
 
 try:
     from engram.llm import LLMAdapter
@@ -91,6 +91,7 @@ class AsyncEngram:
         tags: list[str] | None = None,
         salience: float = 0.5,
         emotional_valence: float = 0.0,
+        provenance: str = DEFAULT_PROVENANCE,
     ) -> str:
         """Async version of :meth:`~engram.core.Engram.observe`.
 
@@ -104,6 +105,7 @@ class AsyncEngram:
             tags=tags,
             salience=salience,
             emotional_valence=emotional_valence,
+            provenance=provenance,
         )
 
     async def observe_many(self, items: list[ObserveInput]) -> list[str]:
