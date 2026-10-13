@@ -181,7 +181,7 @@ remain the ones to read.
 
 Engram is a **cognitive memory layer** for AI agents - a single local file (`agent.engram`) built on SQLite. It models three kinds of memory that mirror how human memory works:
 
-**Episodic memory** - raw observations stored as they happen, with actors, tags, salience, and emotional weight. No LLM required at write time; writes complete in ~4 ms.
+**Episodic memory** - raw observations stored as they happen, with actors, tags, salience, and emotional weight. No LLM required at write time; a write takes a median of 8 ms on an Apple Silicon Mac (`engram-bench latency`, 200 writes, 2026-10-13).
 
 **Semantic memory** - structured knowledge extracted from episodes via a background reflection loop: `(subject, predicate, object)` triples with full bitemporal validity. Every fact tracks *when it was true in reality* and *when the system learned it* - independently on two timelines. When Ivan switches jobs, the old fact is closed with `valid_to`, not deleted. You can query what the agent believed in March even if the truth has since changed.
 
@@ -253,7 +253,7 @@ mem.recall("Ivan employer", k=5, as_of=datetime(2024, 3, 1, tzinfo=UTC))
 mem.timeline("Ivan")
 ```
 
-This two-timeline approach is standard in financial databases and audit systems. In the AI memory space, Engram is the only tool that implements it.
+This two-timeline approach is standard in financial databases and audit systems, and Engram applies it to agent memory.
 
 ### What a recall actually does
 
@@ -272,8 +272,9 @@ has already been chosen: in a shared store where one agent held most of the
 episodes, the other agent's `recall(k=5)` returned **nothing at all** rather
 than its own five nearest. It also means scoped recall no longer grows with
 the store. An agent holding five episodes pays for five, whether the shared
-file holds a thousand or a hundred thousand: 0.05 ms against 0.09 ms across
-that whole range.
+file holds a thousand or a hundred thousand: 0.05 ms at a thousand episodes and
+0.09 ms at a hundred thousand (scoped column of the scale table in the
+[API reference](docs/api-reference.md)).
 
 **The keyword side ORs its terms.** FTS5 reads a space between words as an
 implicit AND, so joining a question's tokens with spaces demands that every
@@ -285,6 +286,9 @@ few words. What exposed it was a benchmark run scoring both modes to three
 identical decimal places.
 
 ### Where a memory came from
+
+Unreleased: this is on `main` and ships in the next release. Version 2.4.1 does not
+have it.
 
 Every observation records a source: `user` (typed by the person), `tool` (returned by a
 tool), or `external` (anything else, such as a web page or another agent's output). A write
@@ -354,15 +358,17 @@ ask which.
 The blend behind hybrid was swept rather than assumed: every weighting from
 pure BM25 to pure vector was scored in the same pass, both ends came out worse
 than the middle, and the default is now `0.5 / 0.5`, which leads the previous
-`0.7 / 0.3` on all four metrics by about five questions out of five hundred.
+`0.7 / 0.3` on three of the four metrics, by one to five questions out of five
+hundred (session@10 ties).
 The margin is small and said to be small; the shape of the curve is the part
 that matters.
 
 Cosine reproduced its figures to three decimals across two independent
-six-hour passes over the whole dataset. Cosine is ahead on exactly one cut,
-`multi-session` at k=10 (0.992 against 0.985), which is in the
-[API reference](docs/api-reference.md#recall-accuracy) along with the
-per-type breakdown. The per-question records behind every number are in
+six-hour passes over the whole dataset: the two committed 2026-07-30 files agree
+on every cosine hit. Cosine is ahead on five of the per-type cuts, among them
+`multi-session` at k=10 (0.992 against 0.985) and `single-session-preference` at
+k=10 (0.933 against 0.900). The four overall columns favour hybrid. The per-type
+breakdown is in the [API reference](docs/api-reference.md#recall-accuracy). The per-question records behind every number are in
 [`benchmarks/results/`](benchmarks/results/) with the snippet to recompute
 them, so the table can be checked rather than believed.
 
@@ -482,11 +488,15 @@ pip install engdbram
 # LLM-powered reflection (optional, pick one):
 pip install 'engdbram[anthropic]'   # Claude
 pip install 'engdbram[openai]'      # OpenAI or any OpenAI-compatible
+pip install 'engdbram[gemini]'      # Google Gemini
 
 # Integrations:
 pip install 'engdbram[mcp]'         # MCP server (Claude Desktop, Cursor, etc.)
 pip install 'engdbram[langchain]'   # LangChain retriever + chat history
 pip install 'engdbram[llamaindex]'  # LlamaIndex memory buffer
+
+# Encryption at rest (optional; needs the system libsqlcipher library):
+pip install 'engdbram[encryption]'  # SQLCipher
 
 # Everything:
 pip install 'engdbram[anthropic,mcp,langchain,llamaindex]'
@@ -609,7 +619,7 @@ with Engram(path="./agent.engram") as mem:
 
 ### Bulk import with observe_many
 
-When loading historical context, `observe_many()` runs a single ONNX inference pass for the whole batch and commits all rows in one transaction - about 2× faster than calling `observe()` in a loop:
+When loading historical context, `observe_many()` runs a single ONNX inference pass for the whole batch and commits all rows in one transaction - two and a half to three times faster than calling `observe()` in a loop (200 observations, two runs on an Apple Silicon Mac, 2026-10-13):
 
 ```python
 from engram import Engram, ObserveInput
@@ -844,6 +854,8 @@ mypy engram         # type check (strict)
 
 Statement coverage: **89%** (2709 statements, 292 uncovered on a plain
 install), measured 2026-10-13 with `pytest --cov=engram --cov-report=term-missing`.
+With the `encryption` extra installed, the same command gave 90% (281 uncovered)
+on the same day, with all 556 tests passing.
 CI's `test` job runs the suite with the same flags and prints the current
 figure on every push; this line is not machine-checked against that output
 (unlike the test count above), so treat CI's own number as current if the
@@ -889,6 +901,7 @@ tests/
                           envelope version, a chain that continues across it, and
                           a delegation proof accepted but never written
   test_gates_are_wired.py  the gate scripts run in the workflows that ship
+  test_manifest.py       components.json's checked claims against the installed console scripts
   test_benchmarks.py     benchmark infrastructure
 ```
 
@@ -914,8 +927,9 @@ tests/
 - [x] v2.2.0 - Correctness pass (bitemporal `as_of` UTC coercion, `contradictions()` identical-fact fix, `import_json` re-embed + FTS, reflection abort rollback, LLM response-parse guards), thread-safety (`Store` + embedder locks for `reflect_async` / `AsyncEngram`), per-agent edge & decay scoping, PEP 561 `py.typed`, CI matrix (Python 3.13 + encryption job), release gated on tests, `migrate()` fails loudly on embedder-dimension mismatch, `pip-audit` CI job
 - [x] v2.2.1 - MCP server tool surface (`engram-mcp`): stdio transport, optional `[mcp]` extra, `remember`/`recall`/`why`/`forget`/`stats` tools with structured semantic params and per-call `agent_id`, `reflect()` deliberately not exposed; public `forget_fact()` API (sync + async) for erasing a single semantic fact; opt-in [Agent Passport](https://github.com/TAIPANBOX/agent-passport) NDJSON event exporter (`events_path` / `ENGRAM_EVENTS_PATH`, `engram-mcp --events` / `ENGRAM_MCP_EVENTS`) emitting `memory_written`, `memory_forgotten`, `reflection_run`, `contradiction_found`
 - [x] v2.3.0 - `agent_id` is a vec0 partition key and `ts` a metadata column, so scoped and `as_of` recall resolve inside the KNN scan (scoped recall could return nothing at all before, and no longer grows with the store); recall accuracy published on LongMemEval-S, all 500 questions, with the per-question records in `benchmarks/results/`; `mode="hybrid"` is the default after beating cosine at every k measured, and the BM25 query it depends on no longer AND-joins its terms into matching nothing; `engram-bench scale` and `engram-bench longmemeval`; `observe(timestamp=)`; atomic `forget_entity()`; `compress()` keeps its summary inside the period it summarises
-- [x] v2.4.0 - the hybrid blend measured instead of assumed: `engram-bench longmemeval --sweep` scores every weighting in one pass, and the default moved from `0.7 / 0.3` to `0.5 / 0.5`, which leads on all four metrics by about five questions in five hundred; both ends of the range are clearly worse than the middle, which is the evidence hybrid mode rests on
+- [x] v2.4.0 - the hybrid blend measured instead of assumed: `engram-bench longmemeval --sweep` scores every weighting in one pass, and the default moved from `0.7 / 0.3` to `0.5 / 0.5`, which leads on three of the four metrics, by one to five questions in five hundred (session@10 ties); both ends of the range are clearly worse than the middle, which is the evidence hybrid mode rests on
 - [x] v2.4.1 - the numbers made re-readable and the headline table made honest: the LongMemEval checkpoint now records the rank of every evidence and gold-session hit plus each question's evidence count, so a smaller k and the strict "every flagged turn retrieved" reading are recomputable from a finished run instead of costing another six-hour pass; the published turn-recall figure carries the caveats it needed (21 of 500 questions flag no turn at all, so the figure over the 479 answerable ones is 0.866 at k=5, and 59% flag more than one, so "at least one retrieved" is an upper bound); and the headline table, which had gone on showing the `0.7 / 0.3` figures under the word "default" for one release after 2.4.0 moved it, was corrected everywhere from one run
+- [ ] Unreleased, on `main` and not yet tagged - provenance: every observation records where it came from, and `recall`, `why()`, the MCP tools and the adapters return it. Version 2.4.1 does not have it.
 
 ---
 

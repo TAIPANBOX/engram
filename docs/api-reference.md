@@ -69,7 +69,7 @@ with Engram(path=":memory:") as mem:
 
 ### `observe(content, *, actors, tags, salience, emotional_valence, timestamp, provenance) → str`
 
-Record a raw episodic observation. Returns the episode id. No LLM call. ~4 ms.
+Record a raw episodic observation. Returns the episode id. No LLM call. A median of 8 ms on an Apple Silicon Mac (`engram-bench latency`, 200 writes, 2026-10-13).
 
 ```python
 ep_id = mem.observe(
@@ -743,11 +743,14 @@ no LLM anywhere in the loop.
 | `cosine` | 0.956 | 0.978 | 0.772 | 0.862 | 16 |
 
 Both modes were scored against the same freshly built store for each
-question, so the comparison is like for like. They disagreed on 57 of the 500
-questions. Hybrid is the default because of the turn column: +4.8 points at
+question, so the comparison is like for like. They disagreed on 67 of the 500
+questions at turn@5 and on 19 at session@5 (counted from the committed sweep
+records). Hybrid is the default because of the turn column: +5.8 points at
 k=5 on finding the specific turn that holds the answer, which is what an
-agent reads. Cosine is ahead on exactly one cut, `multi-session` at k=10
-(0.992 against 0.985).
+agent reads. Cosine is ahead on five of the per-type cuts: `multi-session` at
+session@10 (0.992 against 0.985), `multi-session` at turn@5 and turn@10 (107
+against 106, and 117 against 116, of 133), and `single-session-preference` at
+session@10 and turn@5 (0.933 against 0.900, and 24 against 22, of 30).
 
 The dataset marks both the sessions holding the evidence and the individual
 turns, so there are two honest numbers and they are not interchangeable:
@@ -762,15 +765,19 @@ turns, so there are two honest numbers and they are not interchangeable:
 A memory system quoting one unqualified "R@k" is almost certainly quoting the
 first. Ask which.
 
-Session recall at k=5 by question type, hybrid against cosine:
-`single-session-assistant` 1.000 / 1.000, `knowledge-update` 0.987 / 0.974,
-`single-session-user` 0.986 / 0.957, `multi-session` 0.970 / 0.970,
-`temporal-reasoning` 0.940 / 0.925, `single-session-preference` 0.933 / 0.900.
+Session recall at k=5 by question type, hybrid against cosine, counted from the
+committed sweep records (`benchmarks/results/longmemeval_s_2026-07-30_weight_sweep.jsonl`):
+`single-session-assistant` 1.000 / 1.000, `knowledge-update` 1.000 / 0.974,
+`single-session-user` 1.000 / 0.957, `multi-session` 0.970 / 0.970,
+`temporal-reasoning` 0.940 / 0.925, `single-session-preference` 0.900 / 0.900.
 
 **Three readings of turn recall, and why the headline one is the loosest.**
 The dataset flags 896 turns across 500 questions, but not evenly: 182 questions
 flag exactly one, 297 flag between two and six, and **21 flag none at all**.
-That matters twice over.
+These counts are not in the committed records. They come from the dataset's
+`has_answer` flags, counted by `evidence_count()` in
+`engram/benchmarks/longmemeval.py`, and the dataset is not vendored, so they
+cannot be recomputed from this repository. That matters twice over.
 
 - The 21 unflagged questions can never produce a turn hit, so they lower the
   figure for a reason that has nothing to do with retrieval. Over the 479
@@ -811,8 +818,8 @@ six-hour pass. All 500 questions, all against the same store per question:
 
 **Read the margin honestly.** 0.5 beats the old 0.7 by 1.0 point of turn@5,
 which is five questions out of five hundred. It is the default because it
-leads on all four metrics at once and costs nothing to adopt, not because the
-gap is large. The two sit on the same plateau.
+leads on three of the four metrics, ties on session@10, and costs nothing to
+adopt, not because the gap is large. The two sit on the same plateau.
 
 **The shape is the real result.** Both ends are clearly worse than the middle:
 BM25 alone is the weakest configuration measured (0.750 turn@5) and pure vector
