@@ -123,7 +123,7 @@ jobs:
         # extra (llama-index-core), not by core Engram. No fixed version is
         # published upstream yet; revisit and drop this ignore once nltk ships a
         # patched release.
-        # PYSEC-2026-3740 (added 2026-09-02, Yurii's decision): the same nltk,
+        # PYSEC-2026-3740 (@decided 2026-09-02: the ignore is added): the same nltk,
         # the same optional extra. A path traversal in nltk's model save/load
         # helpers; Engram's own code imports nltk nowhere and never calls those
         # helpers, and no patched nltk was published when this was added. Same
