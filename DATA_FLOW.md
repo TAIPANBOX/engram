@@ -76,7 +76,7 @@ sequenceDiagram
 
 ### Phase 1: Ingestion & Working Memory
 * **Working Memory (`WorkingMemory`)**: Serves as a fast RAM buffer. Holds active context or transient goals using an LRU cache with a capacity bounded by Miller's Law ($7 \pm 2$). When an item is evicted, it can optionally spill over (flush) to the long-term store by calling `observe()`.
-* **Observations (`observe`)**: Inserts new episodic observations into the SQLite `episodes` table.
+* **Observations (`observe`)**: Inserts new episodic observations into the SQLite `episodes` table, each with the source it was declared from (`provenance`: `user`, `tool` or `external`; `external` when the caller names none).
 * **Vector Embeddings**: Computes a 384-dimensional vector utilizing local ONNX inference (`fastembed`) and saves it in `vec_episodes` (a virtual `sqlite-vec` index).
 * **Text Indexing**: Syncs the raw text content with `fts_episodes` (a virtual `FTS5` table) for traditional BM25 searches.
 
@@ -198,7 +198,8 @@ CREATE TABLE episodes (
     emotional_valence REAL,
     summary_of JSON,
     importance_score REAL,
-    agent_id TEXT
+    agent_id TEXT,
+    provenance TEXT            -- 'user' | 'tool' | 'external'; NULL = written before the column existed (reads as 'unknown')
 );
 
 -- Bitemporal semantic facts

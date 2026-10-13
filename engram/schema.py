@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS episodes (
     emotional_valence REAL DEFAULT 0.0,
     summary_of      JSON DEFAULT '[]',
     importance_score REAL NOT NULL DEFAULT 1.0,
-    agent_id        TEXT DEFAULT NULL
+    agent_id        TEXT DEFAULT NULL,
+    provenance      TEXT DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS facts (
@@ -240,6 +241,12 @@ def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
         conn.execute("ALTER TABLE reflections ADD COLUMN agent_id TEXT DEFAULT NULL")
     with contextlib.suppress(*_OP_ERRORS):
         conn.execute("ALTER TABLE access_log ADD COLUMN agent_id TEXT DEFAULT NULL")
+
+    # Provenance: where each observation came from. Added with no default, so
+    # every row written before this column existed is NULL, and NULL reads as
+    # 'unknown' (see Episode.from_row). Nothing is rewritten.
+    with contextlib.suppress(*_OP_ERRORS):
+        conn.execute("ALTER TABLE episodes ADD COLUMN provenance TEXT DEFAULT NULL")
 
     # Backfill the edge agent scope (added in v2.2): episode->entity edges are
     # private to the agent that created them, so spreading activation stays

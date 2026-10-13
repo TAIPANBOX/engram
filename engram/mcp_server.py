@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any
 
 from engram.core import Engram
+from engram.models import DEFAULT_PROVENANCE
 
 # ----------------------------------------------------------------------
 # Multi-agent instance pool
@@ -129,9 +130,11 @@ def _remember(
     subject: str | None = None,
     predicate: str | None = None,
     object: str | None = None,  # noqa: A002
+    provenance: str | None = None,
 ) -> dict[str, Any]:
     """Store a new memory. See ``_REMEMBER_DESCRIPTION`` for the contract."""
     mem = pool.get(agent_id)
+    stored_provenance: str | None = None
 
     if kind == "episodic":
         if subject is not None or predicate is not None or object is not None:
@@ -141,7 +144,8 @@ def _remember(
             )
         if not content:
             raise ValueError("kind='episodic' requires non-empty content")
-        memory_id = mem.observe(content)
+        stored_provenance = DEFAULT_PROVENANCE if provenance is None else provenance
+        memory_id = mem.observe(content, provenance=stored_provenance)
     elif kind == "semantic":
         if content is not None:
             raise ValueError(
@@ -152,6 +156,12 @@ def _remember(
             raise ValueError(
                 "kind='semantic' requires all three of subject, predicate, "
                 "and object to be non-empty strings"
+            )
+        if provenance is not None:
+            raise ValueError(
+                "kind='semantic' takes no provenance: a fact reports the least "
+                "trusted source among the episodes it came from. Record the "
+                "source as an episodic memory with kind='episodic'."
             )
         memory_id = mem.assert_fact(subject, predicate, object)
     elif kind == "procedural":
@@ -168,6 +178,7 @@ def _remember(
         "id": memory_id,
         "kind": kind,
         "agent_id": agent_id if agent_id is not None else pool.default_agent_id,
+        "provenance": stored_provenance,
     }
 
 
@@ -190,6 +201,7 @@ def _recall(
             "timestamp": r.episode.timestamp.isoformat(),
             "actors": r.episode.actors,
             "tags": r.episode.tags,
+            "provenance": r.episode.provenance,
         }
         for r in results
     ]
@@ -228,6 +240,7 @@ def _why(pool: _EngramPool, memory_id: str) -> dict[str, Any]:
             "extracted_from": provenance["extracted_from"],
             "extracted_by_reflection_run": provenance["extracted_by"],
             "extraction_model": provenance["model"],
+            "provenance": provenance["provenance"],
         }
 
     episode = store.get_episode(memory_id, agent_id=pool.default_agent_id)
@@ -245,6 +258,7 @@ def _why(pool: _EngramPool, memory_id: str) -> dict[str, Any]:
             "importance_score": episode.importance_score,
             "summary_of": episode.summary_of,
             "agent_id": episode.agent_id,
+            "provenance": episode.provenance,
             "access_count": access_count,
             "last_accessed": last_accessed.isoformat() if last_accessed else None,
             "note": (
@@ -346,7 +360,12 @@ _REMEMBER_DESCRIPTION = (
     "Providing the wrong parameters for a kind is an error. "
     "kind='procedural' is not supported by this Engram version and raises "
     "an error. agent_id optionally scopes the write to a specific agent; "
-    "omit it to use the server's default agent."
+    "omit it to use the server's default agent. provenance optionally says "
+    "where the content came from: 'user' (typed by the person), 'tool' "
+    "(returned by a tool) or 'external' (anything else, such as a web page or "
+    "another agent's output). Omitted, it is 'external'. Engram stores the "
+    "value given and does not verify it. Only episodic memories take a "
+    "provenance; a fact reports the least trusted provenance of its sources."
 )
 
 _RECALL_DESCRIPTION = (
@@ -357,7 +376,9 @@ _RECALL_DESCRIPTION = (
     "similarity only; mode='spreading' additionally follows graph edges "
     "between related memories (spreading activation) to surface indirectly "
     "relevant context. Returns a list of memories, each with its id, content, "
-    "and relevance score, most relevant first."
+    "and relevance score, most relevant first. Each result also carries its "
+    "provenance: 'user', 'tool', 'external', or 'unknown' for a memory written "
+    "before provenance was recorded."
 )
 
 _WHY_DESCRIPTION = (
@@ -367,7 +388,9 @@ _WHY_DESCRIPTION = (
     "reflection run and model that extracted it. For an episodic memory: "
     "returns its content, encoding metadata (actors, tags, salience), and "
     "access history -- episodic memories are raw observations rather than "
-    "LLM-derived facts, so they have no extraction chain."
+    "LLM-derived facts, so they have no extraction chain. Both kinds report a "
+    "provenance: where the memory came from, or for a fact the least trusted "
+    "provenance among the episodes it was extracted from."
 )
 
 _FORGET_DESCRIPTION = (
@@ -422,8 +445,9 @@ def _build_server(pool: _EngramPool) -> Any:
         subject: str | None = None,
         predicate: str | None = None,
         object: str | None = None,  # noqa: A002
+        provenance: str | None = None,
     ) -> dict[str, Any]:
-        return _remember(pool, content, kind, agent_id, subject, predicate, object)
+        return _remember(pool, content, kind, agent_id, subject, predicate, object, provenance)
 
     @mcp.tool(description=_RECALL_DESCRIPTION)
     def recall(

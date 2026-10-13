@@ -115,7 +115,7 @@ def _escape_fts5_query(query: str) -> str:
 
 _EPISODE_COLS = (
     "id, content, timestamp, actors, tags, salience, "
-    "emotional_valence, summary_of, importance_score, agent_id"
+    "emotional_valence, summary_of, importance_score, agent_id, provenance"
 )
 
 
@@ -214,8 +214,9 @@ class Store:
         cur = self._conn.execute(
             """
             INSERT INTO episodes (id, content, timestamp, actors, tags,
-                                  salience, emotional_valence, summary_of, agent_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  salience, emotional_valence, summary_of, agent_id,
+                                  provenance)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ep.id,
@@ -227,6 +228,7 @@ class Store:
                 ep.emotional_valence,
                 json.dumps(ep.summary_of),
                 self._agent_id,
+                ep.provenance,
             ),
         )
         rowid: int = cur.lastrowid  # type: ignore[assignment]
@@ -287,7 +289,7 @@ class Store:
             f"""
             SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
                    e.salience, e.emotional_valence, e.summary_of, e.importance_score,
-                   e.agent_id, v.distance
+                   e.agent_id, e.provenance, v.distance
             FROM vec_episodes v
             JOIN episodes e ON e.rowid = v.rowid
             WHERE v.embedding MATCH ?
@@ -300,8 +302,8 @@ class Store:
 
         results: list[tuple[Episode, float, float]] = []
         for row in rows:
-            ep = Episode.from_row(tuple(row[:10]))
-            distance = float(row[10])
+            ep = Episode.from_row(tuple(row[:11]))
+            distance = float(row[11])
             score = _distance_to_score(distance)
             results.append((ep, score, distance))
         return results
@@ -424,8 +426,8 @@ class Store:
         """Insert multiple episodes and their vectors in a single transaction."""
         self._conn.executemany(
             "INSERT INTO episodes (id, content, timestamp, actors, tags, "
-            "salience, emotional_valence, summary_of, agent_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "salience, emotional_valence, summary_of, agent_id, provenance) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     ep.id,
@@ -437,6 +439,7 @@ class Store:
                     ep.emotional_valence,
                     json.dumps(ep.summary_of),
                     self._agent_id,
+                    ep.provenance,
                 )
                 for ep in episodes
             ],
@@ -586,7 +589,8 @@ class Store:
 
         Intentionally cross-agent: ``forget_entity`` is a GDPR-style erasure
         that must reach every agent's episodes in a shared store. Selects the
-        full 10-column tuple so :meth:`Episode.from_row` populates ``agent_id``.
+        full column tuple so :meth:`Episode.from_row` populates ``agent_id`` and
+        ``provenance``.
         """
         rows: list[Any] = self._conn.execute(
             f"SELECT {_EPISODE_COLS} FROM episodes "
@@ -1084,7 +1088,7 @@ class Store:
         sql = f"""
             SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
                    e.salience, e.emotional_valence, e.summary_of, e.importance_score,
-                   e.agent_id, v.distance
+                   e.agent_id, e.provenance, v.distance
             FROM vec_episodes v
             JOIN episodes e ON e.rowid = v.rowid
             WHERE v.embedding MATCH ?
@@ -1099,8 +1103,8 @@ class Store:
         ).fetchall()
         results: list[tuple[Episode, float, float]] = []
         for row in rows:
-            ep = Episode.from_row(tuple(row[:10]))
-            distance = float(row[10])
+            ep = Episode.from_row(tuple(row[:11]))
+            distance = float(row[11])
             score = _distance_to_score(distance)
             results.append((ep, score, distance))
         return results
@@ -1167,7 +1171,7 @@ class Store:
             f"""
             SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
                    e.salience, e.emotional_valence, e.summary_of, e.importance_score,
-                   e.agent_id, v.distance
+                   e.agent_id, e.provenance, v.distance
             FROM vec_episodes v
             JOIN episodes e ON e.rowid = v.rowid
             WHERE v.embedding MATCH ?
@@ -1180,10 +1184,10 @@ class Store:
 
         # distance → cosine score, then normalise to [0, 1] across candidates
         vec_scores: dict[str, float] = {
-            str(row[0]): _distance_to_score(float(row[10])) for row in vec_rows
+            str(row[0]): _distance_to_score(float(row[11])) for row in vec_rows
         }
         vec_episodes: dict[str, Episode] = {
-            str(row[0]): Episode.from_row(tuple(row[:10])) for row in vec_rows
+            str(row[0]): Episode.from_row(tuple(row[:11])) for row in vec_rows
         }
 
         norm_vec = _minmax_normalize(vec_scores)

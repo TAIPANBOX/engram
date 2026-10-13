@@ -67,7 +67,7 @@ with Engram(path=":memory:") as mem:
 
 ---
 
-### `observe(content, *, actors, tags, salience, emotional_valence, timestamp) → str`
+### `observe(content, *, actors, tags, salience, emotional_valence, timestamp, provenance) → str`
 
 Record a raw episodic observation. Returns the episode id. No LLM call. ~4 ms.
 
@@ -83,7 +83,14 @@ ep_id = mem.observe(
 # Back-filling history: date it when it happened, not when it was written,
 # so recall(as_of=...) places it in the period it belongs to.
 ep_id = mem.observe("Alice joined Globex", timestamp=datetime(2024, 3, 1, tzinfo=UTC))
+
+# Where it came from: "user" (typed by the person), "tool" or "external".
+# Omitted, it is "external". Any other value raises ValueError.
+ep_id = mem.observe("Alice joined Globex", provenance="user")
 ```
+
+`recall()` results carry the source as `result.episode.provenance`. Memories written
+before the field existed read as `"unknown"`.
 
 ---
 
@@ -100,7 +107,7 @@ ids = mem.observe_many([
 ])
 ```
 
-`ObserveInput` fields: `content` (required), `actors`, `tags`, `salience` (default 0.5), `emotional_valence` (default 0.0).
+`ObserveInput` fields: `content` (required), `actors`, `tags`, `salience` (default 0.5), `emotional_valence` (default 0.0), `timestamp`, `provenance` (default `"external"`).
 
 ---
 
@@ -207,9 +214,14 @@ mem.why(fact_id)
 #   "extracted_from": ["ep-uuid-1", "ep-uuid-2"],
 #   "extracted_by": "reflection-run-uuid",
 #   "confidence": 0.87,
-#   "model": "claude-haiku-4-5-20251001"
+#   "model": "claude-haiku-4-5-20251001",
+#   "provenance": "external"   # least trusted source among the episodes above
 # }
 ```
+
+`provenance` is the least trusted source among the episodes the fact was extracted from
+(`unknown` < `external` < `tool` < `user`). A fact asserted with `assert_fact()` names no
+episodes, so it reads `"unknown"`.
 
 ---
 
@@ -473,9 +485,9 @@ Five tools are registered:
 
 | Tool | Purpose |
 |---|---|
-| `remember` | Store a memory. `kind="episodic"` (default) takes `content`; `kind="semantic"` takes `subject`/`predicate`/`object` instead - the structured triple, not free text. Both accept an optional per-call `agent_id` to override the server's default agent scope. |
-| `recall` | Retrieve memories relevant to a natural-language `query`, with `mode="cosine"` (default), `"hybrid"`, or `"spreading"`, and an optional `limit` and `agent_id`. |
-| `why` | Explain a memory's provenance by id - extraction chain and confidence for a fact, encoding/access metadata for an episode. |
+| `remember` | Store a memory. `kind="episodic"` (default) takes `content`; `kind="semantic"` takes `subject`/`predicate`/`object` instead - the structured triple, not free text. Both accept an optional per-call `agent_id` to override the server's default agent scope. An episodic memory also takes an optional `provenance` (`user`, `tool` or `external`, default `external`); a semantic fact does not, since it reports the least trusted source among its episodes. |
+| `recall` | Retrieve memories relevant to a natural-language `query`, with `mode="cosine"` (default), `"hybrid"`, or `"spreading"`, and an optional `limit` and `agent_id`. Each result carries its `provenance`. |
+| `why` | Explain a memory's provenance by id - extraction chain and confidence for a fact, encoding/access metadata for an episode. Both kinds report a `provenance` (for a fact, the least trusted source among its episodes). |
 | `forget` | Permanently delete one memory (episodic or semantic) by id. Irreversible. |
 | `stats` | Store-wide counts (episodic, semantic, procedural - the last is always 0, see below), fact validity breakdown, entity/reflection counts, db file size. |
 
@@ -598,7 +610,8 @@ CREATE TABLE episodes (
     emotional_valence REAL,
     summary_of JSON,           -- episode ids this row summarises (compress())
     importance_score REAL,
-    agent_id TEXT DEFAULT NULL -- NULL = unscoped / backward-compatible
+    agent_id TEXT DEFAULT NULL, -- NULL = unscoped / backward-compatible
+    provenance TEXT DEFAULT NULL -- 'user' | 'tool' | 'external'; NULL reads as 'unknown'
 );
 
 -- ANN vector index (sqlite-vec virtual table, mirrors episodes rowid)

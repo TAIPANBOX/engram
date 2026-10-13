@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Provenance on every observation.** Each episode records where it came from:
+  `user` (typed by the person), `tool` (returned by a tool) or `external` (anything
+  else). `observe()`, `observe_many()` (via `ObserveInput.provenance`), `AsyncEngram.observe()`
+  and the MCP `remember` tool take it; a write that names none is `external`, and any other
+  value is refused. `recall()` results, the MCP `recall` and `why` outputs, and the LangChain
+  and LlamaIndex adapters return it. A fact's `why()` reports the least trusted source among
+  the episodes it was extracted from. `export_json()` and `import_json()` carry it.
+  **Storage change:** one nullable column, `episodes.provenance`, added by `migrate()` with
+  no default, so existing rows are not rewritten and read as `unknown`. A store written by
+  this version still opens and reads unchanged in an older Engram, which ignores the column;
+  rows that older Engram writes read as `unknown`. Retrieval ranking and scores are unchanged
+  (a golden recall captured before the change is asserted in `tests/test_provenance.py`).
+  Approved 2026-10-13 (`@decided`, see CLAUDE.md).
 - **Vendored agent-passport's SPEC 1.0 `agent-event` contract.**
   agent-passport reached SPEC 1.0 on 2026-09-12 (tag `v1.0.0`, commit
   `b371329`). `tests/fixtures/agent-event.v1.0.schema.json` is that file byte

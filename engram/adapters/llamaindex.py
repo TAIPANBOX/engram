@@ -97,7 +97,13 @@ if _LLAMAINDEX_AVAILABLE:
                         role = MessageRole.SYSTEM
                         break
                 if role is not None:
-                    self._history.append(ChatMessage(role=role, content=ep.content))
+                    self._history.append(
+                        ChatMessage(
+                            role=role,
+                            content=ep.content,
+                            additional_kwargs={"provenance": ep.provenance},
+                        )
+                    )
 
         @classmethod
         def from_defaults(cls, **kwargs: Any) -> EngramMemory:
@@ -124,7 +130,13 @@ if _LLAMAINDEX_AVAILABLE:
                             elif tag == "system":
                                 role = MessageRole.SYSTEM
                                 break
-                    chat_messages.append(ChatMessage(role=role, content=r.episode.content))
+                    chat_messages.append(
+                        ChatMessage(
+                            role=role,
+                            content=r.episode.content,
+                            additional_kwargs={"provenance": r.episode.provenance},
+                        )
+                    )
                 return chat_messages
             return list(self._history[-self.k :])
 

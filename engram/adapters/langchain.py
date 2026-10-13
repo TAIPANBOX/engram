@@ -88,6 +88,7 @@ if _LANGCHAIN_AVAILABLE:
                         "score": r.score,
                         "timestamp": r.episode.timestamp.isoformat(),
                         "importance": r.importance,
+                        "provenance": r.episode.provenance,
                     },
                 )
                 for r in results

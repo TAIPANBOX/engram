@@ -17,12 +17,15 @@ from engram.embedder import DEFAULT_MODEL, Embedder
 from engram.events import EventLog, resolve_events_path
 from engram.importance import DecayConfig
 from engram.models import (
+    DEFAULT_PROVENANCE,
     CompressionRun,
     Fact,
     ForgetResult,
     ObserveInput,
     ReflectionRun,
     SearchResult,
+    check_provenance,
+    least_trusted,
 )
 from engram.retrieval import recall as _recall
 from engram.schema import migrate
@@ -193,6 +196,7 @@ class Engram:
         salience: float = 0.5,
         emotional_valence: float = 0.0,
         timestamp: datetime | None = None,
+        provenance: str = DEFAULT_PROVENANCE,
     ) -> str:
         """Record a new episodic observation.
 
@@ -206,6 +210,12 @@ class Engram:
                 back-filling history, so ``recall(as_of=...)`` places the
                 episode in the period it describes rather than the moment it
                 was written.
+            provenance: Where the content came from: ``"user"`` (typed by the
+                person), ``"tool"`` (returned by a tool) or ``"external"``
+                (anything else, such as a web page or another agent's output).
+                Defaults to ``"external"``. Engram stores what the caller
+                declares and does not verify it. Any other value raises
+                ``ValueError``.
 
         Returns:
             The episode id (UUID string).
@@ -221,6 +231,7 @@ class Engram:
             tags=tags or [],
             salience=salience,
             emotional_valence=emotional_valence,
+            provenance=check_provenance(provenance),
         )
         embedding = self._embedder.embed(content)
         self._store.insert_episode(ep, embedding)
@@ -264,6 +275,7 @@ class Engram:
                 tags=item.tags,
                 salience=item.salience,
                 emotional_valence=item.emotional_valence,
+                provenance=check_provenance(item.provenance),
             )
             for ep_id, item in zip(episode_ids, items, strict=True)
         ]
@@ -405,7 +417,11 @@ class Engram:
 
         Returns:
             Dict with keys ``fact``, ``extracted_from``, ``extracted_by``,
-            ``confidence``, ``model``.
+            ``confidence``, ``model`` and ``provenance``. A fact has no source
+            of its own: ``provenance`` is the least trusted provenance among the
+            episodes it was extracted from, and ``"unknown"`` when none of them
+            is recorded (a fact asserted with :meth:`assert_fact` takes a
+            free-text source note, not episodes).
 
         Raises:
             KeyError: If the fact_id is not found.
@@ -418,12 +434,14 @@ class Engram:
             run = self._store.get_reflection_by_id(fact.extracted_by)
             if run:
                 model_used = run.model_used
+        sources = self._store.get_episodes_by_ids(fact.derived_from)
         return {
             "fact": f"{fact.subject} {fact.predicate} {fact.object}",
             "extracted_from": fact.derived_from,
             "extracted_by": fact.extracted_by,
             "confidence": fact.confidence,
             "model": model_used,
+            "provenance": least_trusted(ep.provenance for ep in sources),
         }
 
     def timeline(self, entity: str, *, as_of: datetime | None = None) -> list[Fact]:
