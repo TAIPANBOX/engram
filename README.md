@@ -209,10 +209,10 @@ the questions an agent asks after that one.
 | **Spreading activation** | Recall walks Hebbian-weighted edges out from what matched, so a query reaches what the match is connected to and not only what it resembles |
 | **Importance and decay** | An Ebbinghaus curve with Hebbian reinforcement: what is used stays sharp, what is untouched fades, and reflection prunes the bottom. The store stays useful instead of growing |
 | **Working memory** | A 7±2 scratchpad, Miller's number, for what the agent is holding right now as opposed to what it knows |
-| **Provenance** | Every observation records where it came from (`user`, `tool` or `external`) and recall returns it. `why()` answers where a belief came from, episode by episode, so a wrong answer can be traced to what produced it |
+| **Provenance** | Every observation records where it came from (`user`, `tool` or `external`) and whether it was written after its writer read untrusted content (quarantined), and recall returns both. Over MCP the server sets them, not the caller. `why()` answers where a belief came from, episode by episode, so a wrong answer can be traced to what produced it |
 | **Contradiction** | Reflection finds facts that disagree and records the disagreement rather than overwriting one with the other |
 | **Erasure** | `forget()` at episode, entity or fact level, and `compress()` burns the raw text on a schedule while the extracted facts stay, so a person can be removed without the history losing its shape |
-| **Many agents, one file** | `agent_id` is a partition key: each agent keeps its own episodes, all of them share extracted facts, and a scoped recall stays flat as the store grows |
+| **Many agents, one file** | `agent_id` is a partition key: each agent keeps its own episodes, shares the facts it chooses to, deletes only its own, and a scoped recall stays flat as the store grows |
 
 Everything above is one file. `pip install`, open it in two lines, no server, no
 Docker, no API key for the store itself, and no LLM call on the write path: writes land
@@ -292,8 +292,18 @@ have it.
 
 Every observation records a source: `user` (typed by the person), `tool` (returned by a
 tool), or `external` (anything else, such as a web page or another agent's output). A write
-that names no source is `external`. Engram stores the value the writer declares and does not
-verify it. Rows written before this field existed read as `unknown`, never as `user`.
+that names no source is `external`. Through the library, engram stores the value the writer
+declares and does not verify it. Rows written before this field existed read as `unknown`,
+never as `user`.
+
+Through `engram-mcp` the caller does not get to say. The server is started as one agent
+and serves only that agent's memory, refusing a call that names another. It records the
+source itself (`external` unless its operator configures `tool` or `user`), and a caller may
+only lower it. Once a session has read untrusted content (a recalled memory that is not the
+user's own, a tool result it labels as such, or anything it says it read with
+`read_untrusted=true`), every later write is stored quarantined, and `recall` and `why`
+return the mark with the content. A fact is private to its writer unless shared at write
+time, and only its writer can delete it. See [MCP Server](docs/api-reference.md#mcp-server).
 
 ```python
 mem.observe("Ivan moved from Acme to Globex", provenance="user")
@@ -302,7 +312,7 @@ for r in mem.recall("where does Ivan work"):
 ```
 
 `recall()`, `why()`, the `engram-mcp` tools and the LangChain and LlamaIndex adapters all
-return the source with each result. A fact has no source of its own: `why()` reports the least
+return the source and the quarantine mark with each result. A fact has no source of its own: `why()` reports the least
 trusted source among the episodes it was extracted from, and `unknown` when none is recorded.
 
 **Using provenance with TokenFuse.** TokenFuse tracks where context came from and can refuse
@@ -310,7 +320,7 @@ to let an agent act on untrusted context. Through TokenFuse's MCP broker, Engram
 `why` tools carry the `memory` label, so memory read through a tool is labelled without any
 extra step. A framework that places memory directly into the prompt, without a tool call,
 declares it by sending the request header `x-fuse-taint: memory` whenever that memory is
-`external`, `tool` or `unknown`.
+`external`, `tool`, `unknown` or quarantined.
 
 ### Three ways to search
 
@@ -850,12 +860,14 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (549 tests, 556 with the encryption extra)
+### Test coverage (586 tests, 593 with the encryption extra)
 
-Statement coverage: **89%** (2709 statements, 292 uncovered on a plain
-install), measured 2026-10-13 with `pytest --cov=engram --cov-report=term-missing`.
-With the `encryption` extra installed, the same command gave 90% (281 uncovered)
-on the same day, with all 556 tests passing.
+Statement coverage: **90%** (2806 statements, 279 uncovered without the
+encryption tests), measured 2026-10-18 with `pytest --cov=engram
+--cov-report=term-missing --ignore=tests/test_encryption.py`. With the
+`encryption` extra installed, `pytest --cov=engram --cov-report=term-missing` gave
+90% (267 uncovered) on the same day, with all 593 tests collected and 592 passing
+(one skip: no console script on PATH).
 CI's `test` job runs the suite with the same flags and prints the current
 figure on every push; this line is not machine-checked against that output
 (unlike the test count above), so treat CI's own number as current if the
@@ -893,7 +905,12 @@ tests/
                           migration keeps every row, export/import, adapters, MCP,
                           and a golden recall captured before the change
   test_mcp_server.py     MCP server (engram-mcp): remember/recall/why/forget/stats,
-                          agent pooling, procedural rejection, reflect() not exposed
+                          one scope per server, procedural rejection, reflect() not exposed
+  test_memory_scope.py   the server's identity is the scope, the server sets provenance,
+                          quarantine after untrusted reads, facts private unless shared
+                          and deleted only by their writer, migration of older stores
+                          (features/memory-scope-and-provenance.feature, one test per
+                          scenario, held by scripts/features-are-bound.sh)
   test_events.py         Agent Passport NDJSON event exporter: schema validation,
                           fail-open on I/O error, skip-on-empty agent_id, warn-on-
                           nonconforming agent_id, off-by-default, bulk and cascade
@@ -929,7 +946,7 @@ tests/
 - [x] v2.3.0 - `agent_id` is a vec0 partition key and `ts` a metadata column, so scoped and `as_of` recall resolve inside the KNN scan (scoped recall could return nothing at all before, and no longer grows with the store); recall accuracy published on LongMemEval-S, all 500 questions, with the per-question records in `benchmarks/results/`; `mode="hybrid"` is the default after beating cosine at every k measured, and the BM25 query it depends on no longer AND-joins its terms into matching nothing; `engram-bench scale` and `engram-bench longmemeval`; `observe(timestamp=)`; atomic `forget_entity()`; `compress()` keeps its summary inside the period it summarises
 - [x] v2.4.0 - the hybrid blend measured instead of assumed: `engram-bench longmemeval --sweep` scores every weighting in one pass, and the default moved from `0.7 / 0.3` to `0.5 / 0.5`, which leads on three of the four metrics, by one to five questions in five hundred (session@10 ties); both ends of the range are clearly worse than the middle, which is the evidence hybrid mode rests on
 - [x] v2.4.1 - the numbers made re-readable and the headline table made honest: the LongMemEval checkpoint now records the rank of every evidence and gold-session hit plus each question's evidence count, so a smaller k and the strict "every flagged turn retrieved" reading are recomputable from a finished run instead of costing another six-hour pass; the published turn-recall figure carries the caveats it needed (21 of 500 questions flag no turn at all, so the figure over the 479 answerable ones is 0.866 at k=5, and 59% flag more than one, so "at least one retrieved" is an upper bound); and the headline table, which had gone on showing the `0.7 / 0.3` figures under the word "default" for one release after 2.4.0 moved it, was corrected everywhere from one run
-- [ ] Unreleased, on `main` and not yet tagged - provenance: every observation records where it came from, and `recall`, `why()`, the MCP tools and the adapters return it. Version 2.4.1 does not have it.
+- [ ] Unreleased, on `main` and not yet tagged - provenance: every observation records where it came from, and `recall`, `why()`, the MCP tools and the adapters return it. `engram-mcp` serves the one agent it is started as, sets provenance itself, quarantines writes made after a session read untrusted content, keeps facts private unless shared and lets only their writer delete them. Version 2.4.1 does not have it.
 
 ---
 

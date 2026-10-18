@@ -26,6 +26,7 @@ _GATE_SCRIPTS = (
     "scripts/no-network-at-write.sh",
     "scripts/readme-numbers.sh",
     "scripts/local-first.sh",
+    "scripts/features-are-bound.sh",
 )
 
 

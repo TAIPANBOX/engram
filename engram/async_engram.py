@@ -92,6 +92,7 @@ class AsyncEngram:
         salience: float = 0.5,
         emotional_valence: float = 0.0,
         provenance: str = DEFAULT_PROVENANCE,
+        quarantined: bool = False,
     ) -> str:
         """Async version of :meth:`~engram.core.Engram.observe`.
 
@@ -106,6 +107,7 @@ class AsyncEngram:
             salience=salience,
             emotional_valence=emotional_valence,
             provenance=provenance,
+            quarantined=quarantined,
         )
 
     async def observe_many(self, items: list[ObserveInput]) -> list[str]:
@@ -167,6 +169,8 @@ class AsyncEngram:
         *,
         confidence: float = 1.0,
         source: str | None = None,
+        shared: bool = True,
+        quarantined: bool = False,
     ) -> str:
         """Async version of :meth:`~engram.core.Engram.assert_fact`.
 
@@ -180,6 +184,8 @@ class AsyncEngram:
             object,
             confidence=confidence,
             source=source,
+            shared=shared,
+            quarantined=quarantined,
         )
 
     async def timeline(self, entity: str, *, as_of: datetime | None = None) -> list[Fact]:

@@ -94,6 +94,8 @@ jobs:
         run: ./scripts/readme-numbers.sh
       - name: local-first holds for the default install
         run: ./scripts/local-first.sh
+      - name: every scenario names a test that exists
+        run: ./scripts/features-are-bound.sh
 
       # Last, because it mutates tracked files and restores them. It needs a
       # clean tree and says so plainly, so it also reports any earlier step

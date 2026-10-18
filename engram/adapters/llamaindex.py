@@ -101,7 +101,10 @@ if _LLAMAINDEX_AVAILABLE:
                         ChatMessage(
                             role=role,
                             content=ep.content,
-                            additional_kwargs={"provenance": ep.provenance},
+                            additional_kwargs={
+                                "provenance": ep.provenance,
+                                "quarantined": ep.quarantined,
+                            },
                         )
                     )
 
@@ -134,7 +137,10 @@ if _LLAMAINDEX_AVAILABLE:
                         ChatMessage(
                             role=role,
                             content=r.episode.content,
-                            additional_kwargs={"provenance": r.episode.provenance},
+                            additional_kwargs={
+                                "provenance": r.episode.provenance,
+                                "quarantined": r.episode.quarantined,
+                            },
                         )
                     )
                 return chat_messages

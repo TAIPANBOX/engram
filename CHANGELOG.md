@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **`engram-mcp` no longer takes the agent scope or the trust of a write from the tool
+  call (finding F-007 of the 2026-10-17 agent-security review).** Before this, any MCP
+  client could read or write another agent's memory by naming its `agent_id`, label any
+  text `provenance="user"`, and delete any fact, since facts were shared by every agent
+  and `forget` checked only the id. A memory planted by an injected page was recalled in
+  every later session looking like the user's own.
+  - **The scope is the server's identity.** `--agent-id` / `ENGRAM_MCP_AGENT_ID` is the
+    one agent a server serves. A call naming another `agent_id` is refused with
+    `PermissionError`; naming its own, or nothing, is served. A server started without an
+    identity serves the whole file as one tenant, warns on stderr, and refuses any named
+    agent. **Breaking** for a client that relied on per-call `agent_id` to read or write
+    several agents through one server (the genaryx memory panel did, for reads): run one
+    server per agent, or an unscoped one for a whole-file view.
+  - **The server sets provenance.** `--provenance` / `ENGRAM_MCP_PROVENANCE` (`user`,
+    `tool` or `external`, default `external`) is the most a write can carry; a caller may
+    lower it to `tool` or `external`, and `provenance="user"` is refused. **Breaking** for a
+    client that passed `user` or `tool`: the server now records `external` unless its
+    operator configures more.
+  - **Quarantine.** A session turns untrusted when `recall` or `why` returns a memory that
+    is not the user's own or is quarantined, when the caller writes content it labels
+    `tool` or `external` or passes `read_untrusted=true`, or from the start with
+    `--session-untrusted` / `ENGRAM_MCP_SESSION_UNTRUSTED`. Every later write is stored
+    with `quarantined: true` and never as `user`; `recall`, `why`, the library's results
+    and the adapters return the mark; `stats` reports the session state. `compress()`
+    keeps the mark on a summary of quarantined episodes.
+  - **Facts belong to their writer.** A fact records the agent that wrote it and whether
+    it is shared. `remember(kind="semantic")` keeps a fact private unless `shared=true`;
+    `assert_fact()` keeps its old default, `shared=True`. An agent-scoped instance no
+    longer sees another agent's private facts in `why()`, `timeline()`,
+    `contradictions()`, reflection or `export_json()`, and `forget_fact()` deletes only
+    facts that instance wrote: another agent's private fact raises `KeyError`, its shared
+    fact `PermissionError`. An unscoped instance can still delete any fact, and
+    `forget_entity()` is unchanged.
+  - **Storage change:** four nullable columns, `episodes.quarantined`, `facts.agent_id`,
+    `facts.shared` and `facts.quarantined`, added by `migrate()` with no default; nothing
+    is rewritten and no row is lost. A row written before them reads as the least
+    trusted: an old episode as quarantined with provenance `unknown` (whatever it
+    recorded, since any caller could claim any source then), an old fact as quarantined,
+    visible to every agent and deletable only by an unscoped instance. `export_json()` and
+    `import_json()` carry the new fields; an older export imports as old rows.
+  Held by invariant 12 in CLAUDE.md, 14 scenarios in
+  `features/memory-scope-and-provenance.feature` bound to tests by the new gate
+  `scripts/features-are-bound.sh`. `@decided 2026-10-17` (see CLAUDE.md).
+
 ### Added
 - **Provenance on every observation.** Each episode records where it came from:
   `user` (typed by the person), `tool` (returned by a tool) or `external` (anything

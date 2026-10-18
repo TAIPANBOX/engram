@@ -295,7 +295,7 @@ def test_inspect_says_which_numbers_are_the_agents_own(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert "Agent: agent://acme.example/coder" in out
-    assert "shared by every agent in the file" in out
+    assert "the whole file's, every agent's" in out
     # Two episodes and two vectors, this agent's; one fact, everybody's.
     assert "Episodes:            2   (vec index: 2)" in out
     assert "Facts:               1" in out

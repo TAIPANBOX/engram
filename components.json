@@ -55,6 +55,12 @@
           },
           "ENGRAM_MCP_EVENTS": {
             "required": false
+          },
+          "ENGRAM_MCP_PROVENANCE": {
+            "required": false
+          },
+          "ENGRAM_MCP_SESSION_UNTRUSTED": {
+            "required": false
           }
         }
       },

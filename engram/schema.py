@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS episodes (
     summary_of      JSON DEFAULT '[]',
     importance_score REAL NOT NULL DEFAULT 1.0,
     agent_id        TEXT DEFAULT NULL,
-    provenance      TEXT DEFAULT NULL
+    provenance      TEXT DEFAULT NULL,
+    quarantined     INTEGER DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS facts (
@@ -89,7 +90,10 @@ CREATE TABLE IF NOT EXISTS facts (
     superseded_by   TEXT REFERENCES facts(id),
     confidence      REAL NOT NULL DEFAULT 1.0,
     derived_from    JSON DEFAULT '[]',
-    extracted_by    TEXT REFERENCES reflections(id)
+    extracted_by    TEXT REFERENCES reflections(id),
+    agent_id        TEXT DEFAULT NULL,
+    shared          INTEGER DEFAULT NULL,
+    quarantined     INTEGER DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS entities (
@@ -248,6 +252,23 @@ def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
     with contextlib.suppress(*_OP_ERRORS):
         conn.execute("ALTER TABLE episodes ADD COLUMN provenance TEXT DEFAULT NULL")
 
+    # Scope and quarantine (F-007 of the 2026-10-17 review). Added with no
+    # default, like provenance, so nothing is rewritten and no row is lost.
+    # NULL is what tells a row written before this change from one written
+    # after it, and it reads as the least trusted answer: an old episode as
+    # quarantined with unknown provenance (any caller could claim any source
+    # then), an old fact as quarantined, visible to every agent as every fact
+    # was, and owned by nobody, so no agent-scoped instance can delete it.
+    # See Episode.from_row and Fact.from_row.
+    for table, column in (
+        ("episodes", "quarantined INTEGER DEFAULT NULL"),
+        ("facts", "agent_id TEXT DEFAULT NULL"),
+        ("facts", "shared INTEGER DEFAULT NULL"),
+        ("facts", "quarantined INTEGER DEFAULT NULL"),
+    ):
+        with contextlib.suppress(*_OP_ERRORS):
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
+
     # Backfill the edge agent scope (added in v2.2): episode->entity edges are
     # private to the agent that created them, so spreading activation stays
     # within an agent while entities/facts remain shared.
@@ -258,6 +279,8 @@ def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_agent ON episodes(agent_id)")
     with contextlib.suppress(*_OP_ERRORS):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_agent ON edges(agent_id)")
+    with contextlib.suppress(*_OP_ERRORS):
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_agent_id ON facts(agent_id)")
 
     # The vec0 dimension and layout are baked in at creation, so an existing
     # table is inspected rather than recreated.

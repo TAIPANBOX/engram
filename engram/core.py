@@ -197,6 +197,7 @@ class Engram:
         emotional_valence: float = 0.0,
         timestamp: datetime | None = None,
         provenance: str = DEFAULT_PROVENANCE,
+        quarantined: bool = False,
     ) -> str:
         """Record a new episodic observation.
 
@@ -215,7 +216,12 @@ class Engram:
                 (anything else, such as a web page or another agent's output).
                 Defaults to ``"external"``. Engram stores what the caller
                 declares and does not verify it. Any other value raises
-                ``ValueError``.
+                ``ValueError``. The MCP server does not pass a caller's
+                declaration through: it sets this itself (see
+                :mod:`engram.mcp_server`).
+            quarantined: The writer had read untrusted content before this
+                write, so the content may carry instructions it picked up
+                there. Stored and returned with every read of the episode.
 
         Returns:
             The episode id (UUID string).
@@ -232,6 +238,7 @@ class Engram:
             salience=salience,
             emotional_valence=emotional_valence,
             provenance=check_provenance(provenance),
+            quarantined=quarantined,
         )
         embedding = self._embedder.embed(content)
         self._store.insert_episode(ep, embedding)
@@ -276,6 +283,7 @@ class Engram:
                 salience=item.salience,
                 emotional_valence=item.emotional_valence,
                 provenance=check_provenance(item.provenance),
+                quarantined=item.quarantined,
             )
             for ep_id, item in zip(episode_ids, items, strict=True)
         ]
@@ -373,8 +381,13 @@ class Engram:
         *,
         confidence: float = 1.0,
         source: str | None = None,
+        shared: bool = True,
+        quarantined: bool = False,
     ) -> str:
         """Manually record a semantic fact triple without calling an LLM.
+
+        The fact is owned by this instance's ``agent_id``: only an instance
+        scoped to the same agent, or an unscoped one, can delete it.
 
         Args:
             subject: Entity the fact is about (e.g. "Ivan").
@@ -382,6 +395,12 @@ class Engram:
             object: Value (e.g. "Globex").
             confidence: Certainty of the fact (0-1).
             source: Free-text provenance note (stored in derived_from).
+            shared: Visible to every agent in the file (the default here, as
+                facts always were), or, when ``False``, only to its owner and
+                to an unscoped instance. The MCP server defaults the other way:
+                a fact an agent writes there stays its own unless it asks.
+            quarantined: The writer had read untrusted content before this
+                write. Stored and returned by :meth:`why`.
 
         Returns:
             The fact id (UUID string).
@@ -401,6 +420,9 @@ class Engram:
             confidence=confidence,
             derived_from=[source] if source else [],
             extracted_by=None,
+            agent_id=self._agent_id,
+            shared=shared,
+            quarantined=quarantined,
         )
         self._store.insert_fact(fact)
         if self._events is not None:
@@ -417,14 +439,19 @@ class Engram:
 
         Returns:
             Dict with keys ``fact``, ``extracted_from``, ``extracted_by``,
-            ``confidence``, ``model`` and ``provenance``. A fact has no source
-            of its own: ``provenance`` is the least trusted provenance among the
-            episodes it was extracted from, and ``"unknown"`` when none of them
-            is recorded (a fact asserted with :meth:`assert_fact` takes a
-            free-text source note, not episodes).
+            ``confidence``, ``model``, ``provenance``, ``quarantined``,
+            ``agent_id`` and ``shared``. A fact has no source of its own:
+            ``provenance`` is the least trusted provenance among the episodes it
+            was extracted from, and ``"unknown"`` when none of them is recorded
+            (a fact asserted with :meth:`assert_fact` takes a free-text source
+            note, not episodes). ``quarantined`` is true when the fact was
+            written quarantined or any of those episodes was. ``agent_id`` is
+            the agent that wrote it (``None`` for an unscoped writer or a fact
+            written before ownership was recorded).
 
         Raises:
-            KeyError: If the fact_id is not found.
+            KeyError: If the fact_id is not found, or is another agent's fact
+                that its writer did not share.
         """
         fact = self._store.get_fact(fact_id)
         if fact is None:
@@ -442,6 +469,9 @@ class Engram:
             "confidence": fact.confidence,
             "model": model_used,
             "provenance": least_trusted(ep.provenance for ep in sources),
+            "quarantined": fact.quarantined or any(ep.quarantined for ep in sources),
+            "agent_id": fact.agent_id,
+            "shared": fact.shared,
         }
 
     def timeline(self, entity: str, *, as_of: datetime | None = None) -> list[Fact]:
@@ -569,15 +599,29 @@ class Engram:
         """Permanently erase a single semantic fact.
 
         Removes the fact row from the store. This operation is irreversible.
+        Scoped to this instance's agent_id, the way :meth:`forget` is: an
+        agent-scoped instance erases only the facts it wrote. A fact another
+        agent wrote stays, shared or not, and so does a fact written before
+        engram recorded who wrote facts, since nothing shows it is this
+        agent's. An unscoped instance, the file's operator, can erase any fact.
 
         Args:
             fact_id: Id of the fact to erase (returned by :meth:`assert_fact`
                 or produced by :meth:`reflect`).
 
         Raises:
-            KeyError: If no fact with this id exists.
+            KeyError: If no fact with this id exists, or it is another agent's
+                fact that this instance cannot see.
+            PermissionError: If this instance can see the fact but did not
+                write it.
         """
-        if not self._store.delete_fact(fact_id):
+        if not self._store.delete_fact(fact_id, agent_id=self._agent_id):
+            if self._store.get_fact(fact_id) is not None:
+                raise PermissionError(
+                    f"fact {fact_id!r} was not written by agent {self._agent_id!r}: "
+                    f"only the agent that wrote it can delete it (or an instance "
+                    f"opened without an agent_id, the file's operator)"
+                )
             raise KeyError(f"Fact not found: {fact_id!r}")
         if self._events is not None:
             self._events.emit(
@@ -820,11 +864,14 @@ class Engram:
             # today would leave the period it describes empty: an as_of query
             # into that window would find neither the originals (gone) nor
             # their summary (still in the future).
+            # A summary of quarantined episodes is quarantined too, or
+            # compression would launder the mark away with the originals.
             summary_ep_id = self.observe(
                 summary_text,
                 tags=["summary"],
                 salience=max(ep.salience for ep in batch),
                 timestamp=max(ep.timestamp for ep in batch),
+                quarantined=any(ep.quarantined for ep in batch),
             )
             # Update summary_of field on the new episode
             batch_ids = [ep.id for ep in batch]

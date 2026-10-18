@@ -90,6 +90,7 @@ jobs:
           ./scripts/no-network-at-write.sh
           ./scripts/readme-numbers.sh
           ./scripts/local-first.sh
+          ./scripts/features-are-bound.sh
 
       - name: Build distributions
         run: python -m build
