@@ -862,10 +862,12 @@ mypy engram         # type check (strict)
 
 ### Test coverage (586 tests, 593 with the encryption extra)
 
-Statement coverage: **89%** (2709 statements, 292 uncovered on a plain
-install), measured 2026-10-13 with `pytest --cov=engram --cov-report=term-missing`.
-With the `encryption` extra installed, the same command gave 90% (281 uncovered)
-on the same day, with all 556 tests passing.
+Statement coverage: **90%** (2806 statements, 279 uncovered without the
+encryption tests), measured 2026-10-18 with `pytest --cov=engram
+--cov-report=term-missing --ignore=tests/test_encryption.py`. With the
+`encryption` extra installed, `pytest --cov=engram --cov-report=term-missing` gave
+90% (267 uncovered) on the same day, with all 593 tests collected and 592 passing
+(one skip: no console script on PATH).
 CI's `test` job runs the suite with the same flags and prints the current
 figure on every push; this line is not machine-checked against that output
 (unlike the test count above), so treat CI's own number as current if the
