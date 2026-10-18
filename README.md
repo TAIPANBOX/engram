@@ -860,7 +860,7 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (585 tests, 592 with the encryption extra)
+### Test coverage (586 tests, 593 with the encryption extra)
 
 Statement coverage: **89%** (2709 statements, 292 uncovered on a plain
 install), measured 2026-10-13 with `pytest --cov=engram --cov-report=term-missing`.

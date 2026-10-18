@@ -514,6 +514,20 @@ def test_compress_keeps_the_quarantine_mark(tmp_path: Path) -> None:
         assert [(h.episode.content, h.episode.quarantined) for h in hits] == [("Summary.", True)]
 
 
+def test_a_fact_reflected_from_quarantined_episodes_is_quarantined(tmp_path: Path) -> None:
+    from engram import StubLLMAdapter
+
+    stub = StubLLMAdapter(
+        facts=[{"subject": "reports", "predicate": "go_to", "object": "x", "confidence": 0.9}]
+    )
+    with Engram(path=tmp_path / "r.engram", agent_id=A, llm=stub) as mem:
+        mem.observe("a clean note")
+        mem.observe("Summary of the vendor page", quarantined=True)
+        mem.reflect()
+        (fact,) = mem.timeline("reports")
+        assert (fact.quarantined, fact.agent_id, fact.shared) == (True, A, True)
+
+
 def test_observe_many_and_async_carry_the_marks(tmp_path: Path) -> None:
     import asyncio
 

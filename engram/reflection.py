@@ -88,6 +88,9 @@ def reflect(
             # contradiction write it made, in one shot -- including partial
             # Hebbian edge-weight upserts that a manual delete could not
             # safely reverse (see Store.transaction()).
+            # A fact extracted from any quarantined episode carries the mark
+            # itself, so timeline() and export see it, not only why().
+            quarantined = any(ep.quarantined for ep in episodes)
             with store.transaction():
                 for rf in raw_facts:
                     # Belt-and-braces: cap confidence again in case the adapter
@@ -109,6 +112,7 @@ def reflect(
                         confidence=confidence,
                         derived_from=episode_ids,
                         extracted_by=run_id,
+                        quarantined=quarantined,
                     )
                     store.insert_fact(fact)
                     facts_extracted += 1
