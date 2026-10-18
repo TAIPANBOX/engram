@@ -340,7 +340,7 @@ def test_llamaindex_get_carries_provenance() -> None:
 def pool(tmp_path: Path):
     from engram.mcp_server import _EngramPool
 
-    p = _EngramPool(str(tmp_path / "agent.engram"), default_agent_id=None)
+    p = _EngramPool(str(tmp_path / "agent.engram"), agent_id=None)
     yield p
     p.close()
 
@@ -352,23 +352,33 @@ def test_mcp_remember_defaults_to_external_and_says_so(pool) -> None:
     assert result["provenance"] == "external"
 
 
-def test_mcp_remember_takes_provenance_and_recall_and_why_return_it(pool) -> None:
-    from engram.mcp_server import _recall, _remember, _why
+def test_mcp_remember_takes_provenance_and_recall_and_why_return_it(tmp_path: Path) -> None:
+    # Since F-007 (2026-10-17) the server sets the source and a caller may only
+    # lower it, so 'user' comes from the server's configuration, never the call.
+    from engram.mcp_server import _EngramPool, _recall, _remember, _why
 
-    stored = _remember(pool, "The release train leaves on Thursday", provenance="user")
-    assert stored["provenance"] == "user"
-    assert _recall(pool, "release train Thursday", limit=1)[0]["provenance"] == "user"
-    assert _why(pool, stored["id"])["provenance"] == "user"
+    pool = _EngramPool(str(tmp_path / "agent.engram"), None, provenance="user")
+    try:
+        stored = _remember(pool, "The release train leaves on Thursday")
+        assert stored["provenance"] == "user"
+        assert _recall(pool, "release train Thursday", limit=1)[0]["provenance"] == "user"
+        assert _why(pool, stored["id"])["provenance"] == "user"
+    finally:
+        pool.close()
 
 
-def test_mcp_why_on_a_fact_returns_the_least_trusted_source(pool) -> None:
-    from engram.mcp_server import _remember, _why
+def test_mcp_why_on_a_fact_returns_the_least_trusted_source(tmp_path: Path) -> None:
+    from engram.mcp_server import _EngramPool, _remember, _why
 
-    user_ep = _remember(pool, "Ivan joined Globex", provenance="user")
-    ext_ep = _remember(pool, "A forwarded note about Ivan", provenance="external")
-    mem = pool.get(None)
-    fact_id = _fact_from(mem, [user_ep["id"], ext_ep["id"]])
-    assert _why(pool, fact_id)["provenance"] == "external"
+    pool = _EngramPool(str(tmp_path / "agent.engram"), None, provenance="user")
+    try:
+        user_ep = _remember(pool, "Ivan joined Globex")
+        ext_ep = _remember(pool, "A forwarded note about Ivan", provenance="external")
+        mem = pool.get(None)
+        fact_id = _fact_from(mem, [user_ep["id"], ext_ep["id"]])
+        assert _why(pool, fact_id)["provenance"] == "external"
+    finally:
+        pool.close()
 
 
 def test_the_mcp_tools_take_and_return_provenance_through_fastmcp(tmp_path: Path) -> None:
@@ -376,7 +386,9 @@ def test_the_mcp_tools_take_and_return_provenance_through_fastmcp(tmp_path: Path
     pytest.importorskip("mcp")
     from engram.mcp_server import _build_server, _EngramPool
 
-    pool = _EngramPool(str(tmp_path / "mcp.engram"), default_agent_id=None)
+    # The server's configured source is the ceiling (F-007): 'tool' here, so a
+    # caller's 'tool' is stored as given.
+    pool = _EngramPool(str(tmp_path / "mcp.engram"), agent_id=None, provenance="tool")
     try:
         server = _build_server(pool)
 

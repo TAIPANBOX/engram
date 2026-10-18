@@ -92,6 +92,13 @@ ep_id = mem.observe("Alice joined Globex", provenance="user")
 `recall()` results carry the source as `result.episode.provenance`. Memories written
 before the field existed read as `"unknown"`.
 
+`quarantined=True` records that the writer had read untrusted content before this
+write, so the text may carry instructions it picked up there. Results carry it as
+`result.episode.quarantined`. The MCP server sets both itself rather than taking them
+from the caller (see [MCP Server](#mcp-server)). An episode written before the mark
+existed reads as quarantined, and its provenance as `"unknown"`: the source it
+recorded then was whatever the writer declared, `user` included.
+
 ---
 
 ### `observe_many(items) → list[str]`
@@ -107,7 +114,7 @@ ids = mem.observe_many([
 ])
 ```
 
-`ObserveInput` fields: `content` (required), `actors`, `tags`, `salience` (default 0.5), `emotional_valence` (default 0.0), `timestamp`, `provenance` (default `"external"`).
+`ObserveInput` fields: `content` (required), `actors`, `tags`, `salience` (default 0.5), `emotional_valence` (default 0.0), `timestamp`, `provenance` (default `"external"`), `quarantined` (default `False`).
 
 ---
 
@@ -215,13 +222,24 @@ mem.why(fact_id)
 #   "extracted_by": "reflection-run-uuid",
 #   "confidence": 0.87,
 #   "model": "claude-haiku-4-5-20251001",
-#   "provenance": "external"   # least trusted source among the episodes above
+#   "provenance": "external",  # least trusted source among the episodes above
+#   "quarantined": False,      # the fact, or any of those episodes, was quarantined
+#   "agent_id": "agent://acme.example/planner",  # who wrote it; None if unscoped or old
+#   "shared": True             # visible to every agent, or only to its writer
 # }
 ```
 
 `provenance` is the least trusted source among the episodes the fact was extracted from
 (`unknown` < `external` < `tool` < `user`). A fact asserted with `assert_fact()` names no
 episodes, so it reads `"unknown"`.
+
+A fact belongs to the agent that wrote it. `assert_fact(..., shared=True)` (the library
+default, as facts always were) makes it visible to every agent in the file;
+`shared=False` keeps it to its writer and to an instance opened without an `agent_id`.
+On an agent-scoped instance `why()`, `timeline()`, `contradictions()`, reflection and
+`export_json()` leave out another agent's private facts, and `why()` raises `KeyError`
+for one. A fact written before ownership was recorded stays visible to every agent and
+reads as quarantined.
 
 ---
 
@@ -248,7 +266,7 @@ mem.forget(ep_id)
 
 ### `forget_fact(fact_id) → None`
 
-Permanently erase a single semantic fact (a triple returned by `assert_fact()` or produced by `reflect()`). Raises `KeyError` if the fact does not exist.
+Permanently erase a single semantic fact (a triple returned by `assert_fact()` or produced by `reflect()`). Raises `KeyError` if the fact does not exist or is another agent's private fact. On an agent-scoped instance only the facts that agent wrote can be erased: a fact another agent shared, or one written before engram recorded who wrote facts, raises `PermissionError`. An instance opened without an `agent_id`, the file's operator, can erase any fact.
 
 ```python
 mem.forget_fact(fact_id)
@@ -314,7 +332,7 @@ mem.rekey(None)           # drop encryption
 
 Export the store (episodes, facts, entities, edges) to a JSON file. Returns the document dict.
 
-Scoped to the instance's `agent_id`: episodes and edges are filtered to it, as on every other read path. Facts and entities carry no `agent_id` and stay shared across agents by design, so they are exported whole. An unscoped instance exports the entire store.
+Scoped to the instance's `agent_id`: episodes and edges are filtered to it, and facts the way every fact read is (its own, the shared ones, and those written before sharing was recorded). Entities carry no `agent_id` and are exported whole. An unscoped instance exports the entire store. The quarantine mark, and a fact's owner and sharing, travel with the rows; a document written before they existed imports with them unset, which reads as the least trusted.
 
 ```python
 doc = mem.export_json("./agent_dump.json")
@@ -469,27 +487,57 @@ no network listener, compatible with Claude Desktop, Claude Code, Cursor, and
 any other MCP host:
 
 ```bash
-engram-mcp --db ./agent.engram
-engram-mcp --db ./agent.engram --agent-id agent://acme.example/my-agent   # scope the default agent
+engram-mcp --db ./agent.engram --agent-id agent://acme.example/my-agent   # the agent this server is
+engram-mcp --db ./agent.engram --agent-id agent://acme.example/my-agent --provenance tool
+engram-mcp --db ./agent.engram --agent-id agent://acme.example/my-agent --session-untrusted
 engram-mcp --db ./agent.engram --events ./agent.events.ndjson  # opt in to Agent Passport events
 
 # equivalently, via environment variables
-ENGRAM_MCP_DB=./agent.engram ENGRAM_MCP_AGENT_ID=agent://acme.example/my-agent ENGRAM_MCP_EVENTS=./agent.events.ndjson engram-mcp
+ENGRAM_MCP_DB=./agent.engram ENGRAM_MCP_AGENT_ID=agent://acme.example/my-agent ENGRAM_MCP_PROVENANCE=tool ENGRAM_MCP_SESSION_UNTRUSTED=1 ENGRAM_MCP_EVENTS=./agent.events.ndjson engram-mcp
 ```
 
 If `--db`/`ENGRAM_MCP_DB` is omitted, the server falls back to an in-memory
 store that is discarded on exit - fine for a quick trial, not for anything
 you want to keep.
 
+**Scope and trust are the server's, not the caller's.** The tool caller is a
+model, and a model can be steered by what it read, so nothing a tool call says
+decides whose memory it reaches or how far it is trusted:
+
+- **The scope is `--agent-id`.** Every tool reads and writes that agent's
+  memory. A call that names another `agent_id` is refused; naming the server's
+  own identity, or nothing, is served. Started without `--agent-id`, the server
+  serves the whole file as one tenant (it says so on stderr) and refuses any
+  call that names an agent. Run one server per agent over a shared file.
+- **The server sets each write's provenance.** `--provenance` (env
+  `ENGRAM_MCP_PROVENANCE`) is the most trusted source a write can carry:
+  `external` by default, because a write here is an agent's own output and the
+  server cannot see whether it was relaying the person's words; `tool` or `user`
+  for a client the operator knows relays a tool's output or the person's own
+  words. A caller may pass `provenance` to lower it, to `tool` or `external`.
+  `user` is refused.
+- **Quarantine.** The server marks the session untrusted the first time a
+  `recall` or `why` returns a memory that is not the user's own or is itself
+  quarantined, when the caller writes content it labels `tool` or `external`
+  or passes `read_untrusted=true` (it summarises or follows content from a tool,
+  a page or another agent), or from the start with `--session-untrusted` (env
+  `ENGRAM_MCP_SESSION_UNTRUSTED`). Every write after that is stored
+  `quarantined: true`, and never as `user`. `recall` and `why` return the mark
+  with the content, and `stats` reports the session's state and the first
+  reason it changed. Nothing can clear it except a new session.
+- **Facts.** A fact written through `remember` is private to its writer unless
+  `shared=true` is passed at write time. Only its writer can `forget` it:
+  another agent's private fact is not found, and its shared fact is refused.
+
 Five tools are registered:
 
 | Tool | Purpose |
 |---|---|
-| `remember` | Store a memory. `kind="episodic"` (default) takes `content`; `kind="semantic"` takes `subject`/`predicate`/`object` instead - the structured triple, not free text. Both accept an optional per-call `agent_id` to override the server's default agent scope. An episodic memory also takes an optional `provenance` (`user`, `tool` or `external`, default `external`); a semantic fact does not, since it reports the least trusted source among its episodes. |
-| `recall` | Retrieve memories relevant to a natural-language `query`, with `mode="cosine"` (default), `"hybrid"`, or `"spreading"`, and an optional `limit` and `agent_id`. Each result carries its `provenance`. |
-| `why` | Explain a memory's provenance by id - extraction chain and confidence for a fact, encoding/access metadata for an episode. Both kinds report a `provenance` (for a fact, the least trusted source among its episodes). |
-| `forget` | Permanently delete one memory (episodic or semantic) by id. Irreversible. |
-| `stats` | Store-wide counts (episodic, semantic, procedural - the last is always 0, see below), fact validity breakdown, entity/reflection counts, db file size. |
+| `remember` | Store a memory. `kind="episodic"` (default) takes `content`; `kind="semantic"` takes `subject`/`predicate`/`object` instead - the structured triple, not free text. `agent_id` is optional and must be the server's own. An episodic memory takes an optional `provenance` that can only lower the server's (`tool` or `external`); a semantic fact takes none, since it reports the least trusted source among its episodes, and takes `shared` (default `false`). Both take `read_untrusted`. Returns the stored `provenance` and `quarantined`. |
+| `recall` | Retrieve this agent's memories relevant to a natural-language `query`, with `mode="hybrid"` (default), `"cosine"`, or `"spreading"`, and an optional `limit`. Each result carries its `provenance` and `quarantined`. |
+| `why` | Explain a memory's provenance by id - extraction chain, confidence, writer and sharing for a fact, encoding/access metadata for an episode. Both kinds report a `provenance` (for a fact, the least trusted source among its episodes) and `quarantined`. |
+| `forget` | Permanently delete one of this agent's memories (episodic or semantic) by id. Irreversible. |
+| `stats` | Counts (episodic, semantic, procedural - the last is always 0, see below), fact validity breakdown, entity/reflection counts, db file size, a `scope` object naming which counts are this agent's, and the `session` quarantine state. |
 
 A few things worth calling out:
 
@@ -611,7 +659,10 @@ CREATE TABLE episodes (
     summary_of JSON,           -- episode ids this row summarises (compress())
     importance_score REAL,
     agent_id TEXT DEFAULT NULL, -- NULL = unscoped / backward-compatible
-    provenance TEXT DEFAULT NULL -- 'user' | 'tool' | 'external'; NULL reads as 'unknown'
+    provenance TEXT DEFAULT NULL, -- 'user' | 'tool' | 'external'; NULL reads as 'unknown'
+    quarantined INTEGER DEFAULT NULL -- 1 = written after reading untrusted content;
+                                     -- NULL (written before the mark) reads as 1, and
+                                     -- the row's provenance as 'unknown'
 );
 
 -- ANN vector index (sqlite-vec virtual table, mirrors episodes rowid)
@@ -620,7 +671,7 @@ CREATE VIRTUAL TABLE vec_episodes USING vec0(embedding float[384]);
 -- Full-text search index (FTS5 content table, mirrors episodes rowid)
 CREATE VIRTUAL TABLE fts_episodes USING fts5(content, content='episodes', content_rowid='rowid');
 
--- Bitemporal semantic facts (shared across all agents)
+-- Bitemporal semantic facts (owned by their writer; shared unless written private)
 CREATE TABLE facts (
     id TEXT PRIMARY KEY,
     subject TEXT, predicate TEXT, object TEXT,
@@ -631,7 +682,10 @@ CREATE TABLE facts (
     superseded_by TEXT,        -- FK to facts.id
     confidence REAL,
     derived_from JSON,         -- provenance: episode ids
-    extracted_by TEXT          -- FK to reflections.id
+    extracted_by TEXT,         -- FK to reflections.id
+    agent_id TEXT,             -- writer; only it may delete; NULL = unscoped or old
+    shared INTEGER,            -- 0 = visible to its writer only; NULL (old) reads as shared
+    quarantined INTEGER        -- as on episodes; NULL (old) reads as 1
 );
 
 -- Entity graph (shared across all agents)

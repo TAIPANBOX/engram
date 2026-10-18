@@ -26,12 +26,17 @@ def export_json(mem: Engram, dest: str | Path) -> dict[str, Any]:
     instance can already read. Episodes and edges carry an ``agent_id`` and are
     filtered to it; both are scoped on every other read path (``get_episode``,
     ``recall``, ``prune_episodes``, ``decay``, ``get_neighbors``), and export
-    was the one path that was not. Facts and entities have no ``agent_id``
-    column: they are shared across the agents in one file by design (see
-    CHANGELOG 2.2.0 and 2.2.1), every fact and entity read path is already
-    cross-agent, and so they are exported whole rather than "fixed" into a
-    scoping the store never had. An unscoped instance exports everything, which
-    is what an operator taking a whole-store dump opens.
+    was the one path that was not. Facts are filtered the way every fact read
+    is: the instance's own facts, the facts their writers shared, and the facts
+    written before sharing was recorded; another agent's private fact is left
+    out. Entities have no ``agent_id`` column and are exported whole. An
+    unscoped instance exports everything, which is what an operator taking a
+    whole-store dump opens.
+
+    The ``quarantined`` flag of episodes and the owner, ``shared`` and
+    ``quarantined`` of facts are exported as stored, NULL included, so an
+    import keeps a row written before those existed reading the way it read
+    here.
 
     Args:
         mem: Open Engram instance to export from.
@@ -51,18 +56,21 @@ def export_json(mem: Engram, dest: str | Path) -> dict[str, Any]:
         dict(row)
         for row in conn.execute(
             "SELECT id, content, timestamp, actors, tags, salience, "
-            "emotional_valence, summary_of, importance_score, agent_id, provenance "
-            f"FROM episodes {scope} ORDER BY timestamp ASC",
+            "emotional_valence, summary_of, importance_score, agent_id, provenance, "
+            f"quarantined FROM episodes {scope} ORDER BY timestamp ASC",
             scope_params,
         ).fetchall()
     ]
 
+    visible, visible_params = mem._store._fact_visibility()
     facts = [
         dict(row)
         for row in conn.execute(
             "SELECT id, subject, predicate, object, valid_from, valid_to, "
             "recorded_at, superseded_at, superseded_by, confidence, "
-            "derived_from, extracted_by FROM facts ORDER BY valid_from ASC"
+            "derived_from, extracted_by, agent_id, shared, quarantined "
+            f"FROM facts WHERE 1=1{visible} ORDER BY valid_from ASC",
+            visible_params,
         ).fetchall()
     ]
 
@@ -137,12 +145,16 @@ def import_json(mem: Engram, src: str | Path, *, merge: bool = False) -> dict[st
         ep.setdefault("provenance", None)
         if ep["provenance"] is not None:
             check_provenance(ep["provenance"])
+        # The same for the quarantine mark: a document written before it
+        # existed imports as NULL, which reads as quarantined.
+        ep.setdefault("quarantined", None)
         conn.execute(
             f"INSERT {on_conflict} INTO episodes "
             "(id, content, timestamp, actors, tags, salience, emotional_valence, "
-            "summary_of, importance_score, agent_id, provenance) "
+            "summary_of, importance_score, agent_id, provenance, quarantined) "
             "VALUES (:id, :content, :timestamp, :actors, :tags, :salience, "
-            ":emotional_valence, :summary_of, :importance_score, :agent_id, :provenance)",
+            ":emotional_valence, :summary_of, :importance_score, :agent_id, :provenance, "
+            ":quarantined)",
             ep,
         )
         if conn.execute("SELECT changes()").fetchone()[0]:
@@ -165,13 +177,19 @@ def import_json(mem: Engram, src: str | Path, *, merge: bool = False) -> dict[st
             counts["episodes"] += 1
 
     for fact in doc.get("facts", []):
+        # Owner, sharing and quarantine are absent from a document written
+        # before they existed, and import as NULL: visible to every agent,
+        # owned by none, read as quarantined.
+        for key in ("agent_id", "shared", "quarantined"):
+            fact.setdefault(key, None)
         conn.execute(
             f"INSERT {on_conflict} INTO facts "
             "(id, subject, predicate, object, valid_from, valid_to, recorded_at, "
-            "superseded_at, superseded_by, confidence, derived_from, extracted_by) "
+            "superseded_at, superseded_by, confidence, derived_from, extracted_by, "
+            "agent_id, shared, quarantined) "
             "VALUES (:id, :subject, :predicate, :object, :valid_from, :valid_to, "
             ":recorded_at, :superseded_at, :superseded_by, :confidence, "
-            ":derived_from, :extracted_by)",
+            ":derived_from, :extracted_by, :agent_id, :shared, :quarantined)",
             fact,
         )
         if conn.execute("SELECT changes()").fetchone()[0]:

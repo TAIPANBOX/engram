@@ -212,6 +212,28 @@ def test_a_server_started_untrusted_quarantines_every_write(db_path: str) -> Non
         pool.close()
 
 
+def test_a_quarantined_write_never_carries_user(db_path: str) -> None:
+    pool = _EngramPool(db_path, A, provenance="user")
+    try:
+        written = _remember(
+            pool, "Summary of the vendor page: " + ATTACKER_NOTE, read_untrusted=True
+        )
+        assert (written["provenance"], written["quarantined"]) == ("external", True)
+        # A caller lowering to tool keeps tool: it is still not the user's.
+        tool = _remember(pool, "search result text", provenance="tool")
+        assert (tool["provenance"], tool["quarantined"]) == ("tool", True)
+    finally:
+        pool.close()
+
+    later = _EngramPool(db_path, A, provenance="user")
+    try:
+        hits = _recall(later, "vendor page reports attacker", limit=5)
+        assert hits[0]["content"].startswith("Summary of the vendor page")
+        assert (hits[0]["provenance"], hits[0]["quarantined"]) == ("external", True)
+    finally:
+        later.close()
+
+
 def test_a_session_that_read_only_user_memory_stays_clean(db_path: str) -> None:
     pool = _EngramPool(db_path, A, provenance="user")
     try:
@@ -231,7 +253,7 @@ def test_a_session_that_read_only_user_memory_stays_clean(db_path: str) -> None:
 # ----------------------------------------------------------------------
 
 
-def test_forget_refuses_another_agents_fact(server_a, server_b) -> None:
+def test_forget_refuses_another_agents_fact(db_path: str, server_a, server_b) -> None:
     private_id = _fact(server_b, "finance@acme.example")
     with pytest.raises(KeyError):
         _forget(server_a, private_id)
@@ -245,6 +267,16 @@ def test_forget_refuses_another_agents_fact(server_a, server_b) -> None:
     assert _why(server_b, shared_id)["object"] == "audit@acme.example"
     assert _forget(server_b, private_id)["deleted"] is True
     assert _forget(server_b, shared_id)["deleted"] is True
+
+    # A server with no identity is the file's operator and may delete any fact.
+    a_fact = _fact(server_a, "payroll@acme.example")
+    operator = _EngramPool(db_path, None)
+    try:
+        assert _forget(operator, a_fact)["deleted"] is True
+    finally:
+        operator.close()
+    with pytest.raises(KeyError):
+        _why(server_a, a_fact)
 
 
 def test_a_fact_is_private_unless_shared_at_write_time(db_path: str, server_a, server_b) -> None:
@@ -340,3 +372,287 @@ def test_migration_keeps_every_row_and_reads_old_rows_as_untrusted(tmp_path: Pat
     with Engram(path=path) as operator:
         operator.forget_fact(fact_id)
         assert operator.timeline("reports") == []
+
+
+# ----------------------------------------------------------------------
+# Boundaries and error paths
+# ----------------------------------------------------------------------
+
+
+def test_a_refused_call_changes_nothing(server_a) -> None:
+    """A write refused for a user claim, a bad source or a wrong scope does not
+    taint the session, and stores nothing."""
+    with pytest.raises(ValueError):
+        _remember(server_a, "x", provenance="user")
+    with pytest.raises(ValueError):
+        _remember(server_a, "x", provenance="admin")
+    with pytest.raises(PermissionError):
+        _remember(server_a, "x", agent_id=B, read_untrusted=True)
+    assert _stats(server_a)["session"] == {"untrusted": False, "reason": None}
+    assert _stats(server_a)["counts"]["episodic"] == 0
+
+
+def test_only_a_fact_can_be_shared(server_a) -> None:
+    with pytest.raises(ValueError, match="cannot be shared"):
+        _remember(server_a, "an episode", shared=True)
+    with pytest.raises(ValueError, match="takes no provenance"):
+        _remember(
+            server_a, kind="semantic", subject="s", predicate="p", object="o", provenance="tool"
+        )
+    assert _stats(server_a)["session"]["untrusted"] is False
+
+
+def test_the_session_keeps_the_first_reason_it_became_untrusted(server_a) -> None:
+    _remember(server_a, "a forwarded note", provenance="external")
+    _remember(server_a, "another", read_untrusted=True)
+    assert _stats(server_a)["session"] == {
+        "untrusted": True,
+        "reason": "the caller wrote content it labelled 'external'",
+    }
+
+
+def test_why_on_an_untrusted_episode_taints_the_session(server_a) -> None:
+    stored = _remember(server_a, "a note the server labels external")
+    assert _stats(server_a)["session"]["untrusted"] is False
+    assert _why(server_a, stored["id"])["quarantined"] is False
+    assert _stats(server_a)["session"]["untrusted"] is True
+
+
+def test_an_empty_recall_leaves_the_session_clean(server_a) -> None:
+    assert _recall(server_a, "nothing stored yet") == []
+    assert _stats(server_a)["session"]["untrusted"] is False
+
+
+def test_a_library_fact_stays_shared_by_default_and_owned(db_path: str) -> None:
+    """The library default is unchanged: assert_fact shares, as facts always
+    did, but the fact now has an owner and only the owner may delete it."""
+    with Engram(path=db_path, agent_id=A) as a:
+        fact_id = a.assert_fact("Alice", "role", "CTO")
+        assert a.why(fact_id)["agent_id"] == A
+    with Engram(path=db_path, agent_id=B) as b:
+        assert [f.object for f in b.timeline("Alice")] == ["CTO"]
+        assert b.contradictions() == []
+        with pytest.raises(PermissionError):
+            b.forget_fact(fact_id)
+    with Engram(path=db_path, agent_id=A) as a:
+        a.forget_fact(fact_id)
+        assert a.timeline("Alice") == []
+
+
+def test_another_agents_private_fact_is_absent_from_every_fact_read(db_path: str) -> None:
+    from datetime import UTC, datetime
+
+    with Engram(path=db_path, agent_id=A) as a:
+        private_id = a.assert_fact("Alice", "role", "CTO", shared=False)
+        a.assert_fact("Alice", "role", "CEO", shared=True)
+    with Engram(path=db_path, agent_id=B) as b:
+        now = datetime.now(tz=UTC)
+        assert [f.object for f in b.timeline("Alice")] == ["CEO"]
+        assert [f.object for f in b.timeline("Alice", as_of=now)] == ["CEO"]
+        assert b.contradictions() == []
+        assert [f.object for f in b._store.get_active_facts("Alice", "role")] == ["CEO"]
+        with pytest.raises(KeyError):
+            b.why(private_id)
+        with pytest.raises(KeyError):
+            b.forget_fact(private_id)
+    with Engram(path=db_path, agent_id=A) as a:
+        assert len(a.contradictions()) == 1
+
+
+def test_export_and_import_keep_the_mark_the_owner_and_the_sharing(
+    tmp_path: Path, db_path: str
+) -> None:
+    import json
+
+    with Engram(path=db_path, agent_id=A) as a:
+        a.observe("a quarantined note", quarantined=True)
+        a.observe("a clean note", provenance="user")
+        a.assert_fact("vault", "code", "4411", shared=False)
+        a.assert_fact("office", "city", "Berlin", shared=True, quarantined=True)
+    with Engram(path=db_path, agent_id=B) as b:
+        b.assert_fact("b", "private", "yes", shared=False)
+        b_doc = b.export_json(str(tmp_path / "b.json"))
+    # B's export carries its own fact and A's shared one, not A's private one.
+    assert sorted(f["object"] for f in b_doc["facts"]) == ["Berlin", "yes"]
+
+    with Engram(path=db_path, agent_id=A) as a:
+        a.export_json(str(tmp_path / "a.json"))
+    with Engram(path=tmp_path / "copy.engram", agent_id=A) as copy:
+        copy.import_json(str(tmp_path / "a.json"))
+        marks = {h.episode.content: h.episode.quarantined for h in copy.recall("note", k=5)}
+        assert marks == {"a quarantined note": True, "a clean note": False}
+        facts = {f.object: (f.agent_id, f.shared, f.quarantined) for f in copy.timeline("vault")}
+        assert facts == {"4411": (A, False, False)}
+        facts = {f.object: (f.agent_id, f.shared, f.quarantined) for f in copy.timeline("office")}
+        assert facts == {"Berlin": (A, True, True)}
+
+    # A document written before these fields existed imports as legacy rows.
+    doc = json.loads((tmp_path / "a.json").read_text(encoding="utf-8"))
+    for ep in doc["episodes"]:
+        ep.pop("quarantined")
+    for fact in doc["facts"]:
+        for key in ("agent_id", "shared", "quarantined"):
+            fact.pop(key)
+    (tmp_path / "old.json").write_text(json.dumps(doc), encoding="utf-8")
+    with Engram(path=tmp_path / "old.engram", agent_id=A) as old:
+        old.import_json(str(tmp_path / "old.json"))
+        hits = old.recall("note", k=5)
+        assert {(h.episode.provenance, h.episode.quarantined) for h in hits} == {("unknown", True)}
+        assert [(f.agent_id, f.shared, f.quarantined) for f in old.timeline("vault")] == [
+            (None, True, True)
+        ]
+
+
+def test_compress_keeps_the_quarantine_mark(tmp_path: Path) -> None:
+    from engram import StubLLMAdapter
+
+    with Engram(path=tmp_path / "c.engram", llm=StubLLMAdapter(summary="Summary.")) as mem:
+        mem.observe("a quarantined note", quarantined=True)
+        mem.observe("a clean note")
+        mem.compress(max_episodes=0, importance_threshold=1.1, batch_size=5)
+        hits = mem.recall("Summary", k=5)
+        assert [(h.episode.content, h.episode.quarantined) for h in hits] == [("Summary.", True)]
+
+
+def test_observe_many_and_async_carry_the_marks(tmp_path: Path) -> None:
+    import asyncio
+
+    from engram import AsyncEngram
+    from engram.models import ObserveInput
+
+    with Engram(path=":memory:") as mem:
+        mem.observe_many([ObserveInput(content="bulk quarantined", quarantined=True)])
+        assert mem.recall("bulk quarantined", k=1)[0].episode.quarantined is True
+
+    async def _run() -> tuple[bool, bool, bool]:
+        mem = AsyncEngram(path=str(tmp_path / "a.engram"), agent_id=A)
+        try:
+            await mem.observe("async quarantined", quarantined=True)
+            fact_id = await mem.assert_fact("s", "p", "o", shared=False, quarantined=True)
+            hit = (await mem.recall("async quarantined", k=1))[0]
+            fact = (await mem.timeline("s"))[0]
+            return hit.episode.quarantined, fact.shared, fact.quarantined and bool(fact_id)
+        finally:
+            await mem.close()
+
+    assert asyncio.run(_run()) == (True, False, True)
+
+
+def test_the_adapters_carry_the_quarantine_mark() -> None:
+    pytest.importorskip("langchain_core")
+    pytest.importorskip("llama_index")
+    from llama_index.core.llms import ChatMessage, MessageRole
+
+    from engram.adapters.langchain import EngramRetriever
+    from engram.adapters.llamaindex import EngramMemory
+
+    with Engram(path=":memory:") as mem:
+        mem.observe("Bob joined the Berlin office", quarantined=True)
+        docs = EngramRetriever(engram=mem, k=1).invoke("Bob Berlin")
+        assert docs[0].metadata["quarantined"] is True
+
+    memory = EngramMemory.from_defaults(engram_path=":memory:", k=3)
+    memory.put(ChatMessage(role=MessageRole.USER, content="Ivan works at Globex"))
+    assert memory.get("Ivan Globex")[0].additional_kwargs["quarantined"] is False
+
+
+def test_main_refuses_settings_it_does_not_understand(monkeypatch, db_path: str) -> None:
+    from engram import mcp_server
+
+    monkeypatch.setenv("ENGRAM_MCP_PROVENANCE", "admin")
+    with pytest.raises(SystemExit) as exc:
+        mcp_server.main(["--db", db_path, "--agent-id", A])
+    assert exc.value.code == 2
+    monkeypatch.delenv("ENGRAM_MCP_PROVENANCE")
+
+    monkeypatch.setenv("ENGRAM_MCP_SESSION_UNTRUSTED", "maybe")
+    with pytest.raises(SystemExit) as exc:
+        mcp_server.main(["--db", db_path, "--agent-id", A])
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("argv", "env", "expected"),
+    [
+        ([], {}, (A, "external", False)),
+        (["--provenance", "user"], {}, (A, "user", False)),
+        ([], {"ENGRAM_MCP_PROVENANCE": "tool"}, (A, "tool", False)),
+        (["--session-untrusted"], {}, (A, "external", True)),
+        ([], {"ENGRAM_MCP_SESSION_UNTRUSTED": "yes"}, (A, "external", True)),
+        ([], {"ENGRAM_MCP_SESSION_UNTRUSTED": "0"}, (A, "external", False)),
+    ],
+)
+def test_main_starts_the_server_with_what_it_was_given(
+    monkeypatch, db_path: str, argv: list[str], env: dict[str, str], expected: tuple[Any, ...]
+) -> None:
+    from engram import mcp_server
+
+    for name in ("ENGRAM_MCP_PROVENANCE", "ENGRAM_MCP_SESSION_UNTRUSTED"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    seen: list[tuple[Any, ...]] = []
+
+    class _Server:
+        def __init__(self, pool: _EngramPool) -> None:
+            self.pool = pool
+
+        def run(self, transport: str) -> None:
+            seen.append((self.pool.agent_id, self.pool.provenance, self.pool.session.untrusted))
+
+    monkeypatch.setattr(mcp_server, "_build_server", _Server)
+    mcp_server.main(["--db", db_path, "--agent-id", A, *argv])
+    assert seen == [expected]
+
+
+def test_main_warns_when_it_serves_the_whole_file(monkeypatch, capsys, db_path: str) -> None:
+    from engram import mcp_server
+
+    monkeypatch.delenv("ENGRAM_MCP_AGENT_ID", raising=False)
+    monkeypatch.setattr(
+        mcp_server,
+        "_build_server",
+        lambda pool: type("S", (), {"run": lambda self, transport: None})(),
+    )
+    mcp_server.main(["--db", db_path])
+    assert "serves the whole file as one tenant" in capsys.readouterr().err
+
+
+def test_the_fastmcp_tools_enforce_the_scope_and_take_the_new_arguments(db_path: str) -> None:
+    """Through FastMCP's own tool-call path, not the plain functions behind it."""
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from engram.mcp_server import _build_server
+
+    pool = _EngramPool(db_path, A)
+    try:
+        server = _build_server(pool)
+
+        async def _run() -> tuple[dict[str, Any], dict[str, Any]]:
+            with pytest.raises(ToolError, match="not this server's identity"):
+                await server.call_tool("recall", {"query": "x", "agent_id": B})
+            with pytest.raises(ToolError, match="cannot claim provenance 'user'"):
+                await server.call_tool("remember", {"content": "x", "provenance": "user"})
+            _, episode = await server.call_tool(
+                "remember", {"content": "a page summary", "read_untrusted": True}
+            )
+            _, fact = await server.call_tool(
+                "remember",
+                {
+                    "kind": "semantic",
+                    "subject": "s",
+                    "predicate": "p",
+                    "object": "o",
+                    "shared": True,
+                },
+            )
+            return episode, fact
+
+        episode, fact = asyncio.run(_run())
+    finally:
+        pool.close()
+    assert (episode["quarantined"], episode["agent_id"]) == (True, A)
+    assert (fact["shared"], fact["quarantined"]) == (True, True)

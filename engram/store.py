@@ -115,7 +115,7 @@ def _escape_fts5_query(query: str) -> str:
 
 _EPISODE_COLS = (
     "id, content, timestamp, actors, tags, salience, "
-    "emotional_valence, summary_of, importance_score, agent_id, provenance"
+    "emotional_valence, summary_of, importance_score, agent_id, provenance, quarantined"
 )
 
 
@@ -215,8 +215,8 @@ class Store:
             """
             INSERT INTO episodes (id, content, timestamp, actors, tags,
                                   salience, emotional_valence, summary_of, agent_id,
-                                  provenance)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  provenance, quarantined)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ep.id,
@@ -229,6 +229,7 @@ class Store:
                 json.dumps(ep.summary_of),
                 self._agent_id,
                 ep.provenance,
+                int(ep.quarantined),
             ),
         )
         rowid: int = cur.lastrowid  # type: ignore[assignment]
@@ -289,7 +290,7 @@ class Store:
             f"""
             SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
                    e.salience, e.emotional_valence, e.summary_of, e.importance_score,
-                   e.agent_id, e.provenance, v.distance
+                   e.agent_id, e.provenance, e.quarantined, v.distance
             FROM vec_episodes v
             JOIN episodes e ON e.rowid = v.rowid
             WHERE v.embedding MATCH ?
@@ -302,8 +303,8 @@ class Store:
 
         results: list[tuple[Episode, float, float]] = []
         for row in rows:
-            ep = Episode.from_row(tuple(row[:11]))
-            distance = float(row[11])
+            ep = Episode.from_row(tuple(row[:12]))
+            distance = float(row[12])
             score = _distance_to_score(distance)
             results.append((ep, score, distance))
         return results
@@ -426,8 +427,8 @@ class Store:
         """Insert multiple episodes and their vectors in a single transaction."""
         self._conn.executemany(
             "INSERT INTO episodes (id, content, timestamp, actors, tags, "
-            "salience, emotional_valence, summary_of, agent_id, provenance) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "salience, emotional_valence, summary_of, agent_id, provenance, quarantined) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     ep.id,
@@ -440,6 +441,7 @@ class Store:
                     json.dumps(ep.summary_of),
                     self._agent_id,
                     ep.provenance,
+                    int(ep.quarantined),
                 )
                 for ep in episodes
             ],
@@ -574,13 +576,27 @@ class Store:
         self._commit()
         return True
 
-    def delete_fact(self, fact_id: str) -> bool:
+    def delete_fact(self, fact_id: str, agent_id: str | None = None) -> bool:
         """Hard-delete a single fact by id.
 
+        Args:
+            agent_id: If set, only delete the fact when this agent wrote it. A
+                fact another agent wrote, shared or not, and a fact written
+                before ownership was recorded (NULL owner) are left untouched
+                and reported as not deleted. If None (default), matches by id
+                alone -- the unscoped operator's path, and the one
+                :meth:`forget_entity`'s cross-agent erasure takes.
+
         Returns:
-            True if the fact existed and was deleted; False if not found.
+            True if the fact existed (and was owned by *agent_id*, when given)
+            and was deleted; False otherwise.
         """
-        cur = self._conn.execute("DELETE FROM facts WHERE id = ?", (fact_id,))
+        if agent_id is not None:
+            cur = self._conn.execute(
+                "DELETE FROM facts WHERE id = ? AND agent_id = ?", (fact_id, agent_id)
+            )
+        else:
+            cur = self._conn.execute("DELETE FROM facts WHERE id = ?", (fact_id,))
         self._commit()
         return cur.rowcount > 0
 
@@ -661,17 +677,30 @@ class Store:
 
     _FACT_COLS = (
         "id, subject, predicate, object, valid_from, valid_to, recorded_at, "
-        "superseded_at, superseded_by, confidence, derived_from, extracted_by"
+        "superseded_at, superseded_by, confidence, derived_from, extracted_by, "
+        "agent_id, shared, quarantined"
     )
 
+    def _fact_visibility(self) -> tuple[str, tuple[Any, ...]]:
+        """The ``AND ...`` clause that limits a fact read to what this store may see.
+
+        An unscoped store sees every fact. An agent-scoped one sees its own
+        facts, the facts their writers shared, and the facts written before
+        sharing was recorded (``shared IS NULL``), which every agent could read
+        then and still can. A fact another agent kept private is not there.
+        """
+        if self._agent_id is None:
+            return "", ()
+        return " AND (shared IS NULL OR shared != 0 OR agent_id = ?)", (self._agent_id,)
+
     def insert_fact(self, fact: Fact) -> None:
-        """Persist a semantic fact triple."""
+        """Persist a semantic fact triple, owned by this store's agent."""
         self._conn.execute(
             """
             INSERT INTO facts (id, subject, predicate, object, valid_from, valid_to,
                                recorded_at, superseded_at, superseded_by, confidence,
-                               derived_from, extracted_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               derived_from, extracted_by, agent_id, shared, quarantined)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 fact.id,
@@ -686,39 +715,49 @@ class Store:
                 fact.confidence,
                 json.dumps(fact.derived_from),
                 fact.extracted_by,
+                self._agent_id,
+                int(fact.shared),
+                int(fact.quarantined),
             ),
         )
         self._commit()
 
     def get_fact(self, fact_id: str) -> Fact | None:
-        """Fetch a single fact by id."""
+        """Fetch a single fact by id, if this store may see it (see _fact_visibility)."""
+        visible, params = self._fact_visibility()
         row: Any = self._conn.execute(
-            f"SELECT {self._FACT_COLS} FROM facts WHERE id = ?", (fact_id,)
+            f"SELECT {self._FACT_COLS} FROM facts WHERE id = ?{visible}", (fact_id, *params)
         ).fetchone()
         return Fact.from_row(tuple(row)) if row else None
 
     def get_active_facts(self, subject: str, predicate: str) -> list[Fact]:
         """Return currently valid facts for (subject, predicate)."""
+        visible, params = self._fact_visibility()
         rows: list[Any] = self._conn.execute(
             f"SELECT {self._FACT_COLS} FROM facts "
             "WHERE subject = ? AND predicate = ? "
-            "AND valid_to IS NULL AND superseded_at IS NULL",
-            (subject, predicate),
+            f"AND valid_to IS NULL AND superseded_at IS NULL{visible}",
+            (subject, predicate, *params),
         ).fetchall()
         return [Fact.from_row(tuple(r)) for r in rows]
 
     def get_all_active_facts(self) -> list[Fact]:
         """Return all currently valid facts (for contradictions surface query)."""
+        visible, params = self._fact_visibility()
         rows: list[Any] = self._conn.execute(
-            f"SELECT {self._FACT_COLS} FROM facts WHERE valid_to IS NULL AND superseded_at IS NULL"
+            f"SELECT {self._FACT_COLS} FROM facts "
+            f"WHERE valid_to IS NULL AND superseded_at IS NULL{visible}",
+            params,
         ).fetchall()
         return [Fact.from_row(tuple(r)) for r in rows]
 
     def get_all_facts(self, subject: str) -> list[Fact]:
         """Return all facts for *subject* regardless of validity."""
+        visible, params = self._fact_visibility()
         rows: list[Any] = self._conn.execute(
-            f"SELECT {self._FACT_COLS} FROM facts WHERE subject = ? ORDER BY valid_from ASC",
-            (subject,),
+            f"SELECT {self._FACT_COLS} FROM facts WHERE subject = ?{visible} "
+            "ORDER BY valid_from ASC",
+            (subject, *params),
         ).fetchall()
         return [Fact.from_row(tuple(r)) for r in rows]
 
@@ -1088,7 +1127,7 @@ class Store:
         sql = f"""
             SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
                    e.salience, e.emotional_valence, e.summary_of, e.importance_score,
-                   e.agent_id, e.provenance, v.distance
+                   e.agent_id, e.provenance, e.quarantined, v.distance
             FROM vec_episodes v
             JOIN episodes e ON e.rowid = v.rowid
             WHERE v.embedding MATCH ?
@@ -1103,8 +1142,8 @@ class Store:
         ).fetchall()
         results: list[tuple[Episode, float, float]] = []
         for row in rows:
-            ep = Episode.from_row(tuple(row[:11]))
-            distance = float(row[11])
+            ep = Episode.from_row(tuple(row[:12]))
+            distance = float(row[12])
             score = _distance_to_score(distance)
             results.append((ep, score, distance))
         return results
@@ -1171,7 +1210,7 @@ class Store:
             f"""
             SELECT e.id, e.content, e.timestamp, e.actors, e.tags,
                    e.salience, e.emotional_valence, e.summary_of, e.importance_score,
-                   e.agent_id, e.provenance, v.distance
+                   e.agent_id, e.provenance, e.quarantined, v.distance
             FROM vec_episodes v
             JOIN episodes e ON e.rowid = v.rowid
             WHERE v.embedding MATCH ?
@@ -1184,10 +1223,10 @@ class Store:
 
         # distance → cosine score, then normalise to [0, 1] across candidates
         vec_scores: dict[str, float] = {
-            str(row[0]): _distance_to_score(float(row[11])) for row in vec_rows
+            str(row[0]): _distance_to_score(float(row[12])) for row in vec_rows
         }
         vec_episodes: dict[str, Episode] = {
-            str(row[0]): Episode.from_row(tuple(row[:11])) for row in vec_rows
+            str(row[0]): Episode.from_row(tuple(row[:12])) for row in vec_rows
         }
 
         norm_vec = _minmax_normalize(vec_scores)
@@ -1241,13 +1280,14 @@ class Store:
 
         A fact is valid at T when valid_from <= T and (valid_to IS NULL or valid_to > T).
         """
+        visible, params = self._fact_visibility()
         rows: list[Any] = self._conn.execute(
             f"SELECT {self._FACT_COLS} FROM facts "
             "WHERE subject = ? "
             "  AND valid_from <= ? "
-            "  AND (valid_to IS NULL OR valid_to > ?)"
+            f"  AND (valid_to IS NULL OR valid_to > ?){visible}"
             " ORDER BY valid_from ASC",
-            (subject, _iso_utc(as_of), _iso_utc(as_of)),
+            (subject, _iso_utc(as_of), _iso_utc(as_of), *params),
         ).fetchall()
         return [Fact.from_row(tuple(r)) for r in rows]
 

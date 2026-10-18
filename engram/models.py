@@ -20,6 +20,8 @@ UNKNOWN_PROVENANCE = "unknown"
 DEFAULT_PROVENANCE = "external"
 # Least trusted first. Used to read a fact off the episodes it came from.
 _TRUST_ORDER: tuple[str, ...] = (UNKNOWN_PROVENANCE, "external", "tool", "user")
+# The one source a reader may take as the person's own words.
+TRUSTED_PROVENANCE = "user"
 
 
 def check_provenance(value: str) -> str:
@@ -43,6 +45,28 @@ def least_trusted(values: Iterable[str]) -> str:
     return min(ranked, key=rank)
 
 
+def is_untrusted(provenance: str, quarantined: bool) -> bool:
+    """Whether reading a memory means reading content the user did not write.
+
+    Anything but a ``user`` memory that was not quarantined counts: a tool's
+    output, an external page, another agent's write, a row whose source was
+    never recorded, and a write made after its session read any of those.
+    """
+    return provenance != TRUSTED_PROVENANCE or quarantined
+
+
+def _legacy_flag(row: tuple[Any, ...], index: int) -> int | None:
+    """The flag at *index*, or ``None`` when the row predates the column.
+
+    A missing column and a NULL read the same way on purpose: both describe a
+    row written before engram recorded the flag, and both must read as the
+    least trusted answer rather than as a clean one.
+    """
+    if len(row) <= index or row[index] is None:
+        return None
+    return int(row[index])
+
+
 @dataclass
 class Episode:
     """A raw observed event stored in the episodic memory."""
@@ -58,15 +82,27 @@ class Episode:
     importance_score: float = 1.0
     agent_id: str | None = None
     provenance: str = UNKNOWN_PROVENANCE
+    # Written after its session read untrusted content (see engram.mcp_server).
+    quarantined: bool = False
 
     @classmethod
     def from_row(cls, row: tuple[Any, ...]) -> Episode:
         """Construct from a DB row (id, content, timestamp, actors, tags, salience,
-        emotional_valence, summary_of, importance_score[, agent_id[, provenance]]).
+        emotional_valence, summary_of, importance_score[, agent_id[, provenance
+        [, quarantined]]]).
 
         A NULL provenance is a row written before the column existed, and reads
         as unknown, never as a trusted source.
+
+        A NULL ``quarantined`` is a row written before engram set provenance
+        itself, when any caller could declare any source, ``user`` included.
+        Such a row reads as quarantined and its provenance as unknown, whatever
+        it recorded: the stored value is kept on disk, untouched, and is the
+        caller's claim rather than anything engram established.
         """
+        quarantined = _legacy_flag(row, 11)
+        legacy = quarantined is None
+        recorded = row[10] if len(row) > 10 else None
         return cls(
             id=row[0],
             content=row[1],
@@ -78,7 +114,8 @@ class Episode:
             summary_of=json.loads(row[7] or "[]"),
             importance_score=float(row[8]) if row[8] is not None else 1.0,
             agent_id=row[9] if len(row) > 9 else None,
-            provenance=(row[10] if len(row) > 10 and row[10] is not None else UNKNOWN_PROVENANCE),
+            provenance=(UNKNOWN_PROVENANCE if legacy or recorded is None else recorded),
+            quarantined=legacy or bool(quarantined),
         )
 
 
@@ -108,11 +145,26 @@ class Fact:
     confidence: float
     derived_from: list[str] = field(default_factory=list)
     extracted_by: str | None = None  # reflection run id that created this fact
+    # The agent that wrote the fact, None for an unscoped writer or a fact
+    # written before ownership was recorded. Only the owner may delete it.
+    agent_id: str | None = None
+    # Visible to every agent in the file, or only to its owner.
+    shared: bool = True
+    # Written after its session read untrusted content.
+    quarantined: bool = False
 
     @classmethod
     def from_row(cls, row: tuple[Any, ...]) -> Fact:
         """Construct from a DB row (id, subject, predicate, object, valid_from, valid_to,
-        recorded_at, superseded_at, superseded_by, confidence, derived_from, extracted_by)."""
+        recorded_at, superseded_at, superseded_by, confidence, derived_from, extracted_by
+        [, agent_id, shared, quarantined]).
+
+        A fact written before ownership was recorded has NULL in all three. It
+        stays visible to every agent, as every fact was then, and reads as
+        quarantined, since nothing recorded what its writer had read.
+        """
+        shared = _legacy_flag(row, 13)
+        quarantined = _legacy_flag(row, 14)
         return cls(
             id=row[0],
             subject=row[1],
@@ -126,6 +178,9 @@ class Fact:
             confidence=float(row[9]),
             derived_from=json.loads(row[10] or "[]"),
             extracted_by=row[11],
+            agent_id=row[12] if len(row) > 12 else None,
+            shared=shared is None or bool(shared),
+            quarantined=quarantined is None or bool(quarantined),
         )
 
 
@@ -217,6 +272,7 @@ class ObserveInput:
             belongs to rather than the moment the import ran.
         provenance: Where the content came from: ``"user"``, ``"tool"`` or
             ``"external"``. Defaults to ``"external"``.
+        quarantined: Written after the writer read untrusted content.
     """
 
     content: str
@@ -226,6 +282,7 @@ class ObserveInput:
     emotional_valence: float = 0.0
     timestamp: datetime | None = None
     provenance: str = DEFAULT_PROVENANCE
+    quarantined: bool = False
 
 
 @dataclass

@@ -53,6 +53,7 @@ pytest
 ./scripts/no-network-at-write.sh
 ./scripts/readme-numbers.sh
 ./scripts/local-first.sh
+./scripts/features-are-bound.sh
 ./scripts/gates-have-teeth.sh   # invariant 9; needs a clean tree and the package installed
 ```
 
@@ -118,11 +119,12 @@ an absent invariant.
    working on a genuine environment fault rather than on a planted one. The
    harness now refuses to start in that state for the same reason: it cannot
    tell a toothless gate from an unequipped machine.
-   *(gate: `scripts/gates-have-teeth.sh`, 8 cases: four real faults each gate
-   must catch, one non-fault they must not, and three subjects taken away
-   entirely. The non-fault case is the one worth keeping: an import INSIDE a
-   function is exactly what invariant 1 allows, and a gate that fired on it
-   would be deleted by whoever is unblocking CI.)*
+   *(gate: `scripts/gates-have-teeth.sh`, 12 cases: six real faults the gates
+   must catch, two non-faults they must not, and four subjects taken away
+   entirely. The non-fault cases are the ones worth keeping: an import INSIDE a
+   function is exactly what invariant 1 allows, a reworded scenario title is
+   exactly what invariant 12 allows, and a gate that fired on either would be
+   deleted by whoever is unblocking CI.)*
 
    **What it does not cover.** It cannot test itself. It proves each gate
    catches the faults named in it, not every fault of that kind. It found no
@@ -146,6 +148,24 @@ an absent invariant.
     the episodes it was extracted from. Provenance does not change ranking or
     scores. *(test: `tests/test_provenance.py`; the ranking half is
     `test_recall_matches_the_golden_captured_before_the_change`)*
+
+12. **Over MCP, nothing a tool call says decides whose memory it reaches or how
+    far it is trusted.** The caller is a model, and a model can be steered by
+    what it read. So: the scope is the identity the server is started with,
+    and a call naming another agent is refused, never served; the server sets
+    each write's provenance (`--provenance`, `external` by default) and a
+    caller may only lower it, never claim `user`; once the session has read
+    untrusted content (a recalled memory that is not the user's own, content
+    the caller labels `tool` or `external`, `read_untrusted`, or
+    `--session-untrusted`) every later write is stored quarantined, never as
+    `user`, and every read returns the mark; a fact is visible to other agents
+    only when shared at write time (the MCP default is private) and only its
+    writer, or an unscoped instance, can delete it; and a row written before
+    these existed reads as the least trusted (quarantined, provenance
+    `unknown`, an old fact visible to all and deletable by no agent) without
+    being rewritten. *(test: `tests/test_memory_scope.py`, one test per
+    scenario in `features/memory-scope-and-provenance.feature`; gate:
+    `scripts/features-are-bound.sh` holds the binding, not the behaviour)*
 
 ## Decisions that have no gate yet
 
@@ -252,6 +272,18 @@ When the user approves a decision, add it here in the same session.
   Approved as the one on-disk schema change this needs: an additive nullable
   column, `episodes.provenance`. No default, weight or retrieval algorithm changed.
   Invariant 11 holds it.
+- `@decided 2026-10-17`: close the agent-security findings of the 2026-10-17
+  review on the hybrid architecture (identity from vouchryx, key custody and the
+  record witness off the request path). For engram, finding F-007: the MCP
+  server's configured identity is the scope, the server sets provenance and a
+  caller may only lower it, writes after an untrusted read are quarantined and
+  the mark is returned, facts are private unless shared at write time and
+  deleted only by their writer, and existing stores migrate with no row lost.
+  The schema change this needs: four additive nullable columns,
+  `episodes.quarantined`, `facts.agent_id`, `facts.shared`, `facts.quarantined`.
+  No weight or retrieval algorithm changed; two MCP defaults did (provenance is
+  `external` unless configured, a fact is private unless shared). Invariant 12
+  holds it.
 
 ## Escalate, do not push through
 

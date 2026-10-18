@@ -89,6 +89,7 @@ if _LANGCHAIN_AVAILABLE:
                         "timestamp": r.episode.timestamp.isoformat(),
                         "importance": r.importance,
                         "provenance": r.episode.provenance,
+                        "quarantined": r.episode.quarantined,
                     },
                 )
                 for r in results

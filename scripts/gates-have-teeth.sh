@@ -203,6 +203,19 @@ run_case "readme-numbers: a derived recall gap that no longer follows" fail \
 	"$(py 'edit("docs/api-reference.md", "it is 14 points lower", "it is 19 points lower")')" \
 	"points lower"
 
+# Invariant 12's scenarios are only readable evidence while each one points at a
+# test that exists. A renamed test and a deleted binding are the two ways that
+# pointer breaks on its own.
+run_case "features-are-bound: a binding names a test that is gone" fail \
+	'./scripts/features-are-bound.sh' \
+	"$(py 'edit("features/memory-scope-and-provenance.feature", "@test:test_a_caller_cannot_claim_user_provenance", "@test:test_a_caller_cannot_claim_user")')" \
+	"names no test"
+
+run_case "features-are-bound: a scenario with nothing behind it" fail \
+	'./scripts/features-are-bound.sh' \
+	"$(py 'edit("features/memory-scope-and-provenance.feature", "  # @test:test_forget_refuses_another_agents_fact\n", "")')" \
+	"proves nothing"
+
 run_case "local-first: the stated first-use download stops matching" fail \
 	'./scripts/local-first.sh' \
 	"$(py 'edit("README.md", "downloads the ONNX embedding model (~64 MB)", "downloads the ONNX embedding model (~12 MB)")')" \
@@ -217,6 +230,13 @@ echo "=== and what they must NOT catch ==="
 run_case "no-network-at-write: a network client imported inside a function" pass \
 	'./scripts/no-network-at-write.sh' \
 	"$(py 'edit("engram/cli.py", "def main(", "def _unused_lazy_import():\n    import httpx\n\n    return httpx\n\n\ndef main(")')"
+
+# A scenario's title is prose for the reader; the binding is the pointer. A
+# gate that went red on a reworded title would be deleted the first time
+# somebody tightened the wording.
+run_case "features-are-bound: a scenario retitled is still bound" pass \
+	'./scripts/features-are-bound.sh' \
+	"$(py 'edit("features/memory-scope-and-provenance.feature", "Scenario: A caller cannot label its write as typed by the user", "Scenario: no caller claims to be the user")')"
 
 echo
 echo "=== and the one this estate learned the hard way ==="
@@ -237,6 +257,12 @@ run_case "local-first: the README stops stating a download size at all" fail \
 	'./scripts/local-first.sh' \
 	"$(py 'edit("README.md", "downloads the ONNX embedding model (~64 MB)", "downloads the ONNX embedding model")')" \
 	"no longer states the first-use download size"
+
+run_case "features-are-bound: the scenarios are gone" fail \
+	'./scripts/features-are-bound.sh' \
+	"$(py 'import subprocess
+subprocess.run(["git", "rm", "-rq", "features"], check=True)')" \
+	"not a pass"
 
 echo
 if [ -n "$(git status --porcelain)" ]; then

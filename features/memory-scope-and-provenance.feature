@@ -11,9 +11,9 @@ Feature: Memory belongs to the agent a server is configured as, and the server d
   its writer shared it at write time, and an existing store keeps every row
   while its old rows read as the least trusted.
 
-  Every scenario names the test that holds it (`# @test:` above it);
-  scripts/features-are-bound.sh refuses a scenario with no test and a test
-  name that no longer exists.
+  Every scenario names the test that holds it, in a comment on the line
+  above it; scripts/features-are-bound.sh refuses a scenario with no test and
+  a test name that no longer exists.
 
   # @test:test_a_call_naming_another_agent_is_refused
   Scenario: A call that names another agent is refused, not served from that agent's memory
@@ -71,6 +71,13 @@ Feature: Memory belongs to the agent a server is configured as, and the server d
     Given a memory server started with the untrusted-session setting
     When a caller writes a memory or a fact before reading anything
     Then both are stored quarantined
+
+  # @test:test_a_quarantined_write_never_carries_user
+  Scenario: On a server that records writes as the user's, a quarantined write is not the user's
+    Given a memory server configured to record writes as the user's
+    When a caller writes a summary of a web page and says it read untrusted content
+    Then the write is stored quarantined and external, never as the user's
+    And a later session recalls it with both marks
 
   # @test:test_a_session_that_read_only_user_memory_stays_clean
   Scenario: A session that read only the user's own memories stays clean
