@@ -80,15 +80,16 @@ def _cmd_inspect(args: argparse.Namespace) -> None:
 
     print(f"\nStore: {args.path}{size_str}")
     # Which of the numbers below are this agent's. Episodes, the vector index
-    # and the reflection log are scoped to it; facts and entities carry no
-    # agent_id and are shared by every agent in the file (CHANGELOG 2.2.0,
-    # 2.2.1). Both kinds read identically, so an unlabelled list of them lets
-    # a reader take the whole store's facts for one agent's.
+    # and the reflection log are scoped to it; the fact and entity counts are
+    # over the whole file, every agent's facts included, private ones too
+    # (counts only, never content). Both kinds read identically, so an
+    # unlabelled list of them lets a reader take the whole store's facts for
+    # one agent's.
     agent_id = getattr(args, "agent_id", None)
     if agent_id:
         print(f"Agent: {agent_id}")
         print("       episodes, vec index and reflections are this agent's;")
-        print("       facts and entities are shared by every agent in the file")
+        print("       fact and entity counts are the whole file's, every agent's")
     print()
     print(f"  Episodes:       {ep:>6}   (vec index: {vec})")
     print(
