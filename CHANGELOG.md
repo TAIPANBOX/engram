@@ -5,11 +5,24 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.0.0] - 2026-10-18
+
+### Breaking
+- **A call over `engram-mcp` cannot reach another agent's memory.** A server is started as one agent (`--agent-id` or `ENGRAM_MCP_AGENT_ID`). An MCP tool call that names a different `agent_id` is refused with `PermissionError`, and nothing of that agent's is read or written. A server with no identity serves the whole file and refuses every named agent.
+- **A caller cannot claim `provenance="user"`.** A write that says so is refused. A caller can only lower the provenance of a write, and the server's ceiling is `external` unless its operator sets `--provenance`. A client that passed `tool` is therefore recorded as `external` by default.
+- **Facts are private unless shared.** Over MCP, `remember(kind="semantic")` keeps a fact private to the agent that wrote it unless the call passes `shared=true`. Another agent's `why()` and `timeline()` no longer return a private fact. The library's `assert_fact()` keeps its shared default.
+- **`forget_fact()` on an agent-scoped instance deletes only that agent's facts.** Another agent's private fact raises `KeyError`, and another agent's shared fact raises `PermissionError`. This includes facts written before this release, which recorded no owner.
+
+### Migration
+- **A client that passed `agent_id` on each call.** Either leave `agent_id` out and start the server with no identity, which serves the whole file and warns on stderr, or start one `engram-mcp` per agent with `--agent-id` and point each agent's client at its own server.
+- **A client that passed `provenance="user"` or `"tool"`.** Raise the ceiling on the server that client runs, with `--provenance user` or `--provenance tool` (or `ENGRAM_MCP_PROVENANCE`), and only if that client really relays what the user typed or what a tool returned. Otherwise its writes are stored as `external`.
+- **A fact other agents must read.** Pass `shared=true` on `remember`.
+- **Deleting a fact another agent wrote, or a fact written before this release.** Only the writer, or an instance started without an `agent_id`, can delete it.
+- **Existing stores.** Open them as before. `migrate()` adds four nullable columns once and rewrites no row. Rows written before this release read as the least trusted: episodes as quarantined with provenance `unknown`, and facts as quarantined and visible to every agent. An older Engram that opens a migrated file ignores the new columns.
 
 ### Security
 - **`engram-mcp` no longer takes the agent scope or the trust of a write from the tool
-  call (finding F-007 of the 2026-10-17 agent-security review).** Before this, any MCP
+  call.** Before this, any MCP
   client could read or write another agent's memory by naming its `agent_id`, label any
   text `provenance="user"`, and delete any fact, since facts were shared by every agent
   and `forget` checked only the id. A memory planted by an injected page was recalled in
@@ -19,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `PermissionError`; naming its own, or nothing, is served. A server started without an
     identity serves the whole file as one tenant, warns on stderr, and refuses any named
     agent. **Breaking** for a client that relied on per-call `agent_id` to read or write
-    several agents through one server (the genaryx memory panel did, for reads): run one
+    several agents through one server: run one
     server per agent, or an unscoped one for a whole-file view.
   - **The server sets provenance.** `--provenance` / `ENGRAM_MCP_PROVENANCE` (`user`,
     `tool` or `external`, default `external`) is the most a write can carry; a caller may
@@ -51,6 +64,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Held by invariant 12 in CLAUDE.md, 14 scenarios in
   `features/memory-scope-and-provenance.feature` bound to tests by the new gate
   `scripts/features-are-bound.sh`. `@decided 2026-10-17` (see CLAUDE.md).
+
+- **CI runs with a read-only token, and every GitHub Action is pinned to a commit.** Dependabot proposes Action updates weekly, and the Scorecard action is pinned to the commit its tag names.
+- **A secret scan runs on every pull request and every push to `main`.** It calls the estate's reusable secretscan workflow, pinned to a commit.
+- **`pip-audit` ignores the `nltk` advisories that have no upstream fix.** `nltk` comes in through the optional `llamaindex` extra.
+
+- **`export_json()` is scoped to the calling instance's `agent_id`.** It was
+  the read path 2.2.0 and 2.2.1 left open. `Engram(path="./team.engram",
+  agent_id="coder").export_json("dump.json")` wrote every other agent's raw
+  episode text into a plaintext file, while `get_episode()`, `recall()`,
+  `forget()`, `prune_episodes()`, `decay()` and `get_neighbors()` had all been
+  closed against exactly that, and the export path was never covered by a test
+  that used a scoped instance at all.
+
+  Episodes and edges carry an `agent_id` and are now filtered to it. Facts and
+  entities are not, and that is the deliberate half: they have no `agent_id`
+  column, 2.2.0 and 2.2.1 both record that they stay shared across the agents
+  in one file, and every fact and entity read path is already cross-agent. An
+  export that hid them would have turned a decision into a bug and hidden
+  nothing, since the same instance can read them through `timeline()` and
+  `contradictions()`. The rule the fix follows is narrower than "scope
+  everything": an export must not carry more than the instance can already
+  read. An unscoped instance still exports the whole store.
+- **`backup()` refuses on an agent-scoped instance**, with a `ValueError`
+  naming both alternatives. It copies the whole file through SQLite's online
+  backup API, so unlike an export it cannot be filtered: the choice was
+  between a copy that hands over every agent's data and a refusal. Proceeding
+  with a warning was the other candidate and loses on the only question that
+  matters here, because the file is delivered either way. Open the store
+  without an `agent_id` to back up the file, or use `export_json()` for one
+  agent's own data. This is a behaviour change for anyone who called
+  `backup()` from a scoped instance; nothing in this repo did, and the CLI
+  exposes no backup command.
+
+  Not changed, and stated here rather than left to be rediscovered:
+  `import_json()` keeps the `agent_id` recorded in the document instead of
+  re-stamping rows with the importing instance's scope. That is what makes a
+  migration preserve who wrote what, and 2.2.0 added edge `agent_id`
+  round-tripping for the same reason, but it does mean a scoped instance can
+  write rows outside its own scope from a hand-edited document, which the read
+  side no longer permits. The asymmetry is known, not overlooked.
 
 ### Added
 - **Provenance on every observation.** Each episode records where it came from:
@@ -108,6 +161,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whether to create it or upload into it, rather than assuming either state.
   The README's new "Verify a download" section is the reader-facing half of
   this.
+
+- **Result keys, all additive.** `recall` and `why` return `quarantined`; `why()` on a fact also returns `agent_id` and `shared`; `remember` returns `quarantined` and `shared`; `stats` returns a `session` object that says whether the session has read untrusted content, and why.
+- **`components.json` declares the three console scripts and the distribution name `pip install` uses.** The distribution is `engdbram`; the import is `engram`.
+- **Repository gates and CI, no change to the package.** CI measures and prints statement coverage with no threshold. The OpenSSF Scorecard is published weekly. The fourth cross-language chain vector is pinned in the tests. `scripts/features-are-bound.sh` binds every feature scenario to a test. `scripts/gates-have-teeth.sh` now proves that each gate can still fail, refuses to judge a gate that is already failing, and applies its baseline to every case.
 
 ### Changed
 - **The vendored `agent-event` v0.2 contract is agent-passport's file again,
@@ -249,6 +306,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is a CI decision rather than an edit.
 
 ### Fixed
+- **`compress()` counts the episodes it deleted, not the ones it selected.** A candidate that a concurrent `forget()` had already removed was still counted in `episodes_removed`.
+- **The installed package reports its own version.** `engram.__version__` said `2.2.1` for two releases while `pyproject.toml` declared the real one. A check now requires the package, `pyproject.toml` and the README badge to agree.
+- **The README and API reference state the figures the record supports.** The gap between session and turn recall is 14 points, not 15 or 18. The write latency and the install extras now match the measurements and `pyproject.toml`. The diagram's alt text names the 0.5 / 0.5 blend.
+- **`scripts/local-first.sh` follows symlinks when it measures the model.** huggingface_hub 1.32 can keep a large blob in a store shared across repositories, so the check read 0.7 MB of a 64 MB model and failed. It now counts each file once, by its resolved path.
+
 - **The MCP `stats` tool mixed two scopes in one response and said nothing
   about it.** `episode_count()` is scoped to the instance's `agent_id`;
   `vec_count()`, `fact_count()`, `active_fact_count()`, `entity_count()` and
@@ -302,44 +364,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   these runner minutes are free. `tests/test_gates_are_wired.py` holds it,
   and holds the other direction too, that CI keeps running them.
 
-### Security
-- **`export_json()` is scoped to the calling instance's `agent_id`.** It was
-  the read path 2.2.0 and 2.2.1 left open. `Engram(path="./team.engram",
-  agent_id="coder").export_json("dump.json")` wrote every other agent's raw
-  episode text into a plaintext file, while `get_episode()`, `recall()`,
-  `forget()`, `prune_episodes()`, `decay()` and `get_neighbors()` had all been
-  closed against exactly that, and the export path was never covered by a test
-  that used a scoped instance at all.
-
-  Episodes and edges carry an `agent_id` and are now filtered to it. Facts and
-  entities are not, and that is the deliberate half: they have no `agent_id`
-  column, 2.2.0 and 2.2.1 both record that they stay shared across the agents
-  in one file, and every fact and entity read path is already cross-agent. An
-  export that hid them would have turned a decision into a bug and hidden
-  nothing, since the same instance can read them through `timeline()` and
-  `contradictions()`. The rule the fix follows is narrower than "scope
-  everything": an export must not carry more than the instance can already
-  read. An unscoped instance still exports the whole store.
-- **`backup()` refuses on an agent-scoped instance**, with a `ValueError`
-  naming both alternatives. It copies the whole file through SQLite's online
-  backup API, so unlike an export it cannot be filtered: the choice was
-  between a copy that hands over every agent's data and a refusal. Proceeding
-  with a warning was the other candidate and loses on the only question that
-  matters here, because the file is delivered either way. Open the store
-  without an `agent_id` to back up the file, or use `export_json()` for one
-  agent's own data. This is a behaviour change for anyone who called
-  `backup()` from a scoped instance; nothing in this repo did, and the CLI
-  exposes no backup command.
-
-  Not changed, and stated here rather than left to be rediscovered:
-  `import_json()` keeps the `agent_id` recorded in the document instead of
-  re-stamping rows with the importing instance's scope. That is what makes a
-  migration preserve who wrote what, and 2.2.0 added edge `agent_id`
-  round-tripping for the same reason, but it does mean a scoped instance can
-  write rows outside its own scope from a hand-edited document, which the read
-  side no longer permits. The asymmetry is known, not overlooked.
-
-### Fixed
 - **The three write paths that most needed an audit trail emitted nothing.**
   `observe_many()`, `forget_entity()` and the deletion half of `compress()`
   wrote to the store without writing to the event log, while the single-item
