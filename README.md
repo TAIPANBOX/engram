@@ -7,7 +7,7 @@
 [![CI](https://github.com/TAIPANBOX/engram/actions/workflows/ci.yml/badge.svg)](https://github.com/TAIPANBOX/engram/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11+-3776AB.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
-![Status](https://img.shields.io/badge/status-v3.0.0-success.svg)
+![Status](https://img.shields.io/badge/status-v3.1.0-success.svg)
 
 <img src="docs/architecture.png" alt="Engram architecture: observations flow into the memory core, which holds episodic memory, bitemporal semantic facts, and an entity graph, with optional LLM reflection and compression, and recall flowing back out to the agent" width="960">
 
@@ -328,7 +328,8 @@ declares it by sending the request header `x-fuse-taint: memory` whenever that m
 
 ### A person's word, and refuting a fact
 
-Added after 3.0.0.
+Added in 3.1.0. Version 3.0.0 does not
+have it.
 
 A fact is the person's own word when its provenance is `user` and it was not written
 quarantined. Nothing with a lower provenance can close, refute or override it:
@@ -1003,6 +1004,7 @@ tests/
 - [x] v2.4.0 - the hybrid blend measured instead of assumed: `engram-bench longmemeval --sweep` scores every weighting in one pass, and the default moved from `0.7 / 0.3` to `0.5 / 0.5`, which leads on three of the four metrics, by one to five questions in five hundred (session@10 ties); both ends of the range are clearly worse than the middle, which is the evidence hybrid mode rests on
 - [x] v2.4.1 - the numbers made re-readable and the headline table made honest: the LongMemEval checkpoint now records the rank of every evidence and gold-session hit plus each question's evidence count, so a smaller k and the strict "every flagged turn retrieved" reading are recomputable from a finished run instead of costing another six-hour pass; the published turn-recall figure carries the caveats it needed (21 of 500 questions flag no turn at all, so the figure over the 479 answerable ones is 0.866 at k=5, and 59% flag more than one, so "at least one retrieved" is an upper bound); and the headline table, which had gone on showing the `0.7 / 0.3` figures under the word "default" for one release after 2.4.0 moved it, was corrected everywhere from one run
 - [x] v3.0.0 - provenance: every observation records where it came from, and `recall`, `why()`, the MCP tools and the adapters return it. `engram-mcp` serves the one agent it is started as, sets provenance itself, quarantines writes made after a session read untrusted content, keeps facts private unless shared and lets only their writer delete them. Breaking for MCP clients that pass an `agent_id` or a provenance on each call; `CHANGELOG.md` has the migration.
+- [x] v3.1.0 - memory integrity: a fact that traces to the person's own words is not displaced by a write with a lower provenance, and the attempt stays visible as a `contradiction_found` event instead of a quiet replacement; `refute_fact()` closes a fact without erasing it and marks the facts derived from it; a fact stamps its provenance when written. Schema generation 2 adds three nullable columns on `facts`; no default, weight or retrieval algorithm changed. `CHANGELOG.md` has the details.
 
 ---
 

@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.1.0] - 2026-11-04
 
 ### Added
 - **A person's own fact is not displaced by a write with a lower provenance.** A fact whose provenance is `user` and that was not written quarantined (the same test `is_untrusted` applies, read the other way) is not closed by a reflection pass whose extraction is not the person's own, and not by `refute_fact`. The newer fact is recorded beside it, `contradictions()` lists the pair, and a `contradiction_found` event (the existing event, with its existing two data keys) names both. `reflect()` does not count such a conflict in `contradictions_resolved`, because nothing was resolved. `assert_fact()` still never closes anything and now emits the same event when its write is not the person's own and it conflicts with a fact that is. Between two facts that are both the person's own, the newer still wins. No weight, default or retrieval algorithm changed: no retrieval code was touched, and the golden recall test passes unchanged.
