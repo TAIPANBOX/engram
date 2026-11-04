@@ -288,10 +288,9 @@ def _remember(
         )
     elif kind == "procedural":
         raise ValueError(
-            "kind='procedural' is not supported: Engram's store currently "
-            "implements only 'episodic' (observe) and 'semantic' (assert_fact) "
-            "memory. This is a known gap in the underlying engine, not a bug "
-            "in this tool — see the MCP phase report."
+            "kind='procedural' is not supported: Engram's store implements "
+            "only 'episodic' (observe) and 'semantic' (assert_fact) memory, "
+            "and has no procedural layer to write to. See docs/api-reference.md."
         )
     else:
         raise ValueError(f"unknown kind {kind!r}; expected one of {_VALID_KINDS}")
@@ -368,6 +367,8 @@ def _why(pool: _EngramPool, memory_id: str) -> dict[str, Any]:
             "quarantined": explanation["quarantined"],
             "agent_id": explanation["agent_id"],
             "shared": explanation["shared"],
+            "refuted_by": explanation["refuted_by"],
+            "undermined_by": explanation["undermined_by"],
         }
 
     episode = store.get_episode(memory_id, agent_id=pool.agent_id)
@@ -447,8 +448,8 @@ def _stats(pool: _EngramPool, agent_id: str | None = None) -> dict[str, Any]:
         "counts": {
             "episodic": episodes,
             "semantic": facts_active,
-            # procedural memory does not exist in this Engram version; see
-            # the module docstring and the MCP phase report.
+            # Engram does not implement procedural memory (see docs/api-reference.md),
+            # so this is always 0. The key stays so callers reading it keep working.
             "procedural": 0,
         },
         "vector_index_size": store.vec_count(),
@@ -534,8 +535,10 @@ _WHY_DESCRIPTION = (
     "Explain the provenance of a memory by id. For a semantic fact: "
     "returns the full subject/predicate/object triple, its confidence, "
     "validity window, the source material it was extracted from, the "
-    "reflection run and model that extracted it, the agent that wrote it and "
-    "whether it was shared. For an episodic memory: "
+    "reflection run and model that extracted it, the agent that wrote it, "
+    "whether it was shared, and whether it was refuted (refuted_by) or rests "
+    "on a refuted fact (undermined_by, the refuted facts' ids). For an "
+    "episodic memory: "
     "returns its content, encoding metadata (actors, tags, salience), and "
     "access history -- episodic memories are raw observations rather than "
     "LLM-derived facts, so they have no extraction chain. Both kinds report a "
@@ -553,8 +556,9 @@ _FORGET_DESCRIPTION = (
 )
 
 _STATS_DESCRIPTION = (
-    "Return store statistics: memory counts per kind (episodic, semantic, "
-    "procedural), fact validity breakdown (active vs superseded), entity "
+    "Return store statistics: memory counts per kind (episodic and semantic; "
+    "'procedural' is always 0, because Engram does not implement it), fact "
+    "validity breakdown (active vs superseded), entity "
     "and reflection-run counts, and the database file size in bytes. "
     "The response's 'scope' object says which of those numbers are about "
     "this server's agent (episodic, vector_index_size, reflections) and "

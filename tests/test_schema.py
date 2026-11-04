@@ -335,7 +335,7 @@ def test_the_fts_rebuild_is_gated_on_the_schema_marker(conn: sqlite3.Connection)
     read reintroduces the cost and a marker that is never written reintroduces
     the bug, and each failure is invisible from the other side.
     """
-    from engram.schema import _SCHEMA_VERSION
+    from engram.schema import _FTS_REBUILT_AT, _SCHEMA_VERSION
 
     migrate(conn)
     assert conn.execute("PRAGMA user_version").fetchone()[0] == _SCHEMA_VERSION
@@ -354,7 +354,9 @@ def test_the_fts_rebuild_is_gated_on_the_schema_marker(conn: sqlite3.Connection)
     migrate(conn)
     assert matched() == [], "the marker was stamped and the rebuild ran anyway"
 
-    conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION - 1}")
+    # The FTS step is generation 1; clearing the marker below it is what asks
+    # for the rebuild. (Generation 2 is the fact columns, a different step.)
+    conn.execute(f"PRAGMA user_version = {_FTS_REBUILT_AT - 1}")
     migrate(conn)
     assert matched() == [(1,)], "the marker was cleared and the rebuild did not run"
 

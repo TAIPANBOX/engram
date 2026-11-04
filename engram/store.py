@@ -14,7 +14,15 @@ from typing import Any, TypeVar, cast
 
 import numpy as np
 
-from engram.models import EmbeddedVector, Entity, Episode, Fact, ForgetResult, ReflectionRun
+from engram.models import (
+    EmbeddedVector,
+    Entity,
+    Episode,
+    Fact,
+    ForgetResult,
+    ReflectionRun,
+    least_trusted,
+)
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 _C = TypeVar("_C", bound=type)
@@ -678,7 +686,7 @@ class Store:
     _FACT_COLS = (
         "id, subject, predicate, object, valid_from, valid_to, recorded_at, "
         "superseded_at, superseded_by, confidence, derived_from, extracted_by, "
-        "agent_id, shared, quarantined"
+        "agent_id, shared, quarantined, provenance, refuted_by, undermined_by"
     )
 
     def _fact_visibility(self) -> tuple[str, tuple[Any, ...]]:
@@ -699,8 +707,9 @@ class Store:
             """
             INSERT INTO facts (id, subject, predicate, object, valid_from, valid_to,
                                recorded_at, superseded_at, superseded_by, confidence,
-                               derived_from, extracted_by, agent_id, shared, quarantined)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               derived_from, extracted_by, agent_id, shared, quarantined,
+                               provenance, refuted_by, undermined_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 fact.id,
@@ -718,6 +727,9 @@ class Store:
                 self._agent_id,
                 int(fact.shared),
                 int(fact.quarantined),
+                fact.provenance,
+                fact.refuted_by,
+                json.dumps(fact.undermined_by),
             ),
         )
         self._commit()
@@ -768,6 +780,88 @@ class Store:
             (_iso_utc(valid_to), superseded_by, _iso_utc(valid_to), fact_id),
         )
         self._commit()
+
+    def fact_trust(self, fact: Fact) -> tuple[str, bool]:
+        """The ``(provenance, quarantined)`` a fact is read with.
+
+        A fact written since provenance was recorded on facts carries its own,
+        stamped when it was written, so the answer does not change when the
+        episodes it came from are forgotten, compressed or pruned. That is what
+        keeps a person's fact protected for as long as it exists. It is still
+        combined with the live episodes in ``derived_from``, least trusted
+        first, because a fact reports the least trusted of its sources. A fact
+        written before the column existed has none and is read off those
+        episodes alone, as it always was.
+        """
+        sources = self.get_episodes_by_ids(fact.derived_from)
+        declared = [fact.provenance] if fact.provenance is not None else []
+        provenance = least_trusted([*declared, *(ep.provenance for ep in sources)])
+        return provenance, fact.quarantined or any(ep.quarantined for ep in sources)
+
+    def get_dependents(self, fact_id: str) -> list[Fact]:
+        """Facts whose ``derived_from`` names *fact_id*, whoever owns them.
+
+        Deliberately not limited to what this store may see: a mark has to
+        reach a fact another agent keeps private, or the cascade would silently
+        skip exactly the facts nobody here can inspect.
+        """
+        rows: list[Any] = self._conn.execute(
+            f"SELECT {self._FACT_COLS} FROM facts "
+            "WHERE EXISTS (SELECT 1 FROM json_each(derived_from) WHERE value = ?)",
+            (fact_id,),
+        ).fetchall()
+        return [Fact.from_row(tuple(r)) for r in rows]
+
+    def refute_fact(self, fact_id: str, at: datetime, refuted_by: str) -> None:
+        """Record that a fact was refuted, closing it if it is still open.
+
+        Nothing is deleted. A fact that is still active gets ``valid_to`` and
+        ``superseded_at`` set to *at*, with no ``superseded_by``, since nothing
+        replaced it. One that was already closed keeps the interval it had: a
+        fact that was replaced and is refuted afterwards was still believed in
+        the period it was open. Either way ``refuted_by`` is set, and the first
+        refuter's is kept: a second refutation does not rewrite who made the
+        first.
+        """
+        self._conn.execute(
+            "UPDATE facts SET valid_to = COALESCE(valid_to, ?), "
+            "superseded_at = COALESCE(superseded_at, ?), refuted_by = COALESCE(refuted_by, ?) "
+            "WHERE id = ?",
+            (_iso_utc(at), _iso_utc(at), refuted_by, fact_id),
+        )
+        self._commit()
+
+    def mark_undermined(self, root_id: str) -> list[str]:
+        """Mark every fact that rests on *root_id*, at any depth, as undermined by it.
+
+        Walks ``derived_from`` backwards from the refuted fact, through facts
+        that are themselves derived from it, adding *root_id* to each one's
+        ``undermined_by``. No fact is closed or deleted: a derived fact may
+        stand on other grounds, and whether it does is its owner's call. A fact
+        seen twice, through two routes or because the file was edited into a
+        cycle, is visited once.
+
+        Returns:
+            The ids newly marked. A fact that already carried the mark is walked
+            through but not reported, so a second refutation reports nothing.
+        """
+        marked: list[str] = []
+        seen = {root_id}
+        pending = [root_id]
+        while pending:
+            for child in self.get_dependents(pending.pop()):
+                if child.id in seen:
+                    continue
+                seen.add(child.id)
+                if root_id not in child.undermined_by:
+                    self._conn.execute(
+                        "UPDATE facts SET undermined_by = ? WHERE id = ?",
+                        (json.dumps([*child.undermined_by, root_id]), child.id),
+                    )
+                    marked.append(child.id)
+                pending.append(child.id)
+        self._commit()
+        return marked
 
     # ------------------------------------------------------------------
     # Reflections

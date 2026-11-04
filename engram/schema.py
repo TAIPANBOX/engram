@@ -29,7 +29,19 @@ DEFAULT_DIM: int = 384
 # Generation 1 is the FTS rebuild. A store sitting at 0 is either new or was
 # last opened by a version whose FTS backfill silently did nothing, and both
 # want the same treatment: one rebuild.
-_SCHEMA_VERSION = 1
+#
+# Generation 2 adds the three fact columns behind a person's-word priority and
+# refutation: ``provenance``, ``refuted_by`` and ``undermined_by``. All three
+# are nullable with no default, so nothing is rewritten and a row written
+# before them reads as no recorded source, not refuted and not marked.
+#
+# Each generation is its own step, run when the marker is below its number and
+# stamping the marker as its last act. A store at 1 therefore runs only the
+# second, and an interrupted run leaves the marker behind so the step repeats,
+# which costs a pass rather than a half-migrated store.
+_FTS_REBUILT_AT = 1
+_FACT_TRUST_AT = 2
+_SCHEMA_VERSION = 2
 
 # vec0 preallocates one chunk per partition, so the value trades scan speed
 # against wasted space in stores with many small agents. Measured at 50k
@@ -93,7 +105,10 @@ CREATE TABLE IF NOT EXISTS facts (
     extracted_by    TEXT REFERENCES reflections(id),
     agent_id        TEXT DEFAULT NULL,
     shared          INTEGER DEFAULT NULL,
-    quarantined     INTEGER DEFAULT NULL
+    quarantined     INTEGER DEFAULT NULL,
+    provenance      TEXT DEFAULT NULL,
+    refuted_by      TEXT DEFAULT NULL,
+    undermined_by   JSON DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS entities (
@@ -218,10 +233,36 @@ def _rebuild_fts_once(conn: sqlite3.Connection) -> None:
     unset and rebuilds again next time, which costs a pass. The reverse would
     mark a half-built index as done, which costs the index.
     """
-    if int(conn.execute("PRAGMA user_version").fetchone()[0]) >= _SCHEMA_VERSION:
+    if int(conn.execute("PRAGMA user_version").fetchone()[0]) >= _FTS_REBUILT_AT:
         return
     conn.execute("INSERT INTO fts_episodes(fts_episodes) VALUES('rebuild')")
-    conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION:d}")
+    conn.execute(f"PRAGMA user_version = {_FTS_REBUILT_AT:d}")
+
+
+def _add_fact_trust_columns_once(conn: sqlite3.Connection) -> None:
+    """Add ``facts.provenance``, ``refuted_by`` and ``undermined_by``, once per store.
+
+    A new store already has them from ``_DDL``, so for it the three ALTERs fail
+    with a duplicate column and are suppressed, exactly as the older backfills
+    above are. The marker is what makes the step cheap on every later open and
+    what a test can observe: with it set the step does not run, with it behind
+    the step does.
+
+    The columns go in before the stamp, deliberately. Both normally commit
+    together with the rest of ``migrate()``, but if that is ever untrue the
+    surviving order is the safe one: an interrupted run leaves the marker behind
+    and the step runs again, which the suppressed ALTERs make harmless.
+    """
+    if int(conn.execute("PRAGMA user_version").fetchone()[0]) >= _FACT_TRUST_AT:
+        return
+    for column in (
+        "provenance TEXT DEFAULT NULL",
+        "refuted_by TEXT DEFAULT NULL",
+        "undermined_by JSON DEFAULT NULL",
+    ):
+        with contextlib.suppress(*_OP_ERRORS):
+            conn.execute(f"ALTER TABLE facts ADD COLUMN {column}")
+    conn.execute(f"PRAGMA user_version = {_FACT_TRUST_AT:d}")
 
 
 def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
@@ -311,4 +352,6 @@ def migrate(conn: sqlite3.Connection, dim: int = DEFAULT_DIM) -> None:
     )
     # Index any pre-existing episodes that predate this migration.
     _rebuild_fts_once(conn)
+    # Then the fact trust columns, which stamp the marker to its final value.
+    _add_fact_trust_columns_once(conn)
     conn.commit()

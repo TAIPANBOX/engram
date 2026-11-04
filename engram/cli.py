@@ -156,7 +156,14 @@ def _cmd_timeline(args: argparse.Namespace) -> None:
     for f in facts:
         start = f.valid_from.strftime("%Y-%m-%d")
         end = f.valid_to.strftime("%Y-%m-%d") if f.valid_to else "now    "
-        status = " ← superseded" if f.valid_to is not None else ""
+        if f.refuted_by is not None:
+            status = f" ← refuted by {f.refuted_by}"
+        elif f.valid_to is not None:
+            status = " ← superseded"
+        else:
+            status = ""
+        if f.undermined_by:
+            status += f"  (rests on {len(f.undermined_by)} refuted fact(s))"
         print(
             f"  [{start} → {end}]  "
             f"{f.subject} {f.predicate} {f.object}"

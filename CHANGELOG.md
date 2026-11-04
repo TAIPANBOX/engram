@@ -5,6 +5,22 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **A person's own fact is not displaced by a write with a lower provenance.** A fact whose provenance is `user` and that was not written quarantined (the same test `is_untrusted` applies, read the other way) is not closed by a reflection pass whose extraction is not the person's own, and not by `refute_fact`. The newer fact is recorded beside it, `contradictions()` lists the pair, and a `contradiction_found` event (the existing event, with its existing two data keys) names both. `reflect()` does not count such a conflict in `contradictions_resolved`, because nothing was resolved. `assert_fact()` still never closes anything and now emits the same event when its write is not the person's own and it conflicts with a fact that is. Between two facts that are both the person's own, the newer still wins. No weight, default or retrieval algorithm changed: no retrieval code was touched, and the golden recall test passes unchanged.
+- **`Engram.refute_fact(fact_id, *, provenance, quarantined) → RefuteResult`** (and `AsyncEngram.refute_fact`). Declares a fact false without erasing it: the fact is closed (`valid_to` and `superseded_at` set, no `superseded_by`), so `timeline()` and `as_of` keep what was believed before, and `refuted_by` records who refuted it. Every fact derived from it, at any depth and across agents (a private fact of another agent included, not named in the result), is marked with its id in `undermined_by` and left active. Refuting twice changes nothing; the person's own fact can be refuted only by the person. Emits no event, since the shared event contract has no type for it.
+- **`assert_fact(..., provenance=, derived_from=)`.** `provenance` declares `user`, `tool` or `external` (left out, the fact is stored as `unknown`, as `why()` has always said for it). `derived_from` names the facts this one rests on, each of which must exist and be visible; a fact asserted on a refuted premise starts out marked.
+- `Fact` gains `provenance`, `refuted_by` and `undermined_by`; `why()` and the MCP `why` tool return `refuted_by` and `undermined_by`; `engram timeline` shows a refuted fact and a marked one. `RefuteResult` is exported.
+- `scripts/docs-match-code.sh`, wired into `ci.yml` and `release.yml`, with four cases in `gates-have-teeth.sh` (two faults, one non-fault, one subject taken away), plus one for the binding gate over the new feature file.
+
+### Changed
+- **A fact stamps its provenance when it is written.** `reflect()` records the least trusted provenance of the episodes it extracted from; `assert_fact` records what it was told. `why()` combines that with the episodes still present, least trusted first, so a person's fact stays the person's after its source episodes are forgotten, compressed or pruned. A fact written before this release has none and is read off its episodes as before. `assert_fact`'s free-text `source` no longer lends the fact the trust of an episode whose id it happens to name.
+- **Schema generation 2** (`PRAGMA user_version`): three nullable columns on `facts`, `provenance`, `refuted_by` and `undermined_by`, added once, idempotent, no row rewritten. A row written before them reads as no recorded provenance, not refuted and not marked. `export_json()` carries them and `import_json()` reads a document without them; a source outside `user`, `tool`, `external`, `unknown` is refused before anything is written. An older Engram that opens a migrated file ignores the new columns, so a refutation made here reads there as an ordinary closed fact.
+
+### Fixed
+- **The documents no longer say Engram stores procedural memory.** It never did: the store implements episodic and semantic memory and `remember(kind="procedural")` is refused. CLAUDE.md, README.md (alt text and the architecture diagram), SECURITY.md and DESIGN.md now say so, and the refusal's error message points at `docs/api-reference.md` instead of a report that is not in this repository. The `procedural` key in `stats` stays, always 0.
+
 ## [3.0.0] - 2026-10-18
 
 ### Breaking

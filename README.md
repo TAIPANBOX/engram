@@ -66,7 +66,7 @@ Here is what Engram gives you that a plain vector database does not:
 
 <div align="center">
 
-<img src="assets/diagram.svg" alt="Engram architecture: an agent observes and recalls against one SQLite file holding episodic, semantic and procedural memory with bitemporal facts, spreading activation and decay, exposed over MCP on stdio" width="960">
+<img src="assets/diagram.svg" alt="Engram architecture: an agent observes and recalls against one SQLite file holding episodic and semantic memory with bitemporal facts, spreading activation and decay, exposed over MCP on stdio" width="960">
 
 <sub>The same service as its room on <a href="https://it-rat.com/services/engram.html">it-rat.com</a> draws it, where the diagram sits next to a simulation you can scrub back and forth.</sub>
 
@@ -191,6 +191,8 @@ Engram is a **cognitive memory layer** for AI agents - a single local file (`age
 
 - **Debug beliefs**: when the agent says "Ivan works at Globex," call `mem.why(fact_id)` to see exactly which episode produced that belief, which reflection run extracted it, which model, and with what confidence.
 - **Erase a person**: `forget_entity("Ivan")` permanently removes all episodes, facts, and graph edges connected to Ivan - a proper GDPR right-to-be-forgotten.
+- **Keep a person's word**: a fact that traces to the person's own words (provenance `user`, not quarantined) is not closed or overridden by anything a model writes. The attempt is recorded beside it and reported as a `contradiction_found` event, not turned into a quiet replacement. See [A person's word, and refuting a fact](#a-persons-word-and-refuting-a-fact).
+- **Correct a belief without losing it**: `mem.refute_fact(fact_id)` closes the fact, keeps it in the timeline, and marks every fact derived from it instead of deleting any of them.
 - **Query the past**: `mem.recall("Ivan employer", as_of=datetime(2024, 3, 1))` returns what the agent knew at that exact point in time, not what it knows now.
 - **Run multiple agents**: a planner and a coder can share one file - each sees its own episodes, both benefit from shared extracted facts.
 - **Plug into any MCP client**: run `engram-mcp --db ./agent.engram` and Claude Desktop, Claude Code, or Cursor can `remember`, `recall`, `why`, and `forget` against the same store with zero integration code - see [MCP Server](docs/api-reference.md#mcp-server) in the API reference.
@@ -210,7 +212,8 @@ the questions an agent asks after that one.
 | **Importance and decay** | An Ebbinghaus curve with Hebbian reinforcement: what is used stays sharp, what is untouched fades, and reflection prunes the bottom. The store stays useful instead of growing |
 | **Working memory** | A 7±2 scratchpad, Miller's number, for what the agent is holding right now as opposed to what it knows |
 | **Provenance** | Every observation records where it came from (`user`, `tool` or `external`) and whether it was written after its writer read untrusted content (quarantined), and recall returns both. Over MCP the server sets them, not the caller. `why()` answers where a belief came from, episode by episode, so a wrong answer can be traced to what produced it |
-| **Contradiction** | Reflection finds facts that disagree and records the disagreement rather than overwriting one with the other |
+| **Contradiction** | Reflection finds facts that disagree and records the disagreement rather than overwriting one with the other. A fact that is a person's own word is never the one overwritten by a model: the newer fact is recorded beside it and reported |
+| **Refutation** | `refute_fact()` closes a fact without deleting it and marks every fact derived from it, at any depth, so a wrong belief leaves the timeline intact and what rested on it is flagged |
 | **Erasure** | `forget()` at episode, entity or fact level, and `compress()` burns the raw text on a schedule while the extracted facts stay, so a person can be removed without the history losing its shape |
 | **Many agents, one file** | `agent_id` is a partition key: each agent keeps its own episodes, shares the facts it chooses to, deletes only its own, and a scoped recall stays flat as the store grows |
 
@@ -312,8 +315,9 @@ for r in mem.recall("where does Ivan work"):
 ```
 
 `recall()`, `why()`, the `engram-mcp` tools and the LangChain and LlamaIndex adapters all
-return the source and the quarantine mark with each result. A fact has no source of its own: `why()` reports the least
-trusted source among the episodes it was extracted from, and `unknown` when none is recorded.
+return the source and the quarantine mark with each result. A fact reports the least trusted source it was made
+from: the one stamped on it when it was written (the episodes a reflection extracted it from, or what
+`assert_fact(provenance=...)` was told), and `unknown` when none is recorded.
 
 **Using provenance with TokenFuse.** TokenFuse tracks where context came from and can refuse
 to let an agent act on untrusted context. Through TokenFuse's MCP broker, Engram's `recall` and
@@ -321,6 +325,50 @@ to let an agent act on untrusted context. Through TokenFuse's MCP broker, Engram
 extra step. A framework that places memory directly into the prompt, without a tool call,
 declares it by sending the request header `x-fuse-taint: memory` whenever that memory is
 `external`, `tool`, `unknown` or quarantined.
+
+### A person's word, and refuting a fact
+
+Added after 3.0.0.
+
+A fact is the person's own word when its provenance is `user` and it was not written
+quarantined. Nothing with a lower provenance can close, refute or override it:
+
+- `reflect()` leaves the person's fact active and records the newer fact beside it. A
+  differing object emits the `contradiction_found` event a superseded fact always did, and
+  is not counted in `contradictions_resolved`, because nothing was resolved.
+- `assert_fact()` never closed anything and still does not. A conflicting write with a lower
+  provenance now also emits `contradiction_found`, and `contradictions()` lists the pair.
+- Between two facts that are both the person's own, the newer one still wins, and between
+  two that are neither, nothing changed.
+- `refute_fact()` from anything but the person is refused with `PermissionError`.
+
+A fact stamps its provenance when it is written, so the protection does not end when the
+episodes it came from are forgotten, compressed or pruned. Engram stores the provenance the
+caller declares and does not verify it, as for episodes.
+
+```python
+mem.assert_fact("Ivan", "works_at", "Globex", provenance="user")
+mem.assert_fact("Ivan", "works_at", "Initech")   # recorded beside it and reported, not a replacement
+mem.contradictions()                             # [(Globex fact, Initech fact)]
+```
+
+To correct a belief, refute it:
+
+```python
+a = mem.assert_fact("Ivan", "works_at", "Globex")
+b = mem.assert_fact("Ivan", "commutes_to", "Globex campus", derived_from=[a])
+
+result = mem.refute_fact(a)      # a is closed and stays in timeline(); result.undermined == [b]
+mem.timeline("Ivan")             # both facts; a now has superseded_at and refuted_by
+mem.why(b)["undermined_by"]      # [a]
+```
+
+The refuted fact keeps its row: `superseded_at` is set, and `timeline()` and `as_of` still show
+what was believed before. A fact derived from it is marked, not closed or deleted, because it
+may stand on other grounds. The mark follows derivations to any depth and reaches another
+agent's private fact as well (the result does not name that one). A fact asserted on a premise
+that is already refuted starts out marked. Refuting emits no event, since the shared event
+contract has no type for it.
 
 ### Three ways to search
 
@@ -860,14 +908,13 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (586 tests, 593 with the encryption extra)
+### Test coverage (613 tests, 620 with the encryption extra)
 
-Statement coverage: **90%** (2806 statements, 279 uncovered without the
-encryption tests), measured 2026-10-18 with `pytest --cov=engram
---cov-report=term-missing --ignore=tests/test_encryption.py`. With the
-`encryption` extra installed, `pytest --cov=engram --cov-report=term-missing` gave
-90% (267 uncovered) on the same day, with all 593 tests collected and 592 passing
-(one skip: no console script on PATH).
+Statement coverage: **90%** (2911 statements, 278 uncovered without the
+encryption tests), measured 2026-11-04 with `pytest --cov=engram
+--cov-report=term-missing` on Linux with Python 3.13, where `tests/test_encryption.py`
+skips itself because `sqlcipher3` is not installed; all 613 tests passed. The encryption
+extra adds 7 tests, which CI's `encryption` job runs on their own.
 CI's `test` job runs the suite with the same flags and prints the current
 figure on every push; this line is not machine-checked against that output
 (unlike the test count above), so treat CI's own number as current if the
@@ -911,6 +958,15 @@ tests/
                           and deleted only by their writer, migration of older stores
                           (features/memory-scope-and-provenance.feature, one test per
                           scenario, held by scripts/features-are-bound.sh)
+  test_human_priority.py a person's own fact is not displaced by a lower provenance:
+                          reflect, assert_fact, quarantine, source episodes forgotten
+                          (features/human-priority-and-refutation.feature, held the
+                          same way)
+  test_refutation.py     refute_fact(): closes and keeps the history, marks derived
+                          facts at any depth, refused for the person's fact, agent
+                          scope, the MCP why tool and the CLI timeline
+  test_fact_trust_storage.py  schema generation 2 (migration and its marker),
+                          export/import of the new columns, the memory server's refusal message
   test_events.py         Agent Passport NDJSON event exporter: schema validation,
                           fail-open on I/O error, skip-on-empty agent_id, warn-on-
                           nonconforming agent_id, off-by-default, bulk and cascade

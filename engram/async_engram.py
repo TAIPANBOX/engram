@@ -22,7 +22,14 @@ from typing import Any
 
 from engram.core import Engram
 from engram.importance import DecayConfig
-from engram.models import DEFAULT_PROVENANCE, Fact, ForgetResult, ObserveInput, SearchResult
+from engram.models import (
+    DEFAULT_PROVENANCE,
+    Fact,
+    ForgetResult,
+    ObserveInput,
+    RefuteResult,
+    SearchResult,
+)
 
 try:
     from engram.llm import LLMAdapter
@@ -171,6 +178,8 @@ class AsyncEngram:
         source: str | None = None,
         shared: bool = True,
         quarantined: bool = False,
+        provenance: str | None = None,
+        derived_from: list[str] | None = None,
     ) -> str:
         """Async version of :meth:`~engram.core.Engram.assert_fact`.
 
@@ -185,6 +194,23 @@ class AsyncEngram:
             confidence=confidence,
             source=source,
             shared=shared,
+            quarantined=quarantined,
+            provenance=provenance,
+            derived_from=derived_from,
+        )
+
+    async def refute_fact(
+        self,
+        fact_id: str,
+        *,
+        provenance: str = DEFAULT_PROVENANCE,
+        quarantined: bool = False,
+    ) -> RefuteResult:
+        """Async version of :meth:`~engram.core.Engram.refute_fact`."""
+        return await asyncio.to_thread(
+            self._engram.refute_fact,
+            fact_id,
+            provenance=provenance,
             quarantined=quarantined,
         )
 

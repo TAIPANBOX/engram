@@ -96,6 +96,8 @@ jobs:
         run: ./scripts/local-first.sh
       - name: every scenario names a test that exists
         run: ./scripts/features-are-bound.sh
+      - name: the documents say what the code does about procedural memory
+        run: ./scripts/docs-match-code.sh
 
       # Last, because it mutates tracked files and restores them. It needs a
       # clean tree and says so plainly, so it also reports any earlier step

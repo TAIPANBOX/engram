@@ -31,6 +31,23 @@ def check_provenance(value: str) -> str:
     return value
 
 
+def check_fact_provenance(value: str) -> str:
+    """Return *value* if a fact may carry it, else raise.
+
+    A fact may also carry ``unknown``: a reflection over episodes whose source
+    was never recorded reads as the least trusted of them, and a fact asserted
+    with no declared source is stored as unknown. A caller still cannot
+    *declare* ``unknown`` (see :func:`check_provenance`); this is for rows
+    read back from a document.
+    """
+    if value not in (*PROVENANCES, UNKNOWN_PROVENANCE):
+        raise ValueError(
+            f"a fact's provenance must be one of {(*PROVENANCES, UNKNOWN_PROVENANCE)}, "
+            f"got {value!r}"
+        )
+    return value
+
+
 def least_trusted(values: Iterable[str]) -> str:
     """The least trusted of *values*. No values at all reads as unknown."""
     ranked = list(values)
@@ -53,6 +70,26 @@ def is_untrusted(provenance: str, quarantined: bool) -> bool:
     never recorded, and a write made after its session read any of those.
     """
     return provenance != TRUSTED_PROVENANCE or quarantined
+
+
+def is_human(provenance: str, quarantined: bool) -> bool:
+    """Whether a memory is the person's own word, as far as engram can tell.
+
+    The same test as :func:`is_untrusted`, read the other way: provenance
+    ``user`` and not written after its session read untrusted content.
+    """
+    return not is_untrusted(provenance, quarantined)
+
+
+def may_displace(incoming: tuple[str, bool], held: tuple[str, bool]) -> bool:
+    """Whether a write may close or override a fact that is already held.
+
+    Each side is ``(provenance, quarantined)``. The one thing this refuses is
+    a write that is not the person's own acting on a fact that is. Between
+    anything else, recency decides, as it always did: two facts that are both
+    the person's own, or two that are neither, are not ranked by this.
+    """
+    return not (is_human(*held) and not is_human(*incoming))
 
 
 def _legacy_flag(row: tuple[Any, ...], index: int) -> int | None:
@@ -152,16 +189,33 @@ class Fact:
     shared: bool = True
     # Written after its session read untrusted content.
     quarantined: bool = False
+    # Where the fact came from, as recorded when it was written: the least
+    # trusted source of the episodes a reflection extracted it from, or what the
+    # caller declared to ``assert_fact`` (``unknown`` when it declared none).
+    # ``None`` is a row written before engram recorded this; it is then read
+    # off the episodes in ``derived_from``, which is how it always was.
+    provenance: str | None = None
+    # Provenance of whoever refuted the fact, ``None`` while it stands. A
+    # refuted fact is closed (``valid_to`` and ``superseded_at`` are set) and
+    # never deleted.
+    refuted_by: str | None = None
+    # Ids of the refuted facts this one rests on, directly or through other
+    # facts. A marked fact is not closed: it may hold on other grounds.
+    undermined_by: list[str] = field(default_factory=list)
 
     @classmethod
     def from_row(cls, row: tuple[Any, ...]) -> Fact:
         """Construct from a DB row (id, subject, predicate, object, valid_from, valid_to,
         recorded_at, superseded_at, superseded_by, confidence, derived_from, extracted_by
-        [, agent_id, shared, quarantined]).
+        [, agent_id, shared, quarantined[, provenance, refuted_by, undermined_by]]).
 
         A fact written before ownership was recorded has NULL in all three. It
         stays visible to every agent, as every fact was then, and reads as
         quarantined, since nothing recorded what its writer had read.
+
+        A fact written before provenance, refutation and marks were recorded
+        has NULL in those three, and reads as no recorded provenance, not
+        refuted and not marked.
         """
         shared = _legacy_flag(row, 13)
         quarantined = _legacy_flag(row, 14)
@@ -181,6 +235,9 @@ class Fact:
             agent_id=row[12] if len(row) > 12 else None,
             shared=shared is None or bool(shared),
             quarantined=quarantined is None or bool(quarantined),
+            provenance=row[15] if len(row) > 15 else None,
+            refuted_by=row[16] if len(row) > 16 else None,
+            undermined_by=json.loads(row[17] or "[]") if len(row) > 17 else [],
         )
 
 
@@ -255,6 +312,17 @@ class ForgetResult:
     entity: str
     episodes_deleted: int
     facts_deleted: int
+
+
+@dataclass
+class RefuteResult:
+    """Result of a refute_fact() call."""
+
+    fact_id: str
+    # Facts newly marked as resting on the refuted one, at any depth. Only the
+    # ones the caller may see: a fact another agent keeps private is marked too
+    # and is not named here.
+    undermined: list[str] = field(default_factory=list)
 
 
 @dataclass
