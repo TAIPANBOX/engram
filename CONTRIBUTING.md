@@ -39,7 +39,7 @@ All four must be clean before submitting a PR.
 
 ## What we're looking for
 
-See [Roadmap in README.md](README.md#roadmap) for planned features. Good first contributions:
+See [Status in README.md](README.md#status) for what has shipped and [DESIGN.md](DESIGN.md) (section 7, Roadmap) for the original plan, every version of which is shipped. Good first contributions:
 
 - Additional test coverage
 - Documentation improvements
