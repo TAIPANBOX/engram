@@ -51,7 +51,12 @@ with Engram(path=":memory:") as mem:
 > it deletes, each naming the summary that replaced it; `reflect()`
 > emits one `reflection_run` event (`info`) plus one `contradiction_found`
 > event (`medium`) per fact it supersedes with a differing object (a
-> same-object re-extraction supersedes silently, as agreement). Events with no `agent_id` set on
+> same-object re-extraction supersedes silently, as agreement). The same
+> `contradiction_found` event, with the same two data keys, also records an
+> attempt that did not supersede: a write that is not the person's own, next to
+> a fact that is (see [`assert_fact`](#assert_factsubject-predicate-object--confidence-source-shared-quarantined-provenance-derived_from--str)).
+> `refute_fact()` emits nothing, since the shared event contract has no type
+> for it. Events with no `agent_id` set on
 > the instance are skipped, never fabricated; an `agent_id` that is not an
 > `agent://<trust-domain>/<name>` URI is written, warned about once and counted
 > (`EventLog.nonconforming_agent_id`), because a consumer validating the shared
@@ -163,20 +168,42 @@ as phrases before reaching SQLite.
 
 ---
 
-### `assert_fact(subject, predicate, object, *, confidence, source) → str`
+### `assert_fact(subject, predicate, object, *, confidence, source, shared, quarantined, provenance, derived_from) → str`
 
 Store a semantic triple directly. No LLM required. Returns the fact id.
 
 ```python
 fact_id = mem.assert_fact("Ivan", "works_at", "Globex", confidence=0.95)
 fact_id = mem.assert_fact("Alice", "role", "CTO", source="linkedin-profile")
+fact_id = mem.assert_fact("Ivan", "works_at", "Globex", provenance="user")
+child = mem.assert_fact("Ivan", "commutes_to", "Globex campus", derived_from=[fact_id])
 ```
+
+- `provenance` is `"user"` (the person's own word), `"tool"` or `"external"`. Engram
+  stores what the caller declares and does not verify it. Left out, the fact is recorded
+  as `unknown`, the least trusted. A fact is the person's own when it is `user` and not
+  `quarantined`: nothing that is not can close it, refute it or override it.
+- `source` is a free-text note. Naming an episode's id there does not lend the fact that
+  episode's trust.
+- `derived_from` is a list of fact ids this fact rests on. Each must be a fact this
+  instance can see (`KeyError` otherwise). Refuting any of them marks this fact, and a fact
+  asserted on a premise that is already refuted starts out marked (see `refute_fact`).
+- This path never closes another fact. A fact asserted next to an active one with a
+  different object leaves both active, and `contradictions()` lists the pair. When the
+  active one is the person's own and this write is not, a `contradiction_found` event
+  also names the two, so the attempt is on record. A write that agrees, or that is the
+  person's own, raises none.
 
 ---
 
 ### `reflect() / reflect_async() → ReflectionRun / ReflectionThread`
 
-Run the reflection loop (requires `llm`):
+Run the reflection loop (requires `llm`). A newer extraction closes an older active fact
+for the same subject and predicate, except a fact that is the person's own (provenance
+`user`, not quarantined) when the extraction is not: that fact stays active, the new one is
+recorded beside it, a differing object emits `contradiction_found`, and the run does not
+count it in `contradictions_resolved`. Each extracted fact stamps the least trusted
+provenance of the episodes it was extracted from.
 
 ```python
 run = mem.reflect()            # synchronous
@@ -225,13 +252,18 @@ mem.why(fact_id)
 #   "provenance": "external",  # least trusted source among the episodes above
 #   "quarantined": False,      # the fact, or any of those episodes, was quarantined
 #   "agent_id": "agent://acme.example/planner",  # who wrote it; None if unscoped or old
-#   "shared": True             # visible to every agent, or only to its writer
+#   "shared": True,            # visible to every agent, or only to its writer
+#   "refuted_by": None,        # provenance of whoever refuted it; None while it stands
+#   "undermined_by": []        # ids of the refuted facts it rests on
 # }
 ```
 
-`provenance` is the least trusted source among the episodes the fact was extracted from
-(`unknown` < `external` < `tool` < `user`). A fact asserted with `assert_fact()` names no
-episodes, so it reads `"unknown"`.
+`provenance` is the least trusted source the fact reports (`unknown` < `external` <
+`tool` < `user`): the one stamped on it when it was written (the episodes a reflection
+extracted it from, or what `assert_fact(provenance=...)` was told) combined with any of
+those episodes still present. A fact asserted with no `provenance` reads `"unknown"`, and
+a fact written before provenance was recorded on facts is read off its episodes alone, as
+it always was.
 
 A fact belongs to the agent that wrote it. `assert_fact(..., shared=True)` (the library
 default, as facts always were) makes it visible to every agent in the file;
@@ -254,6 +286,45 @@ for a, b in mem.contradictions():
 
 ---
 
+### `refute_fact(fact_id, *, provenance="external", quarantined=False) → RefuteResult`
+
+Declare a fact false without erasing it or what it supported.
+
+```python
+a = mem.assert_fact("Ivan", "works_at", "Globex")
+b = mem.assert_fact("Ivan", "commutes_to", "Globex campus", derived_from=[a])
+
+result = mem.refute_fact(a)
+result.undermined                 # [b]
+mem.timeline("Ivan")              # both facts; a has valid_to == superseded_at and refuted_by
+mem.why(b)["undermined_by"]       # [a]
+```
+
+- The fact is **closed, not deleted**: `valid_to` and `superseded_at` are set to the
+  refutation time and `superseded_by` stays empty, so `timeline()` and `as_of` still show
+  what was believed before. `refuted_by` records the refuter's provenance. A fact that was
+  already closed keeps its interval.
+- Every fact derived from it, directly or through other facts, is **marked** with the
+  refuted fact's id in `undermined_by`, and left active: it may stand on other grounds,
+  and judging that is its owner's job. A refuted fact is no longer part of
+  `contradictions()`.
+- Refuting a fact that is already refuted changes nothing and returns an empty
+  `RefuteResult.undermined`.
+- The person's word outranks a model's here too. A fact that is the person's own (`user`,
+  not quarantined) is refused with `PermissionError` unless the refutation is `provenance="user"`
+  and not `quarantined`. Nothing is changed when it is refused.
+- Scoped like `forget_fact`: an agent-scoped instance refutes only the facts it wrote
+  (`PermissionError` for another agent's shared fact, `KeyError` for its private one), and an
+  instance with no `agent_id` can refute any. The marks are not scoped: they reach another
+  agent's private fact as well, and `RefuteResult.undermined` names only facts the caller
+  can see.
+- No event is emitted: the shared event contract has no type for a refutation.
+
+Raises `KeyError` for a fact that does not exist, `ValueError` for a provenance outside
+`user`, `tool`, `external`.
+
+---
+
 ### `forget(episode_id) → None`
 
 Permanently erase a single episode from all storage structures (vector index, FTS index, access log, graph edges). Raises `KeyError` if the episode does not exist.
@@ -266,7 +337,7 @@ mem.forget(ep_id)
 
 ### `forget_fact(fact_id) → None`
 
-Permanently erase a single semantic fact (a triple returned by `assert_fact()` or produced by `reflect()`). Raises `KeyError` if the fact does not exist or is another agent's private fact. On an agent-scoped instance only the facts that agent wrote can be erased: a fact another agent shared, or one written before engram recorded who wrote facts, raises `PermissionError`. An instance opened without an `agent_id`, the file's operator, can erase any fact.
+Permanently erase a single semantic fact (a triple returned by `assert_fact()` or produced by `reflect()`). Raises `KeyError` if the fact does not exist or is another agent's private fact. On an agent-scoped instance only the facts that agent wrote can be erased: a fact another agent shared, or one written before engram recorded who wrote facts, raises `PermissionError`. An instance opened without an `agent_id`, the file's operator, can erase any fact. Erasure removes the row; to correct a belief and keep the history, use `refute_fact()`.
 
 ```python
 mem.forget_fact(fact_id)
@@ -332,7 +403,7 @@ mem.rekey(None)           # drop encryption
 
 Export the store (episodes, facts, entities, edges) to a JSON file. Returns the document dict.
 
-Scoped to the instance's `agent_id`: episodes and edges are filtered to it, and facts the way every fact read is (its own, the shared ones, and those written before sharing was recorded). Entities carry no `agent_id` and are exported whole. An unscoped instance exports the entire store. The quarantine mark, and a fact's owner and sharing, travel with the rows; a document written before they existed imports with them unset, which reads as the least trusted.
+Scoped to the instance's `agent_id`: episodes and edges are filtered to it, and facts the way every fact read is (its own, the shared ones, and those written before sharing was recorded). Entities carry no `agent_id` and are exported whole. An unscoped instance exports the entire store. The quarantine mark, and a fact's owner and sharing, travel with the rows, and so do a fact's `provenance`, `refuted_by` and `undermined_by`: dropping them would turn a person's fact into one anything can close. A document written before they existed imports with them unset, which reads as the least trusted. A document naming a fact source outside `user`, `tool`, `external` and `unknown`, or a refuter outside the first three, is refused before anything is written.
 
 ```python
 doc = mem.export_json("./agent_dump.json")
@@ -422,6 +493,7 @@ async with AsyncEngram(path="./agent.engram") as mem:
     counts = await mem.import_json("./dump.json", merge=True)
     await mem.forget(ep_id)
     await mem.forget_fact(fact_id)
+    outcome = await mem.refute_fact(fact_id)
     result = await mem.forget_entity("Bob")
 ```
 
@@ -535,7 +607,7 @@ Five tools are registered:
 |---|---|
 | `remember` | Store a memory. `kind="episodic"` (default) takes `content`; `kind="semantic"` takes `subject`/`predicate`/`object` instead - the structured triple, not free text. `agent_id` is optional and must be the server's own. An episodic memory takes an optional `provenance` that can only lower the server's (`tool` or `external`); a semantic fact takes none, since it reports the least trusted source among its episodes, and takes `shared` (default `false`). Both take `read_untrusted`. Returns the stored `provenance` and `quarantined`. |
 | `recall` | Retrieve this agent's memories relevant to a natural-language `query`, with `mode="hybrid"` (default), `"cosine"`, or `"spreading"`, and an optional `limit`. Each result carries its `provenance` and `quarantined`. |
-| `why` | Explain a memory's provenance by id - extraction chain, confidence, writer and sharing for a fact, encoding/access metadata for an episode. Both kinds report a `provenance` (for a fact, the least trusted source among its episodes) and `quarantined`. |
+| `why` | Explain a memory's provenance by id - extraction chain, confidence, writer and sharing for a fact, encoding/access metadata for an episode. Both kinds report a `provenance` (for a fact, the least trusted source it reports) and `quarantined`. A fact also reports `refuted_by` and `undermined_by`. |
 | `forget` | Permanently delete one of this agent's memories (episodic or semantic) by id. Irreversible. |
 | `stats` | Counts (episodic, semantic, procedural - the last is always 0, see below), fact validity breakdown, entity/reflection counts, db file size, a `scope` object naming which counts are this agent's, and the `session` quarantine state. |
 
@@ -685,7 +757,10 @@ CREATE TABLE facts (
     extracted_by TEXT,         -- FK to reflections.id
     agent_id TEXT,             -- writer; only it may delete; NULL = unscoped or old
     shared INTEGER,            -- 0 = visible to its writer only; NULL (old) reads as shared
-    quarantined INTEGER        -- as on episodes; NULL (old) reads as 1
+    quarantined INTEGER,       -- as on episodes; NULL (old) reads as 1
+    provenance TEXT,           -- 'user' | 'tool' | 'external' | 'unknown'; NULL (old) is read off derived_from
+    refuted_by TEXT,           -- provenance of whoever refuted it; NULL = not refuted
+    undermined_by JSON         -- ids of refuted facts it rests on; NULL (old) reads as []
 );
 
 -- Entity graph (shared across all agents)
@@ -715,7 +790,7 @@ CREATE TABLE reflections (
 
 **Zero-dependency writes:** every `observe()` call hits only Python + SQLite. The ONNX runtime for embeddings is already in-process. No network, no external API call.
 
-**Backward compatibility:** stores created before v1.3 (without `agent_id`) open without modification. The migration silently adds missing columns with `DEFAULT NULL`, preserving all existing data.
+**Backward compatibility:** stores created before v1.3 (without `agent_id`) open without modification. The migration silently adds missing columns with `DEFAULT NULL`, preserving all existing data. The fact columns `provenance`, `refuted_by` and `undermined_by` are schema generation 2 in `PRAGMA user_version`: added once, safe to run again, no row rewritten.
 
 ---
 

@@ -18,9 +18,10 @@ code is: `CHANGELOG.md`. What has actually been measured: `VALIDATION.md`.
 ## What engram is
 
 An embeddable cognitive memory layer for AI agents. The "SQLite of agent
-memory": a single-file, local-first store modelling episodic, semantic and
-procedural memory with temporal validity, importance decay,
-spreading-activation retrieval and provenance tracking.
+memory": a single-file, local-first store modelling episodic and semantic
+memory with temporal validity, importance decay, spreading-activation retrieval
+and provenance tracking. Procedural memory is not part of it: the store has no
+such layer and `remember(kind="procedural")` is refused (invariant 15).
 
 ## Stack
 
@@ -54,6 +55,7 @@ pytest
 ./scripts/readme-numbers.sh
 ./scripts/local-first.sh
 ./scripts/features-are-bound.sh
+./scripts/docs-match-code.sh
 ./scripts/gates-have-teeth.sh   # invariant 9; needs a clean tree and the package installed
 ```
 
@@ -119,8 +121,8 @@ an absent invariant.
    working on a genuine environment fault rather than on a planted one. The
    harness now refuses to start in that state for the same reason: it cannot
    tell a toothless gate from an unequipped machine.
-   *(gate: `scripts/gates-have-teeth.sh`, 12 cases: six real faults the gates
-   must catch, two non-faults they must not, and four subjects taken away
+   *(gate: `scripts/gates-have-teeth.sh`, 17 cases: nine real faults the gates
+   must catch, three non-faults they must not, and five subjects taken away
    entirely. The non-fault cases are the ones worth keeping: an import INSIDE a
    function is exactly what invariant 1 allows, a reworded scenario title is
    exactly what invariant 12 allows, and a gate that fired on either would be
@@ -166,6 +168,42 @@ an absent invariant.
     being rewritten. *(test: `tests/test_memory_scope.py`, one test per
     scenario in `features/memory-scope-and-provenance.feature`; gate:
     `scripts/features-are-bound.sh` holds the binding, not the behaviour)*
+
+13. **A person's own fact is never displaced by a write with a lower
+    provenance.** A fact is the person's own when its provenance is `user` and it
+    was not written quarantined (`models.is_human`, the test `is_untrusted`
+    already applies, read the other way). A reflection pass whose extraction is
+    not the person's own does not close it, and neither does `refute_fact`. A
+    fact asserted beside it is recorded and reported, never swapped in. Where it
+    holds, the attempt stays visible as a `contradiction_found` event naming both
+    facts (the existing event, with its existing two data keys), the pair is listed
+    by `contradictions()`, and the reflection run does not count it as resolved.
+    Between two facts that are both the person's own, recency decides, as before;
+    nothing else about ranking or recall changed. A fact stamps its provenance
+    when written (`facts.provenance`), so the protection outlives the episodes it
+    came from, and `assert_fact`'s free-text `source` lends no trust.
+    *(test: `tests/test_human_priority.py`, one test per scenario in
+    `features/human-priority-and-refutation.feature`; gate:
+    `scripts/features-are-bound.sh` holds the binding, not the behaviour)*
+
+14. **Refuting a fact closes it and marks what rests on it; nothing is erased.**
+    `refute_fact` sets `valid_to` and `superseded_at` and records `refuted_by`, so
+    `timeline()` and `as_of` keep what was believed before. Facts derived from it
+    (named in `derived_from`), at any depth and across agents, private ones
+    included, carry its id in `undermined_by` and stay active, because one may
+    stand on other grounds. A fact asserted on a refuted premise starts marked.
+    Refuting twice changes nothing. The schema step is generation 2 of
+    `PRAGMA user_version` and is idempotent: three nullable columns, no row
+    rewritten, an older row reads as no recorded provenance, not refuted, not
+    marked. *(test: `tests/test_refutation.py` and
+    `tests/test_fact_trust_storage.py`, bound by the same feature file)*
+
+15. **The documents say what the code does about procedural memory: nothing.**
+    The store implements episodic and semantic memory; `kind="procedural"` is
+    refused. No document claims otherwise, and none may name procedural memory
+    except to say it is not built. *(gate: `scripts/docs-match-code.sh`, which
+    holds the number of mentions per document and the refusal in
+    `engram/mcp_server.py`, teeth in `scripts/gates-have-teeth.sh`)*
 
 ## Decisions that have no gate yet
 
@@ -284,6 +322,15 @@ When the user approves a decision, add it here in the same session.
   No weight or retrieval algorithm changed; two MCP defaults did (provenance is
   `external` unless configured, a fact is private unless shared). Invariant 12
   holds it.
+- `@decided 2026-11-04`: memory integrity. A fact that traces to the person's own
+  words is not displaced by anything a model writes, and the attempt stays visible
+  as a `contradiction_found` instead of a quiet replacement; a fact can be refuted,
+  which closes it without erasing it and marks what was derived from it; and the
+  documents stop describing procedural memory, which the store has never had. It
+  rests on the provenance engram already records, adds no trust system, and changes
+  no default, weight or retrieval algorithm. The schema change: three additive
+  nullable columns on `facts` (`provenance`, `refuted_by`, `undermined_by`), schema
+  generation 2. No new event type. Invariants 13, 14 and 15 hold it.
 
 ## Escalate, do not push through
 

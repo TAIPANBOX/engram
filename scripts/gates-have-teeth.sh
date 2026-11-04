@@ -221,6 +221,26 @@ run_case "local-first: the stated first-use download stops matching" fail \
 	"$(py 'edit("README.md", "downloads the ONNX embedding model (~64 MB)", "downloads the ONNX embedding model (~12 MB)")')" \
 	"first-use download"
 
+# Invariant 15: the documents and the code agree that procedural memory is not
+# built. A claim added back into a document, and the refusal removed from the
+# code, are the two ways the agreement breaks.
+run_case "docs-match-code: a document says procedural memory is stored" fail \
+	'./scripts/docs-match-code.sh' \
+	"$(py 'edit("SECURITY.md", "episodic and semantic memory", "episodic, semantic, and procedural memory")')" \
+	'says "procedural"'
+
+run_case "docs-match-code: the code stops refusing the procedural kind" fail \
+	'./scripts/docs-match-code.sh' \
+	"$(py 'edit("engram/mcp_server.py", "elif kind == \"procedural\":", "elif kind == \"procedural_\":")')" \
+	"no longer refuses"
+
+# The binding gate has to cover the files added after its own cases were
+# written, not only the one it was first run against.
+run_case "features-are-bound: a binding in the person's-word feature names a test that is gone" fail \
+	'./scripts/features-are-bound.sh' \
+	"$(py 'edit("features/human-priority-and-refutation.feature", "@test:test_refuting_twice_changes_nothing", "@test:test_refuting_once")')" \
+	"names no test"
+
 echo
 echo "=== and what they must NOT catch ==="
 
@@ -237,6 +257,13 @@ run_case "no-network-at-write: a network client imported inside a function" pass
 run_case "features-are-bound: a scenario retitled is still bound" pass \
 	'./scripts/features-are-bound.sh' \
 	"$(py 'edit("features/memory-scope-and-provenance.feature", "Scenario: A caller cannot label its write as typed by the user", "Scenario: no caller claims to be the user")')"
+
+# A refusal sentence is allowed to be reworded; only the count of mentions and
+# the refusal in the code are held. A gate that fired on prose style would be
+# deleted by whoever is unblocking CI.
+run_case "docs-match-code: a refusal sentence reworded is still fine" pass \
+	'./scripts/docs-match-code.sh' \
+	"$(py 'edit("docs/api-reference.md", "is deliberately rejected.", "is refused on purpose.")')"
 
 echo
 echo "=== and the one this estate learned the hard way ==="
@@ -257,6 +284,12 @@ run_case "local-first: the README stops stating a download size at all" fail \
 	'./scripts/local-first.sh' \
 	"$(py 'edit("README.md", "downloads the ONNX embedding model (~64 MB)", "downloads the ONNX embedding model")')" \
 	"no longer states the first-use download size"
+
+run_case "docs-match-code: the documents are gone" fail \
+	'./scripts/docs-match-code.sh' \
+	"$(py 'import subprocess
+subprocess.run(["git", "rm", "-q", "README.md"], check=True)')" \
+	"measured nothing"
 
 run_case "features-are-bound: the scenarios are gone" fail \
 	'./scripts/features-are-bound.sh' \

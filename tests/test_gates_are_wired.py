@@ -27,6 +27,7 @@ _GATE_SCRIPTS = (
     "scripts/readme-numbers.sh",
     "scripts/local-first.sh",
     "scripts/features-are-bound.sh",
+    "scripts/docs-match-code.sh",
 )
 
 

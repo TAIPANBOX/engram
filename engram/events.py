@@ -96,6 +96,13 @@ reflection_run         info      cheap summary already computed by reflect()
 contradiction_found    medium    memory_id, conflicting_memory_id
 =====================  ========  ==============================================
 
+``contradiction_found`` is emitted when ``reflect()`` supersedes a fact with a
+differing object, and also when a write that is not the person's own conflicts
+with a fact that is and therefore did not supersede it (``reflect()`` and
+``assert_fact()``). ``memory_id`` is always the newer fact. Refuting a fact
+(:meth:`engram.core.Engram.refute_fact`) emits nothing: the row it leaves in the
+store is the record, since this table has no type for it.
+
 ``prev_hash`` chain (SPEC.md §6.5)
 ------------------------------------
 Each events file maintains its own append-only hash chain: every event's

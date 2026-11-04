@@ -62,14 +62,9 @@ Taxonomy adapted from Tulving / Squire (real cognitive science):
        │ "what      │ ──extraction──▶│  "facts"   │
        │  happened" │                │            │
        └────────────┘                └────────────┘
-              │                             │
-              └─────────────┬───────────────┘
-                            ▼
-                    ┌──────────────┐
-                    │ Procedural   │  ← "how I usually
-                    │  patterns    │     do X"
-                    └──────────────┘
 ```
+
+The taxonomy also names procedural memory ("how I usually do X"). Engram does not build it: the store implements episodic and semantic memory only, and `remember(kind="procedural")` over MCP is refused with an error. Nothing here promises it.
 
 **Critical distinction**: most systems conflate episodic ("Ivan said X yesterday") with semantic ("Ivan is a CTO"). These are different types with different retrieval and decay logic.
 
@@ -164,6 +159,39 @@ Settled semantics (2026-07-21):
 - `assert_fact()` (the manual path) never closes anything: coexisting active
   values per (s, p) are allowed there, and `contradictions()` is the surface
   that lets the caller resolve them.
+
+Settled semantics (2026-11-04), a person's word and refutation:
+
+- A fact is the person's own when its provenance is `user` and it was not
+  written quarantined (the same test as `is_untrusted`, read the other way).
+  Reflection does not close such a fact by recency when the extraction is not
+  the person's own. The older fact stays active, the new one is recorded beside
+  it, and a differing object emits the existing `contradiction_found` event
+  (same two data keys), uncounted in `contradictions_resolved` because nothing
+  was resolved. Between two facts that are both the person's own, recency still
+  decides, and between two that are neither, nothing changed. No second trust
+  system: this reads the provenance engram already records.
+- A fact stamps its provenance when written (the least trusted of the episodes
+  a reflection used, or what `assert_fact` was told, `unknown` when nothing),
+  so the protection does not depend on the source episodes still existing. It
+  is combined with the live episodes, least trusted first, which is what `why()`
+  reports. `assert_fact`'s `source` is free text and lends no trust.
+- `assert_fact()` still never closes anything, and now also emits
+  `contradiction_found` when its write is not the person's own and it conflicts
+  with a fact that is. The pair is listed by `contradictions()` as before.
+- `refute_fact()` declares a fact false. It is closed, never deleted:
+  `valid_to` and `superseded_at` are set to the refutation time with no
+  `superseded_by`, so `timeline()` and `as_of` keep what was believed before,
+  and `refuted_by` records the refuter's provenance. An already-closed fact keeps
+  its interval. The person's own fact can be refuted only by the person.
+  Refuting twice changes nothing.
+- Facts derived from the refuted fact (their `derived_from` names it, set with
+  `assert_fact(derived_from=[...])`), at any depth, are marked: `undermined_by`
+  carries the refuted fact's id. They are not closed or deleted, because one may
+  stand on other grounds and judging that belongs to its owner. A fact asserted on
+  a premise that is already refuted starts out marked. The mark also reaches
+  another agent's private fact, and the result does not name it.
+- Refutation emits no event: the shared event contract has no type for it.
 
 ### 3.6. Provenance tracking
 
@@ -272,7 +300,10 @@ CREATE TABLE facts (
     superseded_at DATETIME,
     superseded_by TEXT,          -- FK to facts.id
     confidence REAL,
-    derived_from JSON            -- supporting episodes / facts
+    derived_from JSON,           -- supporting episodes / facts
+    provenance TEXT,             -- 'user' | 'tool' | 'external' | 'unknown'; NULL = written before it was recorded
+    refuted_by TEXT,             -- provenance of the refuter; NULL = not refuted
+    undermined_by JSON           -- ids of refuted facts this one rests on
 );
 
 -- Entities (people, places, concepts)
@@ -485,6 +516,8 @@ Things that differ from the original design, or were built ahead of schedule:
 - **`agent_id` scoping** — originally flagged as a v2 concern. Implemented in v1: `Engram(agent_id="...")` scopes all writes; multiple agents can share one `.engram` file.
 - **`WorkingMemory`** — not in original roadmap. Implemented as a Miller 7±2 LRU scratchpad (`engram/working_memory.py`) that can optionally flush evicted items to the long-term store.
 - **`compress()`** — §3.4 step 7 described lossy compression of old episode clusters. Implemented as an explicit `mem.compress()` method (not automatic during reflection).
+- **Procedural memory**: named in the cognitive taxonomy (§2) and never built. The store implements episodic and semantic memory only.
+- **A person's word and refutation**: not in the original spec; see §3.5 (2026-11-04). Three nullable columns on `facts` (`provenance`, `refuted_by`, `undermined_by`), stamped at schema generation 2 in `PRAGMA user_version`.
 - **`observe_many()`** — batch write not in spec; added for throughput.
 - **`export_json()` / `import_json()` / `backup()`** — data portability not in original spec.
 - **Additional LLM adapters** — spec listed Anthropic / OpenAI / Ollama. Shipped: Anthropic, OpenAI, Gemini, DeepSeek, Qwen, Kimi, Stub (Ollama uses the OpenAI-compatible adapter).

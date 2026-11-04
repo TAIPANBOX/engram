@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from engram.decay import run_decay
 from engram.importance import DecayConfig
 from engram.llm import MAX_EXTRACTED_CONFIDENCE
-from engram.models import Fact, ReflectionRun
+from engram.models import Fact, ReflectionRun, least_trusted, may_displace
 from engram.store import Store
 
 if TYPE_CHECKING:
@@ -91,6 +91,11 @@ def reflect(
             # A fact extracted from any quarantined episode carries the mark
             # itself, so timeline() and export see it, not only why().
             quarantined = any(ep.quarantined for ep in episodes)
+            # Stamped on the fact itself, so that what the fact is made of stays
+            # known after the episodes are forgotten, compressed or pruned. A
+            # fact that is the person's own keeps its protection that way; read
+            # off live episodes only, the protection would end with them.
+            provenance = least_trusted(ep.provenance for ep in episodes)
             with store.transaction():
                 for rf in raw_facts:
                     # Belt-and-braces: cap confidence again in case the adapter
@@ -113,6 +118,7 @@ def reflect(
                         derived_from=episode_ids,
                         extracted_by=run_id,
                         quarantined=quarantined,
+                        provenance=provenance,
                     )
                     store.insert_fact(fact)
                     facts_extracted += 1
@@ -123,9 +129,26 @@ def reflect(
                     # and emitted); re-extracting the same object is agreement,
                     # so the supersede chain is refreshed silently -- mirroring
                     # contradictions(), which skips same-object pairs too.
+                    #
+                    # One exception to "newest wins": a fact that is the person's
+                    # own (provenance user, not quarantined) is not closed by an
+                    # extraction that is not. It stays active, the new fact sits
+                    # beside it, and a differing object is reported with the same
+                    # contradiction_found event, so the attempt is on record
+                    # rather than a quiet replacement. It is not counted as
+                    # resolved, because nothing was.
                     conflicts = store.get_active_facts(fact.subject, fact.predicate)
                     for old in conflicts:
                         if old.id == fact.id:
+                            continue
+                        if not may_displace((provenance, quarantined), store.fact_trust(old)):
+                            if old.object != fact.object and events is not None:
+                                events.emit(
+                                    "contradiction_found",
+                                    agent_id,
+                                    {"memory_id": fact.id, "conflicting_memory_id": old.id},
+                                    run_id=run_id,
+                                )
                             continue
                         store.close_fact(old.id, valid_to=now, superseded_by=fact.id)
                         if old.object == fact.object:

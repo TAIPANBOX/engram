@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from engram.models import check_provenance
+from engram.models import check_fact_provenance, check_provenance
 
 if TYPE_CHECKING:
     from engram.core import Engram
@@ -36,7 +36,9 @@ def export_json(mem: Engram, dest: str | Path) -> dict[str, Any]:
     The ``quarantined`` flag of episodes and the owner, ``shared`` and
     ``quarantined`` of facts are exported as stored, NULL included, so an
     import keeps a row written before those existed reading the way it read
-    here.
+    here. So are a fact's ``provenance``, ``refuted_by`` and ``undermined_by``:
+    dropping them would quietly turn a person's fact into one anything can
+    close, and a refuted fact back into one that merely ended.
 
     Args:
         mem: Open Engram instance to export from.
@@ -68,7 +70,8 @@ def export_json(mem: Engram, dest: str | Path) -> dict[str, Any]:
         for row in conn.execute(
             "SELECT id, subject, predicate, object, valid_from, valid_to, "
             "recorded_at, superseded_at, superseded_by, confidence, "
-            "derived_from, extracted_by, agent_id, shared, quarantined "
+            "derived_from, extracted_by, agent_id, shared, quarantined, "
+            "provenance, refuted_by, undermined_by "
             f"FROM facts WHERE 1=1{visible} ORDER BY valid_from ASC",
             visible_params,
         ).fetchall()
@@ -139,6 +142,34 @@ def import_json(mem: Engram, src: str | Path, *, merge: bool = False) -> dict[st
 
     on_conflict = "OR IGNORE" if merge else "OR ABORT"
 
+    # Every fact is checked before anything is written, so a refused document
+    # does not leave part of itself behind in the open transaction.
+    for fact in doc.get("facts", []):
+        # Owner, sharing and quarantine are absent from a document written
+        # before they existed, and import as NULL: visible to every agent,
+        # owned by none, read as quarantined. Provenance, refutation and marks
+        # are absent from one written before those existed, and import as
+        # NULL: no recorded source, not refuted, not marked.
+        for key in (
+            "agent_id",
+            "shared",
+            "quarantined",
+            "provenance",
+            "refuted_by",
+            "undermined_by",
+        ):
+            fact.setdefault(key, None)
+        if fact["provenance"] is not None:
+            try:
+                check_fact_provenance(fact["provenance"])
+            except ValueError as exc:
+                raise ValueError(f"fact {fact['id']!r}: provenance: {exc}") from exc
+        if fact["refuted_by"] is not None:
+            try:
+                check_provenance(fact["refuted_by"])
+            except ValueError as exc:
+                raise ValueError(f"fact {fact['id']!r}: refuted_by: {exc}") from exc
+
     for ep in doc.get("episodes", []):
         # A document exported before provenance existed has no such key. It
         # imports as NULL, which reads as unknown, never as a trusted source.
@@ -177,19 +208,15 @@ def import_json(mem: Engram, src: str | Path, *, merge: bool = False) -> dict[st
             counts["episodes"] += 1
 
     for fact in doc.get("facts", []):
-        # Owner, sharing and quarantine are absent from a document written
-        # before they existed, and import as NULL: visible to every agent,
-        # owned by none, read as quarantined.
-        for key in ("agent_id", "shared", "quarantined"):
-            fact.setdefault(key, None)
         conn.execute(
             f"INSERT {on_conflict} INTO facts "
             "(id, subject, predicate, object, valid_from, valid_to, recorded_at, "
             "superseded_at, superseded_by, confidence, derived_from, extracted_by, "
-            "agent_id, shared, quarantined) "
+            "agent_id, shared, quarantined, provenance, refuted_by, undermined_by) "
             "VALUES (:id, :subject, :predicate, :object, :valid_from, :valid_to, "
             ":recorded_at, :superseded_at, :superseded_by, :confidence, "
-            ":derived_from, :extracted_by, :agent_id, :shared, :quarantined)",
+            ":derived_from, :extracted_by, :agent_id, :shared, :quarantined, "
+            ":provenance, :refuted_by, :undermined_by)",
             fact,
         )
         if conn.execute("SELECT changes()").fetchone()[0]:

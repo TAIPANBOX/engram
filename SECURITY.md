@@ -1,6 +1,6 @@
 # Security Policy
 
-Engram stores an agent's episodic, semantic, and procedural memory, so its
+Engram stores an agent's episodic and semantic memory, so its
 own trust boundaries matter: a corrupted or poisoned memory store is a
 credible path to steering an agent's future behavior. This document covers
 how to report a vulnerability.

@@ -18,14 +18,16 @@ from engram.events import EventLog, resolve_events_path
 from engram.importance import DecayConfig
 from engram.models import (
     DEFAULT_PROVENANCE,
+    UNKNOWN_PROVENANCE,
     CompressionRun,
     Fact,
     ForgetResult,
     ObserveInput,
     ReflectionRun,
+    RefuteResult,
     SearchResult,
     check_provenance,
-    least_trusted,
+    may_displace,
 )
 from engram.retrieval import recall as _recall
 from engram.schema import migrate
@@ -383,28 +385,66 @@ class Engram:
         source: str | None = None,
         shared: bool = True,
         quarantined: bool = False,
+        provenance: str | None = None,
+        derived_from: list[str] | None = None,
     ) -> str:
         """Manually record a semantic fact triple without calling an LLM.
 
         The fact is owned by this instance's ``agent_id``: only an instance
         scoped to the same agent, or an unscoped one, can delete it.
 
+        This path never closes another fact: a fact asserted beside an active
+        one with a different object leaves both active, and :meth:`contradictions`
+        lists the pair. When the one it conflicts with is the person's own (see
+        below) and this write is not, a ``contradiction_found`` event also names
+        the two, so the attempt is on record.
+
         Args:
             subject: Entity the fact is about (e.g. "Ivan").
             predicate: Relationship (e.g. "works_at").
             object: Value (e.g. "Globex").
             confidence: Certainty of the fact (0-1).
-            source: Free-text provenance note (stored in derived_from).
+            source: Free-text provenance note (stored in derived_from). It is
+                text, not a reference: naming an episode's id here does not
+                give the fact that episode's trust.
             shared: Visible to every agent in the file (the default here, as
                 facts always were), or, when ``False``, only to its owner and
                 to an unscoped instance. The MCP server defaults the other way:
                 a fact an agent writes there stays its own unless it asks.
             quarantined: The writer had read untrusted content before this
                 write. Stored and returned by :meth:`why`.
+            provenance: Where the fact came from: ``"user"`` (the person's own
+                word), ``"tool"`` or ``"external"``. Engram stores what the
+                caller declares and does not verify it. Left out, the fact is
+                recorded as ``unknown``, the least trusted, which is what
+                :meth:`why` has always said for a fact asserted with no
+                episodes behind it. A fact is the person's own only when it is
+                ``user`` and not ``quarantined``: nothing that is not can close,
+                refute or override it.
+            derived_from: Ids of the facts this one rests on. Each must be a
+                fact this instance can see (``KeyError`` otherwise). Refuting
+                any of them marks this fact, and one asserted on a premise that
+                is already refuted starts out marked.
 
         Returns:
             The fact id (UUID string).
+
+        Raises:
+            ValueError: If *provenance* is not one of the three sources.
+            KeyError: If an id in *derived_from* is not a fact this instance can see.
         """
+        declared = UNKNOWN_PROVENANCE if provenance is None else check_provenance(provenance)
+        premises = list(dict.fromkeys(derived_from or []))
+        undermined: list[str] = []
+        for premise_id in premises:
+            premise = self._store.get_fact(premise_id)
+            if premise is None:
+                raise KeyError(f"Fact not found: {premise_id!r}")
+            marks = [premise.id] if premise.refuted_by is not None else []
+            for mark in (*marks, *premise.undermined_by):
+                if mark not in undermined:
+                    undermined.append(mark)
+
         now = datetime.now(tz=UTC)
         fact_id = str(uuid.uuid4())
         fact = Fact(
@@ -418,18 +458,100 @@ class Engram:
             superseded_at=None,
             superseded_by=None,
             confidence=confidence,
-            derived_from=[source] if source else [],
+            derived_from=[*([source] if source else []), *premises],
             extracted_by=None,
             agent_id=self._agent_id,
             shared=shared,
             quarantined=quarantined,
+            provenance=declared,
+            undermined_by=undermined,
         )
         self._store.insert_fact(fact)
         if self._events is not None:
             self._events.emit(
                 "memory_written", self._agent_id, {"memory_id": fact_id, "kind": "semantic"}
             )
+            # The attempt stays visible: a write that is not the person's own,
+            # next to a fact that is, with a different object. Nothing is
+            # closed here either way; this only puts the pair on record.
+            for held in self._store.get_active_facts(subject, predicate):
+                if held.id == fact_id or held.object == object:
+                    continue
+                if not may_displace((declared, quarantined), self._store.fact_trust(held)):
+                    self._events.emit(
+                        "contradiction_found",
+                        self._agent_id,
+                        {"memory_id": fact_id, "conflicting_memory_id": held.id},
+                    )
         return fact_id
+
+    def refute_fact(
+        self,
+        fact_id: str,
+        *,
+        provenance: str = DEFAULT_PROVENANCE,
+        quarantined: bool = False,
+    ) -> RefuteResult:
+        """Declare a fact false, without erasing it or what it supported.
+
+        The fact is closed, not deleted: ``valid_to`` and ``superseded_at`` are
+        set, so :meth:`timeline` and ``as_of`` still show what was believed
+        before, and ``refuted_by`` records who refuted it. Every fact derived
+        from it, directly or through other facts, is *marked* (``undermined_by``
+        carries the refuted fact's id) and left active: it may stand on other
+        grounds, and judging that is its owner's job. Refuting a fact that is
+        already refuted changes nothing.
+
+        The person's word outranks a model's here too. A fact that is the
+        person's own (``user`` and not quarantined) is refused by anything else,
+        with ``PermissionError``, and nothing is changed.
+
+        Scoped like :meth:`forget_fact`: an agent-scoped instance refutes only
+        the facts it wrote, and an unscoped instance, the file's operator, can
+        refute any. The marks are not scoped: they reach a fact another agent
+        keeps private as well, and the result does not name those.
+
+        No event is emitted: the shared event contract has no type for it.
+
+        Args:
+            fact_id: Id of the fact to refute.
+            provenance: Who is refuting: ``"user"``, ``"tool"`` or ``"external"``
+                (the default, as for :meth:`observe`). Not verified.
+            quarantined: The refuter had read untrusted content first, so a
+                ``user`` refutation does not count as the person's own.
+
+        Returns:
+            A :class:`RefuteResult` naming the facts newly marked that this
+            instance can see.
+
+        Raises:
+            ValueError: If *provenance* is not one of the three sources.
+            KeyError: If the fact does not exist, or is another agent's private fact.
+            PermissionError: If this instance can see the fact but did not
+                write it, or the fact is the person's own and the refutation is not.
+        """
+        refuter = check_provenance(provenance)
+        fact = self._store.get_fact(fact_id)
+        if fact is None:
+            raise KeyError(f"Fact not found: {fact_id!r}")
+        if self._agent_id is not None and fact.agent_id != self._agent_id:
+            raise PermissionError(
+                f"fact {fact_id!r} was not written by agent {self._agent_id!r}: "
+                f"only the agent that wrote it can refute it (or an instance "
+                f"opened without an agent_id, the file's operator)"
+            )
+        if not may_displace((refuter, quarantined), self._store.fact_trust(fact)):
+            raise PermissionError(
+                f"fact {fact_id!r} is the person's own, and a refutation from "
+                f"{refuter!r}{' (quarantined)' if quarantined else ''} cannot close it. "
+                f"Only a refutation with provenance 'user' that was not written "
+                f"after reading untrusted content can."
+            )
+        with self._store.transaction():
+            self._store.refute_fact(fact_id, datetime.now(tz=UTC), refuter)
+            marked = self._store.mark_undermined(fact_id)
+        visible = [m for m in marked if self._store.get_fact(m) is not None]
+        return RefuteResult(fact_id=fact_id, undermined=visible)
 
     def why(self, fact_id: str) -> dict[str, Any]:
         """Return provenance information for a fact.
@@ -440,14 +562,17 @@ class Engram:
         Returns:
             Dict with keys ``fact``, ``extracted_from``, ``extracted_by``,
             ``confidence``, ``model``, ``provenance``, ``quarantined``,
-            ``agent_id`` and ``shared``. A fact has no source of its own:
-            ``provenance`` is the least trusted provenance among the episodes it
-            was extracted from, and ``"unknown"`` when none of them is recorded
-            (a fact asserted with :meth:`assert_fact` takes a free-text source
-            note, not episodes). ``quarantined`` is true when the fact was
-            written quarantined or any of those episodes was. ``agent_id`` is
-            the agent that wrote it (``None`` for an unscoped writer or a fact
-            written before ownership was recorded).
+            ``agent_id``, ``shared``, ``refuted_by`` and ``undermined_by``.
+            ``provenance`` is the least trusted source the fact reports: the one
+            recorded when it was written (the episodes a reflection extracted it
+            from, or what :meth:`assert_fact` was told) combined with any of
+            those episodes still present, and ``"unknown"`` when none is
+            recorded. ``quarantined`` is true when the fact was written
+            quarantined or any of those episodes was. ``agent_id`` is the agent
+            that wrote it (``None`` for an unscoped writer or a fact written
+            before ownership was recorded). ``refuted_by`` is the provenance of
+            whoever refuted the fact, ``None`` while it stands, and
+            ``undermined_by`` lists the refuted facts it rests on.
 
         Raises:
             KeyError: If the fact_id is not found, or is another agent's fact
@@ -461,17 +586,19 @@ class Engram:
             run = self._store.get_reflection_by_id(fact.extracted_by)
             if run:
                 model_used = run.model_used
-        sources = self._store.get_episodes_by_ids(fact.derived_from)
+        provenance, quarantined = self._store.fact_trust(fact)
         return {
             "fact": f"{fact.subject} {fact.predicate} {fact.object}",
             "extracted_from": fact.derived_from,
             "extracted_by": fact.extracted_by,
             "confidence": fact.confidence,
             "model": model_used,
-            "provenance": least_trusted(ep.provenance for ep in sources),
-            "quarantined": fact.quarantined or any(ep.quarantined for ep in sources),
+            "provenance": provenance,
+            "quarantined": quarantined,
             "agent_id": fact.agent_id,
             "shared": fact.shared,
+            "refuted_by": fact.refuted_by,
+            "undermined_by": fact.undermined_by,
         }
 
     def timeline(self, entity: str, *, as_of: datetime | None = None) -> list[Fact]:

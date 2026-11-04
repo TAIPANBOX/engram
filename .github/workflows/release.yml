@@ -91,6 +91,7 @@ jobs:
           ./scripts/readme-numbers.sh
           ./scripts/local-first.sh
           ./scripts/features-are-bound.sh
+          ./scripts/docs-match-code.sh
 
       - name: Build distributions
         run: python -m build

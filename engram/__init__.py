@@ -22,6 +22,7 @@ from engram.models import (
     ForgetResult,
     ObserveInput,
     ReflectionRun,
+    RefuteResult,
     SearchResult,
 )
 from engram.working_memory import WorkingMemory, WorkingMemoryItem
@@ -45,6 +46,7 @@ __all__ = [
     "QwenAdapter",
     "ReflectionRun",
     "ReflectionThread",
+    "RefuteResult",
     "SearchResult",
     "StubLLMAdapter",
     "WorkingMemory",

@@ -215,7 +215,10 @@ CREATE TABLE facts (
     superseded_by TEXT,
     confidence REAL,
     derived_from JSON,
-    extracted_by TEXT
+    extracted_by TEXT,
+    provenance TEXT,           -- 'user' | 'tool' | 'external' | 'unknown'; NULL = written before it was recorded
+    refuted_by TEXT,           -- provenance of the refuter; NULL = not refuted
+    undermined_by JSON         -- ids of refuted facts this one rests on
 );
 
 -- Extracted Hebbian entities
