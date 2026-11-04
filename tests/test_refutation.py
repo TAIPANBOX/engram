@@ -15,7 +15,10 @@ fact derived from a marked fact carries it too.
 
 from __future__ import annotations
 
+import json
+import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -243,6 +246,9 @@ def test_the_cli_timeline_shows_a_refuted_fact_and_a_marked_one(
         premise = mem.assert_fact("Ivan", "works_at", "Globex")
         mem.assert_fact("Ivan", "commutes_to", "campus", derived_from=[premise])
         mem.assert_fact("Ivan", "lives_in", "Berlin")
+        replaced = mem.assert_fact("Ivan", "drives", "a tram")
+        newer = mem.assert_fact("Ivan", "drives", "a bus")
+        mem._store.close_fact(replaced, valid_to=datetime.now(tz=UTC), superseded_by=newer)
         mem.refute_fact(premise, provenance="tool")
 
     main(["timeline", path, "Ivan"])
@@ -255,3 +261,34 @@ def test_the_cli_timeline_shows_a_refuted_fact_and_a_marked_one(
     assert "refuted by tool" in lines["works_at Globex"]
     assert "rests on 1 refuted fact" in lines["commutes_to campus"]
     assert "refuted" not in lines["lives_in Berlin"] and "rests on" not in lines["lives_in Berlin"]
+    # A fact that was only replaced still reads as superseded, not as refuted.
+    assert "superseded" in lines["drives a tram"] and "refuted" not in lines["drives a tram"]
+
+
+def test_a_cycle_or_a_diamond_in_derived_from_is_walked_once() -> None:
+    mem = Engram(path=":memory:")
+    root = _fact(mem)
+    b = mem.assert_fact("Ivan", "p1", "x", derived_from=[root])
+    c = mem.assert_fact("Ivan", "p2", "x", derived_from=[b])
+    e = mem.assert_fact("Ivan", "p3", "x", derived_from=[root])
+    f = mem.assert_fact("Ivan", "p4", "x", derived_from=[b, e])
+    # A hand-edited file: b now also claims to derive from c, closing a loop
+    # between two facts that both sit below the refuted one.
+    mem._conn.execute("UPDATE facts SET derived_from = ? WHERE id = ?", (json.dumps([root, c]), b))
+    mem._conn.commit()
+
+    outcome: dict[str, object] = {}
+    walker = threading.Thread(
+        target=lambda: outcome.update(result=mem.refute_fact(root)), daemon=True
+    )
+    walker.start()
+    walker.join(timeout=10)
+
+    # Not closed on purpose when the walk never ends: the walker would hold the
+    # store's lock and close() would wait on it for ever.
+    assert not walker.is_alive(), "the walk over derived_from never ended"
+    result = outcome["result"]
+    assert set(result.undermined) == {b, c, e, f}  # type: ignore[attr-defined]
+    for fact_id in (b, c, e, f):
+        assert _get(mem, fact_id).undermined_by == [root]
+    mem.close()

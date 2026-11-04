@@ -113,6 +113,12 @@ Feature: A person's own fact outranks a model's, and a refuted fact is marked, n
     Then agent A's result does not name B's private fact
     And B's fact carries the mark when B reads it
 
+  # @test:test_a_cycle_or_a_diamond_in_derived_from_is_walked_once
+  Scenario: A loop or a diamond among the derived facts does not stall or double the marking
+    Given facts derived from a refuted one by two routes, and a loop between two of them
+    When the first is refuted
+    Then the walk ends, and each derived fact is marked exactly once
+
   # @test:test_refuting_a_missing_fact_raises
   Scenario: Refuting a fact that is not there is an error
     When an unknown fact id is refuted

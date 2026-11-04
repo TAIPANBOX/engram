@@ -908,12 +908,12 @@ ruff format .       # format
 mypy engram         # type check (strict)
 ```
 
-### Test coverage (612 tests, 619 with the encryption extra)
+### Test coverage (613 tests, 620 with the encryption extra)
 
 Statement coverage: **90%** (2911 statements, 280 uncovered without the
 encryption tests), measured 2026-11-04 with `pytest --cov=engram
 --cov-report=term-missing` on Linux with Python 3.13, where `tests/test_encryption.py`
-skips itself because `sqlcipher3` is not installed; all 612 tests passed. The encryption
+skips itself because `sqlcipher3` is not installed; all 613 tests passed. The encryption
 extra adds 7 tests, which CI's `encryption` job runs on their own.
 CI's `test` job runs the suite with the same flags and prints the current
 figure on every push; this line is not machine-checked against that output
