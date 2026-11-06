@@ -99,6 +99,9 @@ jobs:
       - name: the documents say what the code does about procedural memory
         run: ./scripts/docs-match-code.sh
 
+      - name: no pipe ends in a grep that leaves early
+        run: ./scripts/no-reader-leaves-a-pipe-early.sh
+
       # Last, because it mutates tracked files and restores them. It needs a
       # clean tree and says so plainly, so it also reports any earlier step
       # that starts writing into the checkout.
