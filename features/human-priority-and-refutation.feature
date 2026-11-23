@@ -187,3 +187,10 @@ Feature: A person's own fact outranks a model's, and a refuted fact is marked, n
     When it refuses
     Then the message points at a document that exists in the repository
     And scripts/docs-match-code.sh holds the documents to the same statement
+
+  # @test:test_unknown_kind_error_offers_only_kinds_that_are_stored
+  Scenario: An unknown kind is answered with only the kinds that are stored
+    Given a memory server asked to store a memory of a kind it does not know
+    When it refuses
+    Then the message names episodic and semantic
+    And it does not offer procedural, which can only be refused

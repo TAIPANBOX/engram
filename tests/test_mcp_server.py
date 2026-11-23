@@ -155,6 +155,17 @@ def test_remember_unknown_kind_raises(pool):
         _remember(pool, "x", kind="bogus")
 
 
+def test_unknown_kind_error_offers_only_kinds_that_are_stored(pool):
+    # The error for an unknown kind lists what an agent may use instead. It must
+    # not offer "procedural", which remember() can only refuse (invariant 15).
+    with pytest.raises(ValueError) as refused:
+        _remember(pool, "x", kind="bogus")
+    message = str(refused.value)
+    assert "episodic" in message
+    assert "semantic" in message
+    assert "procedural" not in message
+
+
 def test_remember_is_scoped_to_the_servers_identity(server):
     x = server("agent-x")
     result = _remember(x, "scoped event", kind="episodic")

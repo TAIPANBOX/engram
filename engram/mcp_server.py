@@ -231,7 +231,10 @@ def _note_read(pool: _EngramPool, tool: str, provenance: str, quarantined: bool)
 # no FastMCP dependency at all)
 # ----------------------------------------------------------------------
 
-_VALID_KINDS = ("episodic", "semantic", "procedural")
+# The kinds remember() accepts. "procedural" is not one of them: it has its own
+# refusal below with a pointer to the document that says why, and listing it
+# here would offer an agent a kind that can only fail (CLAUDE.md invariant 15).
+_VALID_KINDS = ("episodic", "semantic")
 
 
 def _remember(
