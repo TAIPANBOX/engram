@@ -1,0 +1,39 @@
+# Weekly vulnerability scan of the installed dependencies.
+#
+# The `security` job in ci.yml runs scripts/pip-audit.sh on every push and pull
+# request. That covers what changes here, and nothing else: a new advisory
+# against a dependency arrives without any push to this repository, and an
+# audit that nothing invokes at that moment reports nothing. This run is the
+# half invoked by the calendar. Same environment, same script, so the ignore
+# list stays in one place; it fails the run on a finding, which GitHub mails to
+# the owner.
+#
+# Public repository, standard runner: it costs nothing.
+name: vulnscan
+
+on:
+  schedule:
+    - cron: "43 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - name: Install package + pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev,langchain,llamaindex] pip-audit
+      - name: Audit dependencies (pip-audit)
+        run: ./scripts/pip-audit.sh

@@ -201,7 +201,8 @@ an absent invariant.
 
 15. **The documents say what the code does about procedural memory: nothing.**
     The store implements episodic and semantic memory; `kind="procedural"` is
-    refused. No document claims otherwise, and none may name procedural memory
+    refused, and `_VALID_KINDS`, which the error for an unknown kind lists, does
+    not offer it (test: `test_unknown_kind_error_offers_only_kinds_that_are_stored`). No document claims otherwise, and none may name procedural memory
     except to say it is not built. *(gate: `scripts/docs-match-code.sh`, which
     holds the number of mentions per document and the refusal in
     `engram/mcp_server.py`, teeth in `scripts/gates-have-teeth.sh`)*
@@ -230,7 +231,8 @@ writing `(not enforced)`, grep the suite; before writing `(test: ...)`, open
 the test and check it asserts what the invariant claims.
 
 Invariant 8, "every new function gets a test", is a process rule rather than a
-property of the code, so it has no marker of its own and is enforced by review.
+property of the code. Its marker says `(not enforced, and not enforceable)`, and
+that is the whole of it: review is where it is asked, and nothing holds it.
 
 Invariant 2 now has `scripts/readme-numbers.sh`, which recomputes the recall
 table from the committed per-question records, sums the corpus size from the
