@@ -123,8 +123,8 @@ source = ["engram"]
 omit = ["tests/*"]
 
 [tool.coverage.report]
-# No fail_under here: no threshold that fails CI on its own, only a number
-# that gets measured and printed. Whether to gate on a percentage is a
-# separate decision for later.
+# No fail_under here on purpose: the floor lives in .coverage-floor, which CI
+# passes to pytest as --cov-fail-under and scripts/coverage-floor.sh reads
+# back, so the number has one home and only rises.
 skip_covered = false
 show_missing = true

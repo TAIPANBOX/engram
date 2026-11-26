@@ -61,7 +61,19 @@ jobs:
           pip install -e .[dev,langchain,llamaindex]
 
       - name: Run Pytest
-        run: pytest --cov=engram --cov-report=term-missing
+        run: |
+          floor="$(grep -v '^[[:space:]]*#' .coverage-floor | tr -d '[:space:]')"
+          pytest --cov=engram --cov-report=term-missing --cov-report=json:"$RUNNER_TEMP/coverage.json" --cov-fail-under="$floor"
+      # The same total, read back from the report, with the slack and the gap
+      # to the target in the job summary; and the floor only rises.
+      - name: coverage is not below the floor
+        run: ./scripts/coverage-floor.sh check "$RUNNER_TEMP/coverage.json"
+      - name: the coverage floor only rises
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
+          git show FETCH_HEAD:.coverage-floor > "$RUNNER_TEMP/base-floor" 2>/dev/null || rm -f "$RUNNER_TEMP/base-floor"
+          ./scripts/coverage-floor.sh ratchet "$RUNNER_TEMP/base-floor"
 
   encryption:
     # SQLCipher needs a system library, so it gets its own job that installs it
