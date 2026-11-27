@@ -923,8 +923,10 @@ extra adds 7 tests, which CI's `encryption` job runs on their own.
 CI's `test` job runs the suite with the same flags and prints the current
 figure on every push; this line is not machine-checked against that output
 (unlike the test count above), so treat CI's own number as current if the
-two ever disagree. No threshold is enforced; the intent is a visible number,
-not a build that fails under one.
+two ever disagree. CI also enforces a ratchet: the `test` job fails if total
+coverage falls below `.coverage-floor` (89.5%; the measurement on main on
+2026-11-26 was 90.45%), and the floor may only be raised, never lowered
+(`scripts/coverage-floor.sh`). The target is 90%.
 
 ```
 tests/
